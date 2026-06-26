@@ -44,11 +44,18 @@ try {
 /** True when the native expo-video module is present in this build. */
 export const VIDEO_AVAILABLE = !!ExpoVideo?.VideoView;
 
-type VideoSource = { uri: string; headers?: Record<string, string> };
+type VideoSource = {
+  uri: string;
+  headers?: Record<string, string>;
+  useCaching?: boolean;
+};
 
 /** Simple in-memory cache so a bubble doesn't re-generate its poster on every
  *  re-render (the chat list recycles rows frequently). Keyed by source uri. */
-const posterCache = new Map<string, { uri: string; width: number; height: number }>();
+const posterCache = new Map<
+  string,
+  { uri: string; width: number; height: number }
+>();
 
 /** mm:ss duration label from milliseconds. */
 function fmtDuration(ms?: number | null): string {
@@ -64,15 +71,25 @@ function fmtDuration(ms?: number | null): string {
  * expo-video player is mounted — opened on tap of the bubble poster. Real
  * transport controls (play/pause/scrub) live here via `nativeControls`, and the
  * video autoplays on open.
+ *
+ * BLACK-SCREEN FIX: a VideoView shows an opaque shutter (black) until the
+ * decoder renders its first frame, which read as "black screen then video".
+ * We cover the player with the SAME poster image the bubble already shows and
+ * only fade it out once `onFirstFrameRender` fires — so the transition is
+ * poster → video with no black flash (the exact pattern expo-video documents
+ * for `onFirstFrameRender`).
  */
 function FullscreenVideoPlayer({
   source,
+  poster,
   onClose,
 }: {
   source: VideoSource;
+  poster?: string | null;
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const [firstFrame, setFirstFrame] = useState(false);
   const player = ExpoVideo.useVideoPlayer(source, (p: any) => {
     p.loop = false;
     p.muted = false;
@@ -101,7 +118,24 @@ function FullscreenVideoPlayer({
           contentFit="contain"
           allowsFullscreen
           allowsPictureInPicture
+          // Drop Android's default black ExoPlayer shutter so our poster shows
+          // through until the first frame is ready (matches iOS).
+          useExoShutter={false}
+          onFirstFrameRender={() => setFirstFrame(true)}
         />
+        {/* Poster cover — fades out the instant the first video frame paints. */}
+        {!firstFrame ? (
+          <View style={fsStyles.cover} pointerEvents="none">
+            {poster ? (
+              <Image
+                source={{ uri: poster }}
+                style={fsStyles.coverImage}
+                resizeMode="contain"
+              />
+            ) : null}
+            <ActivityIndicator size="large" color="#fff" />
+          </View>
+        ) : null}
       </View>
     </Modal>
   );
@@ -160,6 +194,11 @@ export default function InlineVideo({
         setSource({
           uri,
           headers: t ? { Authorization: `Bearer ${t}` } : {},
+          // expo-video's built-in progressive cache. Once a remote video has
+          // been watched it replays from the on-device cache — including with
+          // NO network (the documented offline behaviour), which fixes
+          // "downloaded video won't play offline".
+          useCaching: true,
         });
       })
       .catch(() => {
@@ -232,7 +271,11 @@ export default function InlineVideo({
         style={[styles.wrap, style]}
       >
         {poster ? (
-          <Image source={{ uri: poster }} style={styles.poster} resizeMode="cover" />
+          <Image
+            source={{ uri: poster }}
+            style={styles.poster}
+            resizeMode="cover"
+          />
         ) : (
           <View style={styles.posterFallback}>
             <ActivityIndicator size="small" color="rgba(255,255,255,0.7)" />
@@ -250,7 +293,11 @@ export default function InlineVideo({
         ) : null}
       </Pressable>
       {open ? (
-        <FullscreenVideoPlayer source={source} onClose={() => setOpen(false)} />
+        <FullscreenVideoPlayer
+          source={source}
+          poster={poster}
+          onClose={() => setOpen(false)}
+        />
       ) : null}
     </>
   );
@@ -325,6 +372,27 @@ const fsStyles = StyleSheet.create({
     justifyContent: "center",
   },
   video: { width: "100%", height: "100%" },
+  // Poster cover shown over the player until the first video frame paints
+  // (black-screen fix).
+  cover: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#000",
+  },
+  coverImage: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: "100%",
+    height: "100%",
+  },
   closeBtn: {
     position: "absolute",
     right: 20,

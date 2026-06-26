@@ -70,7 +70,10 @@ function ThemedStack() {
         name="profile/face"
         options={{ ...headerScreen, title: "Face Enrollment" }}
       />
-      <Stack.Screen name="chat/[id]" options={headerScreen} />
+      <Stack.Screen
+        name="chat/[id]"
+        options={{ ...headerScreen, animation: "slide_from_right" }}
+      />
       <Stack.Screen
         name="chat/new"
         options={{ ...headerScreen, title: "New Chat" }}

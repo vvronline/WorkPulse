@@ -25,10 +25,7 @@ import {
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { useMemo, useState } from "react";
-import Animated, {
-  FadeIn,
-  FadeOut,
-} from "react-native-reanimated";
+import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import {
   ReplyPreview,
@@ -48,7 +45,10 @@ import {
   CameraCapture,
   useChatThread,
 } from "../../src/components/chat";
-import { fmtDaySeparator, isSameDay } from "../../src/components/chat/chatUtils";
+import {
+  fmtDaySeparator,
+  isSameDay,
+} from "../../src/components/chat/chatUtils";
 
 /**
  * Chat thread screen — a thin presentational orchestrator. All state, socket
@@ -104,96 +104,99 @@ export default function ChatThread() {
                 ),
               }
             : c.searchMode
-            ? {
-                // Signal in-conversation search: the header becomes a search
-                // field with a back arrow (exit) and a clear "X". The match
-                // counter + up/down navigation live in a bottom bar.
-                headerTitle: () => (
-                  <View style={styles.searchHeader}>
-                    <TextInput
-                      style={styles.searchInput}
-                      placeholder="Search this chat…"
-                      placeholderTextColor={theme.textMuted}
-                      value={c.searchQuery}
-                      onChangeText={c.onSearchQueryChange}
-                      autoFocus
-                      returnKeyType="search"
-                    />
-                    {c.searchQuery.length > 0 ? (
-                      <Pressable
-                        onPress={() => c.onSearchQueryChange("")}
-                        hitSlop={8}
-                      >
-                        <X size={18} color={theme.textSecondary} />
-                      </Pressable>
-                    ) : null}
-                  </View>
-                ),
-                headerLeft: () => (
-                  <Pressable onPress={c.closeSearch} hitSlop={8}>
-                    <ArrowLeft size={22} color={theme.text} />
-                  </Pressable>
-                ),
-                headerRight: () => null,
-              }
-            : {
-                title: c.name || "Chat",
-                headerTitle: () => (
-                  // Signal-style: tapping the title/avatar opens the
-                  // conversation profile (Conversation Settings) screen.
-                  <Pressable
-                    style={styles.headerTitleWrap}
-                    onPress={c.openInfo}
-                    hitSlop={6}
-                  >
-                    <ChatAvatar
-                      name={c.name}
-                      avatar={c.headerAvatar}
-                      size={32}
-                      userStatus={c.peerUserId ? c.peerStatus : undefined}
-                      ringColor={theme.bg}
-                    />
-                    <View style={{ flexShrink: 1 }}>
-                      <Text style={styles.headerTitleText} numberOfLines={1}>
-                        {c.name || "Chat"}
-                      </Text>
-                      {c.headerSubtitle ? (
-                        <Text style={styles.headerSubtitle} numberOfLines={1}>
-                          {c.headerSubtitle}
-                        </Text>
+              ? {
+                  // Signal in-conversation search: the header becomes a search
+                  // field with a back arrow (exit) and a clear "X". The match
+                  // counter + up/down navigation live in a bottom bar.
+                  headerTitle: () => (
+                    <View style={styles.searchHeader}>
+                      <TextInput
+                        style={styles.searchInput}
+                        placeholder="Search this chat…"
+                        placeholderTextColor={theme.textMuted}
+                        value={c.searchQuery}
+                        onChangeText={c.onSearchQueryChange}
+                        autoFocus
+                        returnKeyType="search"
+                      />
+                      {c.searchQuery.length > 0 ? (
+                        <Pressable
+                          onPress={() => c.onSearchQueryChange("")}
+                          hitSlop={8}
+                        >
+                          <X size={18} color={theme.textSecondary} />
+                        </Pressable>
                       ) : null}
                     </View>
-                  </Pressable>
-                ),
-                // 1:1 calls only — the native call screen can't handle group
-                // calls yet, so hide the call buttons in group conversations.
-                // The 3-dot overflow menu (search / pinned / files / saved /
-                // clear chat) is available everywhere, mirroring the web
-                // ChatHeader.
-                headerRight: () => (
-                  <View style={styles.headerActions}>
-                    {!c.isGroupConv ? (
-                      <>
-                        <Pressable
-                          onPress={() => c.startCall("voice")}
-                          hitSlop={8}
-                        >
-                          <Phone size={20} color={theme.primary} />
-                        </Pressable>
-                        <Pressable
-                          onPress={() => c.startCall("video")}
-                          hitSlop={8}
-                        >
-                          <VideoIcon size={20} color={theme.primary} />
-                        </Pressable>
-                      </>
-                    ) : null}
-                    <Pressable onPress={() => c.setMenuOpen(true)} hitSlop={8}>
-                      <MoreVertical size={20} color={theme.text} />
+                  ),
+                  headerLeft: () => (
+                    <Pressable onPress={c.closeSearch} hitSlop={8}>
+                      <ArrowLeft size={22} color={theme.text} />
                     </Pressable>
-                  </View>
-                ),
-              }
+                  ),
+                  headerRight: () => null,
+                }
+              : {
+                  title: c.name || "Chat",
+                  headerTitle: () => (
+                    // Signal-style: tapping the title/avatar opens the
+                    // conversation profile (Conversation Settings) screen.
+                    <Pressable
+                      style={styles.headerTitleWrap}
+                      onPress={c.openInfo}
+                      hitSlop={6}
+                    >
+                      <ChatAvatar
+                        name={c.name}
+                        avatar={c.headerAvatar}
+                        size={32}
+                        userStatus={c.peerUserId ? c.peerStatus : undefined}
+                        ringColor={theme.bg}
+                      />
+                      <View style={{ flexShrink: 1 }}>
+                        <Text style={styles.headerTitleText} numberOfLines={1}>
+                          {c.name || "Chat"}
+                        </Text>
+                        {c.headerSubtitle ? (
+                          <Text style={styles.headerSubtitle} numberOfLines={1}>
+                            {c.headerSubtitle}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </Pressable>
+                  ),
+                  // 1:1 calls only — the native call screen can't handle group
+                  // calls yet, so hide the call buttons in group conversations.
+                  // The 3-dot overflow menu (search / pinned / files / saved /
+                  // clear chat) is available everywhere, mirroring the web
+                  // ChatHeader.
+                  headerRight: () => (
+                    <View style={styles.headerActions}>
+                      {!c.isGroupConv ? (
+                        <>
+                          <Pressable
+                            onPress={() => c.startCall("voice")}
+                            hitSlop={8}
+                          >
+                            <Phone size={20} color={theme.primary} />
+                          </Pressable>
+                          <Pressable
+                            onPress={() => c.startCall("video")}
+                            hitSlop={8}
+                          >
+                            <VideoIcon size={20} color={theme.primary} />
+                          </Pressable>
+                        </>
+                      ) : null}
+                      <Pressable
+                        onPress={() => c.setMenuOpen(true)}
+                        hitSlop={8}
+                      >
+                        <MoreVertical size={20} color={theme.text} />
+                      </Pressable>
+                    </View>
+                  ),
+                }
         }
       />
       {c.loading ? (
@@ -362,24 +365,44 @@ export default function ChatThread() {
         />
       ) : null}
 
-      {/* Long-press reaction pill (Signal-style). Only the emoji + edit pill
-          remains — the pin/save/forward/copy/delete actions moved to the
-          selection action bar in the header (driven by selectionMode). Hidden
-          while the full emoji picker is open so the picker isn't stuck BEHIND
-          this Modal — but `reactTarget` stays alive so the chosen emoji is
-          still applied to the right message. */}
+      {/* Long-press message context menu (Signal / WhatsApp / Telegram style):
+          a reaction pill PLUS a per-message action list, over a dim scrim.
+          Long-press no longer enters multi-select mode — "Select" here does,
+          cleanly separating "react/act on this message" from "select messages".
+          Hidden while the full emoji picker is open so the picker isn't stuck
+          BEHIND this Modal — but `reactTarget` stays alive so the chosen emoji
+          is still applied to the right message. */}
       <ReactionOverlay
         visible={!!c.reactTarget && !c.showAllEmoji}
         anchor={c.reactAnchor}
         message={c.reactTarget}
         isOwn={Number(c.reactTarget?.sender_id) === Number(c.user?.id)}
+        isStarred={!!c.reactTarget && c.starredIds.has(c.reactTarget.id)}
+        isPinned={!!c.reactTarget?.pinned_at}
         userId={c.user?.id}
         onReact={(emoji) => c.reactTarget && c.react(c.reactTarget, emoji)}
         onOpenAllEmoji={() => {
           c.setEmojiMode("react");
           c.setShowAllEmoji(true);
         }}
+        onReply={() => c.reactTarget && c.startReply(c.reactTarget)}
+        onForward={() => c.reactTarget && c.openForwardFor(c.reactTarget)}
+        onCopy={() => c.reactTarget && c.copyMessage(c.reactTarget)}
+        onSave={() => {
+          const m = c.reactTarget;
+          c.setReactTarget(null);
+          c.setReactAnchor(null);
+          if (m) c.doStar(m);
+        }}
+        onPin={() => {
+          const m = c.reactTarget;
+          c.setReactTarget(null);
+          c.setReactAnchor(null);
+          if (m) c.doPin(m);
+        }}
         onEdit={() => c.reactTarget && c.startEdit(c.reactTarget)}
+        onSelect={() => c.reactTarget && c.enterSelectionWith(c.reactTarget)}
+        onDelete={() => c.reactTarget && c.doDelete(c.reactTarget)}
         onClose={() => {
           c.setReactTarget(null);
           c.setReactAnchor(null);
@@ -470,150 +493,152 @@ function ChatList({
     // windowing props below; the conversation LIST (non-inverted) uses
     // FlashList instead. See app/(tabs)/chat.tsx.
     <View style={styles.listWrap}>
-    <FlatList
-      ref={c.listRef as React.RefObject<FlatList<ChatMessage>>}
-      // INVERTED list (Signal-Android model). The data is newest-first
-      // (`messagesReversed`) and `inverted` flips the visual axis so index 0
-      // sits at the visual BOTTOM. This pins the newest message to the bottom
-      // STRUCTURALLY — opening/closing the keyboard or sending a message can
-      // never push it under the composer, and no scroll math is needed to stick
-      // to the bottom (fixes "last message hides during typing / I have to
-      // scroll down to see my sent message").
-      inverted
-      data={c.messagesReversed}
-      extraData={c.listSignature}
-      // Stable row identity across the optimistic→confirmed swap. An optimistic
-      // message starts with a temporary NEGATIVE id; when the server confirms it
-      // over the socket the row is replaced with the positive server id. Keying
-      // by `id` alone changed the key on that swap → FlatList unmounted the old
-      // row and mounted a new one, replaying the bubble's FadeIn entering
-      // animation (the visible "blink"/settle on send). The confirmed message
-      // keeps the same `clientMsgId`, so keying by it first keeps ONE row
-      // instance that updates in place — no remount, no second animation
-      // (Signal keeps a single view from "sending" through "sent").
-      keyExtractor={(m) => m.clientMsgId ?? String(m.id)}
-      // `flex: 1` is load-bearing: without it the FlatList doesn't claim the
-      // available column height.
-      style={styles.listFlex}
-      contentContainerStyle={styles.list}
-      // Track scroll distance from the visual bottom (offset 0 in an inverted
-      // list). Show the "scroll to bottom" pill once the user has scrolled up
-      // past ~1.5 screens of history.
-      onScroll={(e) => {
-        const y = e.nativeEvent.contentOffset.y;
-        const next = y > 400;
-        if (next !== showScrollBtn) setShowScrollBtn(next);
-      }}
-      scrollEventThrottle={16}
-      onScrollToIndexFailed={() => {
-        setTimeout(() => c.scrollToEnd(false), 200);
-      }}
-      // Older history lives at the visual TOP — which in an inverted list is the
-      // END of the scroll range — so `onEndReached` is the "scrolled up to the
-      // top" trigger. Load the previous page there (replaces the old header
-      // button + onContentSizeChange stick-to-bottom hack).
-      onEndReached={() => {
-        if (!c.prependingRef.current) c.loadOlder();
-      }}
-      onEndReachedThreshold={0.4}
-      // Android clips off-screen subviews by default; when a reaction is
-      // toggled the bubble's height GROWS (a new chip row appears). With
-      // clipping on, the freshly-grown region wasn't repainted until the
-      // row scrolled — making the reaction look delayed. Disabling it
-      // forces the chip to paint instantly (matches the web).
-      removeClippedSubviews={false}
-      // Windowing tuned for SMOOTH scrolling on long threads (Signal-Android
-      // feel): a small initial batch paints the thread fast on open, a larger
-      // render window keeps off-screen rows mounted so fast flings don't reveal
-      // blank gaps, and a short batching period commits new rows quickly.
-      initialNumToRender={12}
-      maxToRenderPerBatch={12}
-      windowSize={21}
-      updateCellsBatchingPeriod={30}
-      // In an inverted list the FOOTER renders at the visual TOP, so the
-      // "load earlier" spinner/button belongs here (not the header).
-      ListFooterComponent={
-        c.hasMore ? (
-          <Pressable
-            style={styles.loadOlderBtn}
-            onPress={c.loadOlder}
-            disabled={c.loadingOlder}
-          >
-            {c.loadingOlder ? (
-              <ActivityIndicator size="small" color={theme.primary} />
-            ) : (
-              <Text style={styles.loadOlderText}>Load earlier messages</Text>
-            )}
-          </Pressable>
-        ) : null
-      }
-      renderItem={({ item, index }) => {
-        // Type-safe ownership: sender_id / user.id can mismatch number vs
-        // string, which previously hid Edit/Delete in the reaction overlay.
-        const mine = Number(item.sender_id) === Number(c.user?.id);
-        // Consecutive-message grouping (same sender within 5 min) — see
-        // docs/CHAT_DESIGN_SPEC.md §4. firstInGroup drives the sender name,
-        // lastInGroup drives the bubble tail.
-        //
-        // INVERTED-LIST INDEXING: the data is newest-first, so the visually
-        // PREVIOUS (older, ABOVE) message is at index+1 and the visually NEXT
-        // (newer, BELOW) message is at index-1 — the opposite of a normal list.
-        const prev = c.messagesReversed[index + 1]; // older, above
-        const next = c.messagesReversed[index - 1]; // newer, below
-        const within = (a?: ChatMessage, b?: ChatMessage) =>
-          !!a &&
-          !!b &&
-          a.sender_id === b.sender_id &&
-          Math.abs(
-            new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-          ) <= 300000;
-        const firstInGroup = !within(prev, item);
-        const lastInGroup = !within(item, next);
-        // Signal-style day divider. The list is INVERTED so a row's visual TOP
-        // is rendered AFTER the bubble; `prev` (index+1) is the older message
-        // ABOVE. We show the divider when this message starts a new calendar
-        // day relative to the older neighbour (or it's the oldest message).
-        const showDaySeparator = !prev || !isSameDay(prev.created_at, item.created_at);
-        return (
-          <View>
-            <MessageBubble
-              message={item}
-              mine={mine}
-              deleted={!!item.deleted_at}
-              starred={c.starredIds.has(item.id)}
-              pinned={!!item.pinned_at}
-              participantCount={c.participantCount}
-              readReceipts={c.readReceipts}
-              userId={c.user?.id}
-              firstInGroup={firstInGroup}
-              lastInGroup={lastInGroup}
-              highlighted={c.highlightedId === item.id}
-              selected={c.selectedIds.has(item.id)}
-              selectionActive={c.selectionMode}
-              registerRef={c.registerBubbleRef}
-              onLongPress={c.openReactionBar}
-              onPressSelect={c.toggleSelect}
-              onReact={c.react}
-              onAddReaction={c.openReactionBar}
-              onReply={c.startReply}
-              onRetry={c.retryFailedMessage}
-              onCancelUpload={c.cancelMediaUpload}
-              onRetryUpload={c.retryMediaUpload}
-              onJumpToReply={c.jumpToReply}
-            />
-            {showDaySeparator ? (
-              <View style={styles.daySeparator}>
-                <View style={styles.dayPill}>
-                  <Text style={styles.dayPillText}>
-                    {fmtDaySeparator(item.created_at)}
-                  </Text>
+      <FlatList
+        ref={c.listRef as React.RefObject<FlatList<ChatMessage>>}
+        // INVERTED list (Signal-Android model). The data is newest-first
+        // (`messagesReversed`) and `inverted` flips the visual axis so index 0
+        // sits at the visual BOTTOM. This pins the newest message to the bottom
+        // STRUCTURALLY — opening/closing the keyboard or sending a message can
+        // never push it under the composer, and no scroll math is needed to stick
+        // to the bottom (fixes "last message hides during typing / I have to
+        // scroll down to see my sent message").
+        inverted
+        data={c.messagesReversed}
+        extraData={c.listSignature}
+        // Stable row identity across the optimistic→confirmed swap. An optimistic
+        // message starts with a temporary NEGATIVE id; when the server confirms it
+        // over the socket the row is replaced with the positive server id. Keying
+        // by `id` alone changed the key on that swap → FlatList unmounted the old
+        // row and mounted a new one, replaying the bubble's FadeIn entering
+        // animation (the visible "blink"/settle on send). The confirmed message
+        // keeps the same `clientMsgId`, so keying by it first keeps ONE row
+        // instance that updates in place — no remount, no second animation
+        // (Signal keeps a single view from "sending" through "sent").
+        keyExtractor={(m) => m.clientMsgId ?? String(m.id)}
+        // `flex: 1` is load-bearing: without it the FlatList doesn't claim the
+        // available column height.
+        style={styles.listFlex}
+        contentContainerStyle={styles.list}
+        // Track scroll distance from the visual bottom (offset 0 in an inverted
+        // list). Show the "scroll to bottom" pill once the user has scrolled up
+        // past ~1.5 screens of history.
+        onScroll={(e) => {
+          const y = e.nativeEvent.contentOffset.y;
+          const next = y > 400;
+          if (next !== showScrollBtn) setShowScrollBtn(next);
+        }}
+        scrollEventThrottle={16}
+        onScrollToIndexFailed={() => {
+          setTimeout(() => c.scrollToEnd(false), 200);
+        }}
+        // Older history lives at the visual TOP — which in an inverted list is the
+        // END of the scroll range — so `onEndReached` is the "scrolled up to the
+        // top" trigger. Load the previous page there (replaces the old header
+        // button + onContentSizeChange stick-to-bottom hack).
+        onEndReached={() => {
+          if (!c.prependingRef.current) c.loadOlder();
+        }}
+        onEndReachedThreshold={0.4}
+        // Android clips off-screen subviews by default; when a reaction is
+        // toggled the bubble's height GROWS (a new chip row appears). With
+        // clipping on, the freshly-grown region wasn't repainted until the
+        // row scrolled — making the reaction look delayed. Disabling it
+        // forces the chip to paint instantly (matches the web).
+        removeClippedSubviews={false}
+        // Windowing tuned for SMOOTH scrolling on long threads (Signal-Android
+        // feel): a small initial batch paints the thread fast on open, a larger
+        // render window keeps off-screen rows mounted so fast flings don't reveal
+        // blank gaps, and a short batching period commits new rows quickly.
+        initialNumToRender={12}
+        maxToRenderPerBatch={12}
+        windowSize={21}
+        updateCellsBatchingPeriod={30}
+        // In an inverted list the FOOTER renders at the visual TOP, so the
+        // "load earlier" spinner/button belongs here (not the header).
+        ListFooterComponent={
+          c.hasMore ? (
+            <Pressable
+              style={styles.loadOlderBtn}
+              onPress={c.loadOlder}
+              disabled={c.loadingOlder}
+            >
+              {c.loadingOlder ? (
+                <ActivityIndicator size="small" color={theme.primary} />
+              ) : (
+                <Text style={styles.loadOlderText}>Load earlier messages</Text>
+              )}
+            </Pressable>
+          ) : null
+        }
+        renderItem={({ item, index }) => {
+          // Type-safe ownership: sender_id / user.id can mismatch number vs
+          // string, which previously hid Edit/Delete in the reaction overlay.
+          const mine = Number(item.sender_id) === Number(c.user?.id);
+          // Consecutive-message grouping (same sender within 5 min) — see
+          // docs/CHAT_DESIGN_SPEC.md §4. firstInGroup drives the sender name,
+          // lastInGroup drives the bubble tail.
+          //
+          // INVERTED-LIST INDEXING: the data is newest-first, so the visually
+          // PREVIOUS (older, ABOVE) message is at index+1 and the visually NEXT
+          // (newer, BELOW) message is at index-1 — the opposite of a normal list.
+          const prev = c.messagesReversed[index + 1]; // older, above
+          const next = c.messagesReversed[index - 1]; // newer, below
+          const within = (a?: ChatMessage, b?: ChatMessage) =>
+            !!a &&
+            !!b &&
+            a.sender_id === b.sender_id &&
+            Math.abs(
+              new Date(b.created_at).getTime() -
+                new Date(a.created_at).getTime(),
+            ) <= 300000;
+          const firstInGroup = !within(prev, item);
+          const lastInGroup = !within(item, next);
+          // Signal-style day divider. The list is INVERTED so a row's visual TOP
+          // is rendered AFTER the bubble; `prev` (index+1) is the older message
+          // ABOVE. We show the divider when this message starts a new calendar
+          // day relative to the older neighbour (or it's the oldest message).
+          const showDaySeparator =
+            !prev || !isSameDay(prev.created_at, item.created_at);
+          return (
+            <View>
+              <MessageBubble
+                message={item}
+                mine={mine}
+                deleted={!!item.deleted_at}
+                starred={c.starredIds.has(item.id)}
+                pinned={!!item.pinned_at}
+                participantCount={c.participantCount}
+                readReceipts={c.readReceipts}
+                userId={c.user?.id}
+                firstInGroup={firstInGroup}
+                lastInGroup={lastInGroup}
+                highlighted={c.highlightedId === item.id}
+                selected={c.selectedIds.has(item.id)}
+                selectionActive={c.selectionMode}
+                registerRef={c.registerBubbleRef}
+                onLongPress={c.openReactionBar}
+                onPressSelect={c.toggleSelect}
+                onReact={c.react}
+                onAddReaction={c.openReactionBar}
+                onReply={c.startReply}
+                onRetry={c.retryFailedMessage}
+                onCancelUpload={c.cancelMediaUpload}
+                onRetryUpload={c.retryMediaUpload}
+                onJumpToReply={c.jumpToReply}
+              />
+              {showDaySeparator ? (
+                <View style={styles.daySeparator}>
+                  <View style={styles.dayPill}>
+                    <Text style={styles.dayPillText}>
+                      {fmtDaySeparator(item.created_at)}
+                    </Text>
+                  </View>
                 </View>
-              </View>
-            ) : null}
-          </View>
-        );
-      }}
-    />
+              ) : null}
+            </View>
+          );
+        }}
+      />
       {/* Floating "scroll to latest" pill (Signal-style). Fades in/out and
           smooth-scrolls to the newest message when tapped. */}
       {showScrollBtn ? (

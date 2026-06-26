@@ -55,7 +55,10 @@ import {
 } from "../../features";
 import { socket } from "../../realtime/socket";
 import { setActiveConversation } from "../../realtime/activeConversation";
-import { emitChatUnreadChanged, chatUnreadManager } from "../../realtime/chatUnreadEvents";
+import {
+  emitChatUnreadChanged,
+  chatUnreadManager,
+} from "../../realtime/chatUnreadEvents";
 import { subscribeChatJump } from "../../realtime/chatJumpEvents";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 import { hydrateEmojiStore } from "../../emoji/emojiStore";
@@ -82,7 +85,11 @@ type PendingMediaSource = {
 
 type ConversationDraft = {
   text: string;
-  replyTo?: { id: number; content?: string | null; sender_name?: string | null } | null;
+  replyTo?: {
+    id: number;
+    content?: string | null;
+    sender_name?: string | null;
+  } | null;
   editing?: { id: number; text?: string | null } | null;
   mediaDrafts: PendingMediaSource[];
 };
@@ -110,7 +117,8 @@ function normalizeUploadedMessage(data: any): ChatMessage {
   if (!data || typeof data !== "object") return data;
   // GET /messages already returns snake_case — if it's already shaped that way
   // (has file_url and no fileUrl), pass through untouched.
-  const isCamel = "fileUrl" in data || "mediaState" in data || "senderId" in data;
+  const isCamel =
+    "fileUrl" in data || "mediaState" in data || "senderId" in data;
   if (!isCamel) return data as ChatMessage;
   return {
     id: data.id,
@@ -125,7 +133,8 @@ function normalizeUploadedMessage(data: any): ChatMessage {
     file_size: data.fileSize ?? data.file_size ?? null,
     reply_to_id: data.replyToId ?? data.reply_to_id ?? null,
     reply_to_content: data.replyContent ?? data.reply_to_content ?? null,
-    reply_to_sender_name: data.replySenderName ?? data.reply_to_sender_name ?? null,
+    reply_to_sender_name:
+      data.replySenderName ?? data.reply_to_sender_name ?? null,
     reply_to_file_url: data.replyFileUrl ?? data.reply_to_file_url ?? null,
     reply_to_file_type: data.replyFileType ?? data.reply_to_file_type ?? null,
     reply_to_file_name: data.replyFileName ?? data.reply_to_file_name ?? null,
@@ -136,7 +145,8 @@ function normalizeUploadedMessage(data: any): ChatMessage {
     media_state: data.mediaState ?? data.media_state ?? null,
     media_stage: data.mediaStage ?? data.media_stage ?? null,
     media_progress: data.mediaProgress ?? data.media_progress ?? null,
-    media_pipeline_meta: data.mediaPipelineMeta ?? data.media_pipeline_meta ?? null,
+    media_pipeline_meta:
+      data.mediaPipelineMeta ?? data.media_pipeline_meta ?? null,
   } as ChatMessage;
 }
 
@@ -285,10 +295,7 @@ export function useChatThread() {
   // `load()` — so the ticks flipped from delivered (muted) → read (accent) a
   // fraction of a second after the chat opened. The network refresh below now
   // just confirms what's already shown instead of causing a visible flip.
-  const cachedReceipts = useMemo(
-    () => getCachedReadStatus(convId),
-    [convId],
-  );
+  const cachedReceipts = useMemo(() => getCachedReadStatus(convId), [convId]);
   const [readReceipts, setReadReceipts] = useState<Record<number, string>>(
     () => cachedReceipts || {},
   );
@@ -351,7 +358,9 @@ export function useChatThread() {
   // for the reaction-bar anchor (Pressable forwards its ref to the host View,
   // which exposes measureInWindow — currentTarget often does not).
   const bubbleRefs = useRef<Map<number, View>>(new Map());
-  const mediaUploadControllers = useRef<Map<number, AbortController>>(new Map());
+  const mediaUploadControllers = useRef<Map<number, AbortController>>(
+    new Map(),
+  );
   const mediaUploadSources = useRef<Map<number, PendingMediaSource>>(new Map());
   // Per-upload throughput sampler: last {timestamp, bytes} so we can derive a
   // live bytes/sec speed for the Signal-style upload label.
@@ -607,7 +616,8 @@ export function useChatThread() {
       setPeerUserId(peerFromParam);
       getChatPresence([peerFromParam])
         .then((r) => {
-          if (active) setPeerStatus(r.data?.[peerFromParam]?.userStatus ?? null);
+          if (active)
+            setPeerStatus(r.data?.[peerFromParam]?.userStatus ?? null);
         })
         .catch(() => {});
       // The header name/avatar were supplied alongside the peer id — nothing to
@@ -683,7 +693,8 @@ export function useChatThread() {
         return;
       }
       if (msg.type === "chat_message_error") {
-        const clientMsgId = typeof d.clientMsgId === "string" ? d.clientMsgId : null;
+        const clientMsgId =
+          typeof d.clientMsgId === "string" ? d.clientMsgId : null;
         if (!clientMsgId) return;
         setMessages((prev) =>
           prev.map((m) =>
@@ -750,16 +761,16 @@ export function useChatThread() {
               media_progress:
                 typeof d.progress === "number"
                   ? d.progress
-                  : m.media_progress ?? null,
+                  : (m.media_progress ?? null),
               media_failure_reason: d.failureReason ?? null,
               _mediaState:
                 d.status === "processing"
                   ? "uploading"
-                  : d.status ?? m._mediaState,
+                  : (d.status ?? m._mediaState),
               _mediaProgress:
                 typeof d.progress === "number"
                   ? d.progress
-                  : m._mediaProgress ?? 0,
+                  : (m._mediaProgress ?? 0),
               _failed: d.status === "failed" || d.status === "cancelled",
               _failureReason:
                 d.failureReason ??
@@ -1024,7 +1035,7 @@ export function useChatThread() {
               ),
             );
           },
-          })
+        })
           .then(({ data }) => {
             const normalized = normalizeUploadedMessage(data);
             setMessages((prev) => {
@@ -1035,7 +1046,10 @@ export function useChatThread() {
                       // Preserve intrinsic dimensions captured optimistically so
                       // the bubble keeps its aspect-ratio size (server metadata
                       // may omit them).
-                      metadata: { ...(m.metadata || {}), ...(normalized.metadata || {}) },
+                      metadata: {
+                        ...(m.metadata || {}),
+                        ...(normalized.metadata || {}),
+                      },
                       _pending: false,
                       _failed: false,
                     }
@@ -1072,7 +1086,8 @@ export function useChatThread() {
                       _mediaState: "failed",
                       _failureReason: cancelled
                         ? "Upload cancelled"
-                        : e?.response?.data?.error || "Could not send this media.",
+                        : e?.response?.data?.error ||
+                          "Could not send this media.",
                     }
                   : m,
               ),
@@ -1186,9 +1201,10 @@ export function useChatThread() {
     }
     // Restore the playback audio session — leaving allowsRecording=true
     // routes/silences subsequent voice-note playback on iOS.
-    setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
-      () => {},
-    );
+    setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+    }).catch(() => {});
     const uri = recorder.uri;
     if (!uri) return;
     enqueueMediaUpload({
@@ -1208,9 +1224,10 @@ export function useChatThread() {
       /* ignore */
     }
     // Same audio-session restore as stopRecordingAndSend.
-    setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(
-      () => {},
-    );
+    setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+    }).catch(() => {});
   }
 
   const uploadSingleMedia = useCallback(
@@ -1246,7 +1263,10 @@ export function useChatThread() {
                 const dt = (now - prevTs.t) / 1000;
                 if (dt > 0 && dBytes > 0) speed = dBytes / dt;
               }
-              uploadProgressTs.current.set(tempId, { t: now, loaded: evt.loaded });
+              uploadProgressTs.current.set(tempId, {
+                t: now,
+                loaded: evt.loaded,
+              });
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === tempId
@@ -1271,7 +1291,10 @@ export function useChatThread() {
                   ...normalized,
                   // Keep intrinsic dimensions from the optimistic message so the
                   // image doesn't reflow when the server row arrives.
-                  metadata: { ...(m.metadata || {}), ...(normalized.metadata || {}) },
+                  metadata: {
+                    ...(m.metadata || {}),
+                    ...(normalized.metadata || {}),
+                  },
                   _pending: false,
                   _failed: false,
                 }
@@ -1414,14 +1437,18 @@ export function useChatThread() {
   useEffect(() => {
     if (!draftHydrated.current) return;
     if (pendingDraftReply.current?.id) {
-      const target = messages.find((m) => m.id === pendingDraftReply.current!.id);
+      const target = messages.find(
+        (m) => m.id === pendingDraftReply.current!.id,
+      );
       if (target) {
         setReplyTo(target);
         pendingDraftReply.current = null;
       }
     }
     if (pendingDraftEditing.current?.id) {
-      const target = messages.find((m) => m.id === pendingDraftEditing.current!.id);
+      const target = messages.find(
+        (m) => m.id === pendingDraftEditing.current!.id,
+      );
       if (target) {
         setEditingId(Number(target.id));
         setText(
@@ -1460,11 +1487,18 @@ export function useChatThread() {
         : null,
       mediaDrafts,
     };
-    if (!payload.text.trim() && !payload.replyTo && !payload.editing && payload.mediaDrafts.length === 0) {
+    if (
+      !payload.text.trim() &&
+      !payload.replyTo &&
+      !payload.editing &&
+      payload.mediaDrafts.length === 0
+    ) {
       SecureStore.deleteItemAsync(draftStorageKey).catch(() => {});
       return;
     }
-      SecureStore.setItemAsync(draftStorageKey, JSON.stringify(payload)).catch(() => {});
+    SecureStore.setItemAsync(draftStorageKey, JSON.stringify(payload)).catch(
+      () => {},
+    );
   }, [draftStorageKey, text, replyTo, editingId, messages]);
 
   async function uploadPickedMedia(
@@ -1513,7 +1547,9 @@ export function useChatThread() {
   const handleCameraPhoto = useCallback(
     (item: { uri: string; width?: number; height?: number }) => {
       setCameraOpen(false);
-      setEditorItems([{ uri: item.uri, width: item.width, height: item.height }]);
+      setEditorItems([
+        { uri: item.uri, width: item.width, height: item.height },
+      ]);
     },
     [],
   );
@@ -1552,7 +1588,9 @@ export function useChatThread() {
           mimeType: item.mimeType || "video/mp4",
         });
       } else {
-        setEditorItems([{ uri: item.uri, width: item.width, height: item.height }]);
+        setEditorItems([
+          { uri: item.uri, width: item.width, height: item.height },
+        ]);
       }
     },
     [enqueueMediaUpload],
@@ -1595,7 +1633,10 @@ export function useChatThread() {
     setTenorOpen(true);
   }
 
-  async function pickTenorMedia(item: { mediaUrl: string }, kind: "gif" | "sticker") {
+  async function pickTenorMedia(
+    item: { mediaUrl: string },
+    kind: "gif" | "sticker",
+  ) {
     try {
       setTenorOpen(false);
       const ext = kind === "sticker" ? "webp" : "gif";
@@ -1693,8 +1734,7 @@ export function useChatThread() {
                     _pending: false,
                     _failed: true,
                     _mediaState: "failed",
-                    _failureReason:
-                      e?.response?.data?.error || "Retry failed",
+                    _failureReason: e?.response?.data?.error || "Retry failed",
                   }
                 : m,
             ),
@@ -1861,9 +1901,7 @@ export function useChatThread() {
     pinMessage(messageId)
       .then(() => {
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === messageId ? { ...m, pinned_at: null } : m,
-          ),
+          prev.map((m) => (m.id === messageId ? { ...m, pinned_at: null } : m)),
         );
         loadPinned();
       })
@@ -2195,9 +2233,7 @@ export function useChatThread() {
     if (targets.length === 0) return;
     closeActionSheet();
     clearSelection();
-    Promise.all(
-      targets.map((m) => forwardMessage(m.id, [targetConvId])),
-    )
+    Promise.all(targets.map((m) => forwardMessage(m.id, [targetConvId])))
       .then(() => {
         // Small defer so the result dialog never collides with the
         // dismissing modal.
@@ -2439,7 +2475,10 @@ export function useChatThread() {
             setMessages((prev) =>
               prev.map((x) =>
                 x.id === m.id
-                  ? { ...x, pinned_at: pinned ? new Date().toISOString() : null }
+                  ? {
+                      ...x,
+                      pinned_at: pinned ? new Date().toISOString() : null,
+                    }
                   : x,
               ),
             );
@@ -2544,12 +2583,34 @@ export function useChatThread() {
     }, 250);
   }
 
-  // Anchor the reaction bar to the long-pressed bubble (mirrors the web
-  // MessageBubble). Measures the bubble's host node directly for reliability.
-  // Long-press ALSO enters selection mode with this single message selected so
-  // the header swaps to the selection action bar (Signal-style).
+  // Enter multi-select mode seeded with one message (the long-press context
+  // menu's "Select" action). Closes the context menu first so the header can
+  // cleanly swap to the selection action bar.
+  function enterSelectionWith(message: ChatMessage) {
+    setReactTarget(null);
+    setReactAnchor(null);
+    setSelectedIds(new Set([message.id]));
+  }
+
+  // Anchor the reaction/context menu to the long-pressed bubble (mirrors the
+  // web MessageBubble). Measures the bubble's host node directly for
+  // reliability.
+  //
+  // IMPORTANT (UX fix): long-press NO LONGER enters multi-select mode. Doing
+  // both at once tangled "react to this message" with "select messages" — the
+  // reaction pill AND the header selection action bar appeared together, which
+  // felt broken. Now long-press opens ONE cohesive context menu (reaction pill
+  // + per-message actions). Multi-select is an explicit "Select" action inside
+  // that menu (Signal / WhatsApp / Telegram model).
   function openReactionBar(item: ChatMessage, mine: boolean) {
-    // Crisp haptic the instant the reaction bar opens (Signal-Android fires a
+    // Already selecting? Long-press just toggles this row in the selection
+    // (Signal/WhatsApp): the context menu is a single-message surface, so it
+    // shouldn't reappear on top of an active multi-select.
+    if (selectedIds.size > 0) {
+      toggleSelect(item);
+      return;
+    }
+    // Crisp haptic the instant the menu opens (Signal-Android fires a
     // performHapticFeedback(LONG_PRESS) on long-press before the overlay
     // animates in). LONG_PRESS is a single short, firm tick — a ~20ms pulse
     // reads closer to it than the previous 12ms blip.
@@ -2558,8 +2619,6 @@ export function useChatThread() {
     } catch {
       /* no-op */
     }
-    // Enter selection mode with just this message selected.
-    setSelectedIds(new Set([item.id]));
     const node = bubbleRefs.current.get(item.id) as unknown as {
       measureInWindow?: (
         cb: (x: number, y: number, width: number, height: number) => void,
@@ -2726,6 +2785,7 @@ export function useChatThread() {
     selectedCount: selectedIds.size,
     toggleSelect,
     clearSelection,
+    enterSelectionWith,
     pinSelected,
     saveSelected,
     copySelected,

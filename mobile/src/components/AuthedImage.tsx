@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
-import { Image, type ImageProps, type ImageStyle, type StyleProp } from "react-native";
+import {
+  Image,
+  type ImageProps,
+  type ImageStyle,
+  type StyleProp,
+} from "react-native";
 import { getToken } from "../auth/tokenStore";
+import { ensureCachedMedia, getCachedMedia } from "./chat/mediaCache";
 
 interface AuthedImageProps extends Omit<ImageProps, "source" | "style"> {
   /** Absolute URL to a protected upload (served behind Bearer auth). */
@@ -14,22 +20,41 @@ interface AuthedImageProps extends Omit<ImageProps, "source" | "style"> {
  * HttpOnly cookie; on mobile we must attach `Authorization: Bearer <jwt>`
  * to the image request or the server returns 401 and the preview stays blank.
  *
- * The token is resolved once on mount (and whenever the uri changes) so the
- * <Image> can carry it as a request header. Returns null while the token is
- * still resolving or when there is no uri to show.
+ * OFFLINE SUPPORT (WhatsApp parity): the image is cached to a persistent local
+ * file the first time it loads (see chat/mediaCache). On every mount we prefer
+ * that local copy — so a previously-seen image still renders with NO network.
+ * Only when nothing is cached do we stream the remote bytes (with the Bearer
+ * header) and warm the cache in the background for next time.
  */
 export function AuthedImage({ uri, style, ...rest }: AuthedImageProps) {
   const [token, setToken] = useState<string | null>(null);
+  // Local cached file uri — when set, it is used directly (works offline) and
+  // needs no auth header.
+  const [localUri, setLocalUri] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
     if (!uri) {
       setToken(null);
+      setLocalUri(null);
       return;
     }
+    setLocalUri(null);
     (async () => {
+      // 1) Already on disk → use it immediately (no network, works offline).
+      const cached = await getCachedMedia(uri);
+      if (!active) return;
+      if (cached) {
+        setLocalUri(cached);
+        return;
+      }
+      // 2) Not cached yet → resolve the token so we can stream it now, and
+      //    download a persistent copy in the background for offline use later.
       const t = await getToken();
       if (active) setToken(t);
+      ensureCachedMedia(uri).then((local) => {
+        if (active && local) setLocalUri(local);
+      });
     })();
     return () => {
       active = false;
@@ -37,6 +62,11 @@ export function AuthedImage({ uri, style, ...rest }: AuthedImageProps) {
   }, [uri]);
 
   if (!uri) return null;
+
+  // Cached local copy is preferred — renders offline, no header needed.
+  if (localUri) {
+    return <Image source={{ uri: localUri }} style={style} {...rest} />;
+  }
 
   // Wait for the auth token before issuing the request. Rendering the <Image>
   // before the token resolves fires an unauthenticated GET → the server

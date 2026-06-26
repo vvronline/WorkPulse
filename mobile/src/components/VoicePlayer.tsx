@@ -15,6 +15,7 @@ import { Pause, Play } from "lucide-react-native";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import { getToken } from "../auth/tokenStore";
+import { ensureCachedMedia, getCachedMedia } from "./chat/mediaCache";
 
 function fmtSecs(ms?: number): string {
   if (!ms || ms < 0) return "0:00";
@@ -66,13 +67,26 @@ export default function VoicePlayer({ uri }: { uri: string }) {
     let active = true;
     (async () => {
       if (loadedUriRef.current === uri) return;
-      const token = await getToken();
+      // OFFLINE SUPPORT (WhatsApp parity): prefer a persistent local copy so a
+      // voice note that was already played keeps playing with no network. Only
+      // stream the remote (with the Bearer header) when nothing is cached yet,
+      // and warm the cache in the background for next time.
+      const cached = await getCachedMedia(uri);
       if (!active) return;
-      try {
-        player.replace({
+      let source: { uri: string; headers?: Record<string, string> };
+      if (cached) {
+        source = { uri: cached };
+      } else {
+        const token = await getToken();
+        if (!active) return;
+        source = {
           uri,
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        });
+        };
+        ensureCachedMedia(uri).catch(() => {});
+      }
+      try {
+        player.replace(source);
         loadedUriRef.current = uri;
         setLoaded(true);
         // New clip — forget the previous clip's latched duration so the label
@@ -143,14 +157,23 @@ export default function VoicePlayer({ uri }: { uri: string }) {
     } catch {
       /* non-fatal */
     }
-    // If the token wasn't ready on mount (rare), retry loading now.
+    // If the source wasn't ready on mount (rare), retry loading now — again
+    // preferring a cached local copy so playback works offline.
     if (!loaded && loadedUriRef.current !== uri) {
-      const token = await getToken();
-      try {
-        player.replace({
+      const cached = await getCachedMedia(uri);
+      let source: { uri: string; headers?: Record<string, string> };
+      if (cached) {
+        source = { uri: cached };
+      } else {
+        const token = await getToken();
+        source = {
           uri,
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        });
+        };
+        ensureCachedMedia(uri).catch(() => {});
+      }
+      try {
+        player.replace(source);
         loadedUriRef.current = uri;
         setLoaded(true);
       } catch {
