@@ -1,17 +1,16 @@
 {
+  // Base config ships inside the `expo` package (node_modules/expo/tsconfig.base.json).
+  // It sets module="preserve" + moduleResolution="bundler"; the options below only
+  // layer strictness on top.
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
     "jsx": "react-jsx",
-    "moduleResolution": "bundler"
+    "moduleResolution": "bundler",
+    // Skip type-checking of dependency .d.ts files: faster, and avoids spurious
+    // errors from mismatched @types across the React Native / Expo dep tree.
+    "skipLibCheck": true,
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx"
-  ],
-  "exclude": [
-    "**/__tests__/**",
-    "**/*.test.ts",
-    "**/*.test.tsx"
-  ]
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["**/__tests__/**", "**/*.test.ts", "**/*.test.tsx"],
 }

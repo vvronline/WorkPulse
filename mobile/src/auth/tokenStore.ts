@@ -1,5 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 
+// Secure JWT storage backed by the OS keychain/keystore (expo-secure-store).
 const TOKEN_KEY = "wp_auth_token";
 
 /** Read the persisted JWT, or null if not signed in. */

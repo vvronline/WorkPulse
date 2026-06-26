@@ -44,7 +44,9 @@ function readJSON<T>(key: string): T | null {
 
 // ── Messages ────────────────────────────────────────────────────────────────
 
-export function getCachedMessages(conversationId: number): ChatMessage[] | null {
+export function getCachedMessages(
+  conversationId: number,
+): ChatMessage[] | null {
   return readJSON<ChatMessage[]>(`${THREAD_PREFIX}${conversationId}`);
 }
 
@@ -88,6 +90,34 @@ export function setCachedReadStatus(
 
 export function getCachedConversations(): Conversation[] | null {
   return readJSON<Conversation[]>(CONVERSATIONS_KEY);
+}
+
+// ── Whole-cache wipe (sign-out / account switch) ─────────────────────────────
+
+/**
+ * Drop EVERY cached chat artifact (conversation list, per-thread messages,
+ * read-receipt maps and the per-conversation "delete for me" lists).
+ *
+ * Critical for multi-tenant correctness: these caches are keyed only by
+ * `conversationId`, which is unique only WITHIN a tenant database. If user A
+ * (tenant 1) signs out and user B (tenant 2) signs in on the same device, the
+ * chat UI seeds its initial state synchronously from this cache — without a
+ * wipe it would paint user A's conversation list/messages, and any
+ * conversation-id collision across tenants would show tenant 1's messages
+ * inside tenant 2's thread. Must be called on logout (see auth/AuthContext).
+ */
+export function clearAllChatCache(): void {
+  // All chat artifacts share the `chat:` key prefix (chat:thread:*,
+  // chat:readstatus:*, chat:conversations, chat:localdeletes:*), so a single
+  // prefix sweep covers every cache without touching unrelated MMKV keys
+  // (e.g. zustand persisted state).
+  try {
+    for (const key of storage.getAllKeys()) {
+      if (key.startsWith("chat:")) storage.remove(key);
+    }
+  } catch {
+    /* best-effort — a failed wipe must not block sign-out */
+  }
 }
 
 export function setCachedConversations(

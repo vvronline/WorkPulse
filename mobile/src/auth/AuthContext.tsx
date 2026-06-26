@@ -6,6 +6,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { clearToken, getToken, setToken } from "./tokenStore";
 import {
@@ -27,6 +28,8 @@ import {
   clearPendingCall,
   clearPersistedPendingCall,
 } from "../realtime/pendingCall";
+import { clearAllChatCache } from "../storage/chatCache";
+import { clearMediaCache } from "../components/chat/mediaCache";
 
 export type User = {
   id: number;
@@ -50,10 +53,7 @@ export type User = {
  * Fail-closed feature check (mirrors client/src/FeaturesContext.tsx).
  * Platform admins with no tenant are never gated. A missing key = off.
  */
-export function userHasFeature(
-  user: User | null,
-  name: string,
-): boolean {
+export function userHasFeature(user: User | null, name: string): boolean {
   if (!user) return false;
   if (user.role === "platform_admin" && !user.tenant_id) return true;
   const features = user.tenant_features;
@@ -87,12 +87,14 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [biometricEnrolled, setBiometricEnrolled] = useState(false);
   const [biometricLabel, setBiometricLabel] = useState("Biometric Login");
-  const [biometricKind, setBiometricKind] = useState<BiometricKind>("biometric");
+  const [biometricKind, setBiometricKind] =
+    useState<BiometricKind>("biometric");
 
   // Probe biometric hardware + local credential once at mount so the login
   // screen can decide whether to show the biometric button, and with what
@@ -166,8 +168,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     socket.disconnect();
     await clearToken();
+
+    // Wipe on-device chat caches BEFORE dropping the session. These caches are
+    // keyed only by conversationId (unique only within a tenant DB), so leaving
+    // them in place would let the NEXT account to sign in on this device read
+    // the previous user's cached conversation list / messages — a cross-tenant
+    // data leak on shared devices. Both are best-effort and must not throw.
+    try {
+      clearAllChatCache();
+    } catch {
+      // ignore — best-effort
+    }
+    try {
+      await clearMediaCache();
+    } catch {
+      // ignore — best-effort
+    }
+
+    // Drop the in-memory React Query cache so the next account to sign in on
+    // this device (without an app restart) can't briefly read the previous
+    // user's cached server data while it's still within staleTime.
+    try {
+      queryClient.clear();
+    } catch {
+      // ignore — best-effort
+    }
+
     setUser(null);
-  }, []);
+  }, [queryClient]);
 
   // Restore session on launch: if a token exists, hydrate the profile.
   useEffect(() => {
@@ -200,29 +228,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       void clearToken();
+      // Same cross-tenant concern as the explicit logout(): drop cached chat
+      // artifacts so a different account signing in next can't read them.
+      try {
+        clearAllChatCache();
+      } catch {
+        /* best-effort */
+      }
+      void clearMediaCache();
+      try {
+        queryClient.clear();
+      } catch {
+        /* best-effort */
+      }
       setUser(null);
     });
     return () => setUnauthorizedHandler(null);
-  }, []);
+  }, [queryClient]);
 
   // Shared post-auth hydration: persist the token, seed user state, connect
   // the realtime socket, then re-fetch the full profile (which carries the
   // plan/feature flags the login payload omits). Used by both password and
   // biometric login so the two paths stay in lock-step.
-  const completeSession = useCallback(
-    async (token: string, seedUser: User) => {
-      await setToken(token);
-      setUser(seedUser);
-      socket.connect();
-      try {
-        const profile = await api.get<User>("/profile");
-        if (profile.data) setUser(profile.data);
-      } catch {
-        // Non-fatal — keep the seed payload; session-restore hydrates later.
-      }
-    },
-    [],
-  );
+  const completeSession = useCallback(async (token: string, seedUser: User) => {
+    await setToken(token);
+    setUser(seedUser);
+    socket.connect();
+    try {
+      const profile = await api.get<User>("/profile");
+      if (profile.data) setUser(profile.data);
+    } catch {
+      // Non-fatal — keep the seed payload; session-restore hydrates later.
+    }
+  }, []);
 
   const login = useCallback(
     async (username: string, password: string) => {

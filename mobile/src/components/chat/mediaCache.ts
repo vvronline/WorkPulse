@@ -142,3 +142,21 @@ export async function ensureCachedMedia(
   inflight.set(remote, job);
   return job;
 }
+
+/**
+ * Delete the entire on-device media cache and reset the in-memory lookup.
+ *
+ * Called on sign-out so downloaded chat images/voice notes from the previous
+ * account (potentially a different tenant) are not left readable on a shared
+ * device. Best-effort: failures must never block logout.
+ */
+export async function clearMediaCache(): Promise<void> {
+  memo.clear();
+  inflight.clear();
+  dirReady = null;
+  try {
+    await FileSystem.deleteAsync(DIR, { idempotent: true });
+  } catch {
+    /* best-effort */
+  }
+}
