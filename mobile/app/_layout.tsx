@@ -2,10 +2,12 @@ import "react-native-gesture-handler";
 import { useEffect } from "react";
 import { Text as RNText, TextInput as RNTextInput } from "react-native";
 import { useFonts } from "expo-font";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { interFontMap, FONTS } from "../src/fonts";
+import { mmkvQueryPersister } from "../src/storage/queryPersister";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../src/auth/AuthContext";
@@ -29,9 +31,15 @@ import {
   ThemedAlertHost,
 } from "../src/dialogs/themedAlertBridge";
 
+// Keep cached data for 24h so a killed-state relaunch can paint instantly from
+// the persisted MMKV cache (stale-while-revalidate) instead of spinning while
+// every screen re-fetches. `staleTime` controls how long cached data is served
+// before a background refetch; `gcTime` must be >= the persister maxAge or the
+// in-memory entry would be garbage-collected before it's restored.
+const ONE_DAY = 24 * 60 * 60 * 1000;
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 1, staleTime: 30_000 },
+    queries: { retry: 1, staleTime: 60_000, gcTime: ONE_DAY },
   },
 });
 
@@ -268,7 +276,10 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <QueryClientProvider client={queryClient}>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{ persister: mmkvQueryPersister, maxAge: ONE_DAY }}
+      >
         <AuthProvider>
           <ThemeProvider>
             <SafeAreaProvider>
@@ -287,7 +298,7 @@ export default function RootLayout() {
             </SafeAreaProvider>
           </ThemeProvider>
         </AuthProvider>
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </GestureHandlerRootView>
   );
 }

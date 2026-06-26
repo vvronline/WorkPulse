@@ -1,18 +1,16 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState } from "react";
-import { ActivityIndicator,
+  ActivityIndicator,
   Alert,
   Pressable,
   RefreshControl,
   ScrollView,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
   Building2,
@@ -73,6 +71,19 @@ import type { WidgetsData } from "../../src/components/analytics/WidgetsGrid";
 import { makeStyles } from "./attendance.styles";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
+
+// Stable empty references so memoized derivations don't recompute every render
+// while the query is still loading (data is undefined until the first resolve).
+const EMPTY_ENTRIES: Record<string, HistoryEntry> = {};
+const EMPTY_LEAVES: Leave[] = [];
+const EMPTY_HOLIDAYS: Holiday[] = [];
+
+type OverviewData = {
+  entries: Record<string, HistoryEntry>;
+  leaves: Leave[];
+  holidays: Holiday[];
+  org: OrgInfo | null;
+};
 
 function ymd(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
@@ -186,7 +197,9 @@ function TabBtn({
       onPress={onPress}
     >
       <Icon size={15} color={active ? "#fff" : theme.textSecondary} />
-      <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
+      <Text style={[styles.tabText, active && styles.tabTextActive]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
@@ -204,18 +217,57 @@ type DayKind =
   | "future"
   | "none";
 
+async function fetchOverview(cursor: Date): Promise<OverviewData> {
+  const grid = buildMonthGrid(
+    new Date(cursor.getFullYear(), cursor.getMonth(), 1),
+  );
+  const from = ymd(grid[0]);
+  const to = ymd(grid[41]);
+  const [histRes, leavesRes, holRes, orgRes] = await Promise.allSettled([
+    getTrackerHistory(from, to),
+    getLeaves(from, to),
+    getHolidays(cursor.getFullYear()),
+    getCurrentOrg(),
+  ]);
+  const entries: Record<string, HistoryEntry> = {};
+  if (histRes.status === "fulfilled") {
+    (histRes.value.data || []).forEach((e) => {
+      entries[e.date.slice(0, 10)] = e;
+    });
+  }
+  return {
+    entries,
+    leaves: leavesRes.status === "fulfilled" ? leavesRes.value.data || [] : [],
+    holidays: holRes.status === "fulfilled" ? holRes.value.data || [] : [],
+    org: orgRes.status === "fulfilled" ? orgRes.value.data || null : null,
+  };
+}
+
 function OverviewTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const KIND_DOT = useMemo(() => makeKindDot(theme), [theme]);
+  const queryClient = useQueryClient();
   const [cursor, setCursor] = useState(new Date());
   const [selected, setSelected] = useState(ymd(new Date()));
-  const [entries, setEntries] = useState<Record<string, HistoryEntry>>({});
-  const [leaves, setLeaves] = useState<Leave[]>([]);
-  const [holidays, setHolidays] = useState<Holiday[]>([]);
-  const [org, setOrg] = useState<OrgInfo | null>(null);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Stale-while-revalidate per visible month. Cached data (restored from MMKV on
+  // a cold start, or from a previous visit) renders the calendar instantly while
+  // a background refetch keeps it current — no full-screen spinner on tab switch.
+  const overviewKey = useMemo(
+    () => ["attendance", "overview", cursor.getFullYear(), cursor.getMonth()],
+    [cursor],
+  );
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: overviewKey,
+    queryFn: () => fetchOverview(cursor),
+  });
+  const entries = data?.entries ?? EMPTY_ENTRIES;
+  const leaves = data?.leaves ?? EMPTY_LEAVES;
+  const holidays = data?.holidays ?? EMPTY_HOLIDAYS;
+  const org = data?.org ?? null;
+  const loading = isLoading;
 
   const monthDays = useMemo(() => buildMonthGrid(cursor), [cursor]);
   const todayKey = ymd(new Date());
@@ -238,42 +290,13 @@ function OverviewTab() {
     return 4;
   }, [org]);
 
-  const load = useCallback(async () => {
-    const grid = buildMonthGrid(
-      new Date(cursor.getFullYear(), cursor.getMonth(), 1),
-    );
-    const from = ymd(grid[0]);
-    const to = ymd(grid[41]);
-    try {
-      const [histRes, leavesRes, holRes, orgRes] = await Promise.allSettled([
-        getTrackerHistory(from, to),
-        getLeaves(from, to),
-        getHolidays(cursor.getFullYear()),
-        getCurrentOrg(),
-      ]);
-      if (histRes.status === "fulfilled") {
-        const map: Record<string, HistoryEntry> = {};
-        (histRes.value.data || []).forEach((e) => {
-          map[e.date.slice(0, 10)] = e;
-        });
-        setEntries(map);
-      }
-      setLeaves(
-        leavesRes.status === "fulfilled" ? leavesRes.value.data || [] : [],
-      );
-      setHolidays(holRes.status === "fulfilled" ? holRes.value.data || [] : []);
-      setOrg(orgRes.status === "fulfilled" ? orgRes.value.data || null : null);
-    } catch {
-      /* ignore */
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [cursor]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Background-refresh the visible month whenever the tab regains focus: marks
+  // the query stale so it refetches while cached calendar data stays on screen.
+  useFocusEffect(
+    useCallback(() => {
+      queryClient.invalidateQueries({ queryKey: overviewKey });
+    }, [queryClient, overviewKey]),
+  );
 
   const leaveMap = useMemo(() => {
     const m = new Map<string, Leave>();
@@ -356,7 +379,7 @@ function OverviewTab() {
           refreshing={refreshing}
           onRefresh={() => {
             setRefreshing(true);
-            load();
+            refetch().finally(() => setRefreshing(false));
           }}
           tintColor={theme.primary}
         />
@@ -364,7 +387,10 @@ function OverviewTab() {
     >
       <View style={styles.monthHeader}>
         <Text style={styles.monthLabel}>
-          {cursor.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+          {cursor.toLocaleDateString("en-US", {
+            month: "long",
+            year: "numeric",
+          })}
         </Text>
         <View style={styles.monthNav}>
           <Pressable
@@ -400,7 +426,10 @@ function OverviewTab() {
 
       {/* Legend */}
       <View style={styles.legend}>
-        <LegendItem color={theme.success} label={`Present (≥${minHoursPresent}h)`} />
+        <LegendItem
+          color={theme.success}
+          label={`Present (≥${minHoursPresent}h)`}
+        />
         <LegendItem color={theme.danger} label="Absent" />
         <LegendItem color="#0ea5e9" label="Leave" />
         <LegendItem color={theme.warning} label="Pending" />
@@ -445,7 +474,9 @@ function OverviewTab() {
                   {d.getDate()}
                 </Text>
                 {dotColor ? (
-                  <View style={[styles.workDot, { backgroundColor: dotColor }]} />
+                  <View
+                    style={[styles.workDot, { backgroundColor: dotColor }]}
+                  />
                 ) : (
                   <View style={styles.workDotSpacer} />
                 )}
@@ -457,8 +488,16 @@ function OverviewTab() {
 
       {/* Monthly stats */}
       <View style={styles.statsRow}>
-        <StatCard label="Present" value={String(stats.present)} color={theme.success} />
-        <StatCard label="Absent" value={String(stats.absent)} color={theme.danger} />
+        <StatCard
+          label="Present"
+          value={String(stats.present)}
+          color={theme.success}
+        />
+        <StatCard
+          label="Absent"
+          value={String(stats.absent)}
+          color={theme.danger}
+        />
         <StatCard label="Leave" value={String(stats.leave)} color="#0ea5e9" />
         <StatCard
           label="Holiday"
@@ -475,7 +514,9 @@ function OverviewTab() {
             day: "numeric",
           })}
         </Text>
-        {loading ? <ActivityIndicator color={theme.primary} size="small" /> : null}
+        {loading ? (
+          <ActivityIndicator color={theme.primary} size="small" />
+        ) : null}
       </View>
 
       {sel && (sel.clock_in || (sel.floorMinutes ?? 0) > 0) ? (
@@ -514,10 +555,15 @@ function OverviewTab() {
         </View>
       ) : selHoliday ? (
         <View style={styles.detailCard}>
-          <DetailRow label="Holiday" value={selHoliday.name || "Public holiday"} />
+          <DetailRow
+            label="Holiday"
+            value={selHoliday.name || "Public holiday"}
+          />
         </View>
       ) : (
-        <Text style={styles.emptyDetail}>No attendance recorded for this day.</Text>
+        <Text style={styles.emptyDetail}>
+          No attendance recorded for this day.
+        </Text>
       )}
     </ScrollView>
   );
@@ -591,7 +637,9 @@ function ManualTab() {
   const [clockIn, setClockIn] = useState("09:00");
   const [clockOut, setClockOut] = useState("18:00");
   const [skipClockOut, setSkipClockOut] = useState(false);
-  const [breaks, setBreaks] = useState<BreakItem[]>([{ start: "13:00", end: "13:30" }]);
+  const [breaks, setBreaks] = useState<BreakItem[]>([
+    { start: "13:00", end: "13:30" },
+  ]);
   const [workMode, setWorkMode] = useState<"office" | "remote">("office");
   const [busy, setBusy] = useState(false);
 
@@ -603,7 +651,9 @@ function ManualTab() {
   const [currentlyClocked, setCurrentlyClocked] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
 
-  const [pendingRequests, setPendingRequests] = useState<ManualEntryRequest[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<ManualEntryRequest[]>(
+    [],
+  );
 
   const todayKey = ymd(new Date());
 
@@ -697,7 +747,9 @@ function ManualTab() {
   const removeBreak = (i: number) =>
     setBreaks((b) => b.filter((_, idx) => idx !== i));
   const updateBreak = (i: number, field: keyof BreakItem, value: string) =>
-    setBreaks((b) => b.map((item, idx) => (idx === i ? { ...item, [field]: value } : item)));
+    setBreaks((b) =>
+      b.map((item, idx) => (idx === i ? { ...item, [field]: value } : item)),
+    );
 
   async function submit() {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -709,7 +761,10 @@ function ManualTab() {
       return;
     }
     if (!skipClockOut && !/^\d{2}:\d{2}$/.test(clockOut)) {
-      Alert.alert("Invalid time", 'Set a logout time or check "Still working".');
+      Alert.alert(
+        "Invalid time",
+        'Set a logout time or check "Still working".',
+      );
       return;
     }
     setBusy(true);
@@ -785,8 +840,8 @@ function ManualTab() {
         <View style={[styles.warnCard, styles.warnLeave]}>
           <Text style={styles.warnTitle}>Leave recorded on this date</Text>
           <Text style={styles.warnBody}>
-            You have a {leaveOnDate.leave_type} leave on {date}. Remove the leave
-            from the Leaves tab first to add a manual entry.
+            You have a {leaveOnDate.leave_type} leave on {date}. Remove the
+            leave from the Leaves tab first to add a manual entry.
           </Text>
         </View>
       ) : null}
@@ -805,7 +860,9 @@ function ManualTab() {
       {/* Existing entries panel */}
       {existingEntries && !isEditMode && !currentlyClocked && !leaveOnDate ? (
         <View style={[styles.warnCard, styles.warnExisting]}>
-          <Text style={styles.warnTitle}>Entries already exist for this date</Text>
+          <Text style={styles.warnTitle}>
+            Entries already exist for this date
+          </Text>
           <View style={{ gap: 6, marginTop: 8 }}>
             {existingEntries.map((e, i) => (
               <View key={i} style={styles.existingRow}>
@@ -818,7 +875,10 @@ function ManualTab() {
               </View>
             ))}
           </View>
-          <Pressable style={styles.editExistingBtn} onPress={handleEditExisting}>
+          <Pressable
+            style={styles.editExistingBtn}
+            onPress={handleEditExisting}
+          >
             <FileEdit size={14} color="#fff" />
             <Text style={styles.editExistingText}>Edit These Entries</Text>
           </Pressable>
@@ -831,7 +891,10 @@ function ManualTab() {
           <Text style={styles.label}>Work Mode</Text>
           <View style={styles.modeRow}>
             <Pressable
-              style={[styles.modeChip, workMode === "office" && styles.modeChipActive]}
+              style={[
+                styles.modeChip,
+                workMode === "office" && styles.modeChipActive,
+              ]}
               onPress={() => setWorkMode("office")}
             >
               <Building2
@@ -839,13 +902,19 @@ function ManualTab() {
                 color={workMode === "office" ? "#fff" : theme.textSecondary}
               />
               <Text
-                style={[styles.modeText, workMode === "office" && styles.modeTextActive]}
+                style={[
+                  styles.modeText,
+                  workMode === "office" && styles.modeTextActive,
+                ]}
               >
                 Office
               </Text>
             </Pressable>
             <Pressable
-              style={[styles.modeChip, workMode === "remote" && styles.modeChipActive]}
+              style={[
+                styles.modeChip,
+                workMode === "remote" && styles.modeChipActive,
+              ]}
               onPress={() => setWorkMode("remote")}
             >
               <House
@@ -853,7 +922,10 @@ function ManualTab() {
                 color={workMode === "remote" ? "#fff" : theme.textSecondary}
               />
               <Text
-                style={[styles.modeText, workMode === "remote" && styles.modeTextActive]}
+                style={[
+                  styles.modeText,
+                  workMode === "remote" && styles.modeTextActive,
+                ]}
               >
                 Remote
               </Text>
@@ -964,9 +1036,16 @@ function ManualTab() {
   );
 }
 
-const STATUS_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+const STATUS_BADGE: Record<
+  string,
+  { label: string; color: string; bg: string }
+> = {
   pending: { label: "Pending", color: "#f59e0b", bg: "rgba(245,158,11,0.12)" },
-  approved: { label: "Approved", color: "#10b981", bg: "rgba(16,185,129,0.12)" },
+  approved: {
+    label: "Approved",
+    color: "#10b981",
+    bg: "rgba(16,185,129,0.12)",
+  },
   rejected: { label: "Rejected", color: "#ef4444", bg: "rgba(239,68,68,0.12)" },
 };
 
@@ -1033,7 +1112,11 @@ function OvertimeSection() {
       </View>
 
       <Text style={styles.label}>Date</Text>
-      <DatePicker value={otDate} onChange={setOtDate} maxDate={ymd(new Date())} />
+      <DatePicker
+        value={otDate}
+        onChange={setOtDate}
+        maxDate={ymd(new Date())}
+      />
 
       <Text style={styles.label}>Extra Hours</Text>
       <TextInput
@@ -1217,11 +1300,17 @@ function AnalyticsTab() {
         {RANGES.map((r) => (
           <Pressable
             key={String(r.value)}
-            style={[styles.rangeChip, range === r.value && styles.rangeChipActive]}
+            style={[
+              styles.rangeChip,
+              range === r.value && styles.rangeChipActive,
+            ]}
             onPress={() => setRange(r.value)}
           >
             <Text
-              style={[styles.rangeText, range === r.value && styles.rangeTextActive]}
+              style={[
+                styles.rangeText,
+                range === r.value && styles.rangeTextActive,
+              ]}
             >
               {r.label}
             </Text>
@@ -1254,7 +1343,10 @@ function AnalyticsTab() {
       {/* Export toolbar */}
       <View style={styles.exportRow}>
         <Pressable
-          style={[styles.exportBtn, exporting === "csv" && styles.exportBtnBusy]}
+          style={[
+            styles.exportBtn,
+            exporting === "csv" && styles.exportBtnBusy,
+          ]}
           onPress={() => onExport("csv")}
           disabled={!!exporting}
         >
@@ -1266,7 +1358,10 @@ function AnalyticsTab() {
           <Text style={styles.exportText}>CSV</Text>
         </Pressable>
         <Pressable
-          style={[styles.exportBtn, exporting === "pdf" && styles.exportBtnBusy]}
+          style={[
+            styles.exportBtn,
+            exporting === "pdf" && styles.exportBtnBusy,
+          ]}
           onPress={() => onExport("pdf")}
           disabled={!!exporting}
         >
@@ -1305,8 +1400,16 @@ function AnalyticsTab() {
                   title="Time Distribution"
                   icon={<PieChart size={16} color={theme.text} />}
                   slices={[
-                    { label: "Work Time", value: totalWorked, color: "#0ea5e9" },
-                    { label: "Break Time", value: totalBreak, color: "#f59e0b" },
+                    {
+                      label: "Work Time",
+                      value: totalWorked,
+                      color: "#0ea5e9",
+                    },
+                    {
+                      label: "Break Time",
+                      value: totalBreak,
+                      color: "#f59e0b",
+                    },
                   ]}
                   formatValue={(v) => formatTime(v)}
                 />
@@ -1315,7 +1418,11 @@ function AnalyticsTab() {
                   icon={<Building2 size={16} color={theme.text} />}
                   slices={[
                     { label: "Office", value: officeDays, color: "#0ea5e9" },
-                    { label: "Remote", value: remoteDays, color: theme.success },
+                    {
+                      label: "Remote",
+                      value: remoteDays,
+                      color: theme.success,
+                    },
                   ]}
                   formatValue={(v) => `${v} days`}
                 />

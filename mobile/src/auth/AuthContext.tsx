@@ -29,6 +29,7 @@ import {
   clearPersistedPendingCall,
 } from "../realtime/pendingCall";
 import { clearAllChatCache } from "../storage/chatCache";
+import { mmkvQueryPersister } from "../storage/queryPersister";
 import { clearMediaCache } from "../components/chat/mediaCache";
 
 export type User = {
@@ -193,6 +194,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // ignore — best-effort
     }
+    // Also drop the PERSISTED query snapshot from disk. clear() above empties
+    // the in-memory cache (which the persister eventually mirrors), but a kill
+    // before that async write lands would leave the previous tenant's cached
+    // data on disk to be restored under the next account. Removing it here is
+    // the same multi-tenant safeguard as clearAllChatCache() above.
+    try {
+      mmkvQueryPersister.removeClient();
+    } catch {
+      // ignore — best-effort
+    }
 
     setUser(null);
   }, [queryClient]);
@@ -238,6 +249,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       void clearMediaCache();
       try {
         queryClient.clear();
+      } catch {
+        /* best-effort */
+      }
+      try {
+        mmkvQueryPersister.removeClient();
       } catch {
         /* best-effort */
       }

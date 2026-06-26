@@ -9,6 +9,7 @@ import {
   View,
 } from "react-native";
 import { useFocusEffect } from "expo-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../src/auth/AuthContext";
 import { socket } from "../../src/realtime/socket";
 import type { Theme } from "../../src/theme";
@@ -48,21 +49,67 @@ function getGreeting() {
 
 function dayBounds(offsetDays = 0) {
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offsetDays);
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offsetDays + 1);
+  const start = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + offsetDays,
+  );
+  const end = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + offsetDays + 1,
+  );
   return { from: start.toISOString(), to: end.toISOString() };
+}
+
+const DASHBOARD_QUERY_KEY = ["dashboard", "home"] as const;
+
+type DashboardData = {
+  todayEvents: CalendarEvent[];
+  tomorrowEvents: CalendarEvent[];
+  summary: TaskSummary | null;
+  announcements: Announcement[];
+};
+
+async function fetchDashboard(): Promise<DashboardData> {
+  const today = dayBounds(0);
+  const tomorrow = dayBounds(1);
+  const [tRes, tmRes, sRes, aRes] = await Promise.allSettled([
+    getCalendarEvents(today.from, today.to),
+    getCalendarEvents(tomorrow.from, tomorrow.to),
+    getTaskSummary(),
+    getActiveAnnouncements(),
+  ]);
+  const announcementsPayload =
+    aRes.status === "fulfilled" ? aRes.value.data : null;
+  return {
+    todayEvents: tRes.status === "fulfilled" ? tRes.value.data || [] : [],
+    tomorrowEvents: tmRes.status === "fulfilled" ? tmRes.value.data || [] : [],
+    summary: sRes.status === "fulfilled" ? sRes.value.data || null : null,
+    announcements: Array.isArray(announcementsPayload)
+      ? announcementsPayload
+      : announcementsPayload?.data || [],
+  };
 }
 
 export default function Dashboard() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { user } = useAuth();
-  const [todayEvents, setTodayEvents] = useState<CalendarEvent[]>([]);
-  const [tomorrowEvents, setTomorrowEvents] = useState<CalendarEvent[]>([]);
-  const [summary, setSummary] = useState<TaskSummary | null>(null);
-  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const queryClient = useQueryClient();
+
+  // Stale-while-revalidate: cached data (restored from MMKV on a cold start)
+  // renders instantly while a background refetch keeps it fresh. The full-card
+  // spinner only shows on the very first load when there is nothing cached yet.
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: DASHBOARD_QUERY_KEY,
+    queryFn: fetchDashboard,
+  });
+  const todayEvents = data?.todayEvents ?? [];
+  const tomorrowEvents = data?.tomorrowEvents ?? [];
+  const summary = data?.summary ?? null;
+  const announcements = data?.announcements ?? [];
   const [announcementIndex, setAnnouncementIndex] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const level = ROLE_LEVELS[user?.role ?? "user"] || 1;
@@ -75,27 +122,6 @@ export default function Dashboard() {
     year: "numeric",
   });
 
-  const load = useCallback(async () => {
-    const today = dayBounds(0);
-    const tomorrow = dayBounds(1);
-    const [tRes, tmRes, sRes, aRes] = await Promise.allSettled([
-      getCalendarEvents(today.from, today.to),
-      getCalendarEvents(tomorrow.from, tomorrow.to),
-      getTaskSummary(),
-      getActiveAnnouncements(),
-    ]);
-    if (tRes.status === "fulfilled") setTodayEvents(tRes.value.data || []);
-    if (tmRes.status === "fulfilled") setTomorrowEvents(tmRes.value.data || []);
-    if (sRes.status === "fulfilled") setSummary(sRes.value.data || null);
-    if (aRes.status === "fulfilled") {
-      const payload = aRes.value.data;
-      const list = Array.isArray(payload) ? payload : payload?.data || [];
-      setAnnouncements(list);
-    }
-    setLoading(false);
-    setRefreshing(false);
-  }, []);
-
   // Rotate announcements every few seconds.
   useEffect(() => {
     if (announcements.length <= 1) return;
@@ -105,10 +131,12 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [announcements.length]);
 
+  // Background-refresh on focus: marks the query stale so it refetches while the
+  // already-rendered cached data stays visible — no spinner, no blank flash.
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, [load]),
+      queryClient.invalidateQueries({ queryKey: DASHBOARD_QUERY_KEY });
+    }, [queryClient]),
   );
 
   // Real-time refresh: refetch events when a calendar/meeting change is
@@ -120,16 +148,20 @@ export default function Dashboard() {
         msg.type === "meeting_updated" ||
         msg.type === "meeting_cancelled"
       ) {
-        load();
+        queryClient.invalidateQueries({ queryKey: DASHBOARD_QUERY_KEY });
       }
     });
     return off;
-  }, [load]);
+  }, [queryClient]);
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    load();
-  }, [load]);
+    try {
+      await refetch();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetch]);
 
   return (
     <ScrollView
@@ -182,12 +214,15 @@ export default function Dashboard() {
       {/* Work timer */}
       <WorkTimerCard />
 
-      {loading ? (
+      {isLoading ? (
         <ActivityIndicator color={theme.primary} style={{ marginTop: 12 }} />
       ) : (
         <>
           {/* Today's Events (meetings + events + tomorrow) */}
-          <TodayEventsCard events={todayEvents} tomorrowEvents={tomorrowEvents} />
+          <TodayEventsCard
+            events={todayEvents}
+            tomorrowEvents={tomorrowEvents}
+          />
 
           {/* Today's Planner */}
           <TasksSummaryCard taskSummary={summary} />
@@ -205,43 +240,43 @@ export default function Dashboard() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  container: { padding: 16, gap: 12, paddingBottom: 32 },
-  greetingBanner: {
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusLg,
-    padding: 18,
-    gap: 4,
-  },
-  greetingText: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: theme.text,
-    letterSpacing: -0.5,
-  },
-  greetingDate: { fontSize: 13, color: theme.textMuted, fontWeight: "500" },
-  announcement: {
-    marginTop: 12,
-    backgroundColor: theme.surface,
-    borderRadius: theme.radius,
-    padding: 12,
-    gap: 8,
-  },
-  announcementText: {
-    fontSize: 13,
-    color: theme.textSecondary,
-    lineHeight: 18,
-    fontStyle: "italic",
-  },
-  dots: { flexDirection: "row", gap: 6, alignSelf: "center" },
-  dotDim: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: theme.textMuted,
-    opacity: 0.4,
-  },
-  dotActive: { backgroundColor: theme.primary, opacity: 1 },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    container: { padding: 16, gap: 12, paddingBottom: 32 },
+    greetingBanner: {
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusLg,
+      padding: 18,
+      gap: 4,
+    },
+    greetingText: {
+      fontSize: 20,
+      fontWeight: "800",
+      color: theme.text,
+      letterSpacing: -0.5,
+    },
+    greetingDate: { fontSize: 13, color: theme.textMuted, fontWeight: "500" },
+    announcement: {
+      marginTop: 12,
+      backgroundColor: theme.surface,
+      borderRadius: theme.radius,
+      padding: 12,
+      gap: 8,
+    },
+    announcementText: {
+      fontSize: 13,
+      color: theme.textSecondary,
+      lineHeight: 18,
+      fontStyle: "italic",
+    },
+    dots: { flexDirection: "row", gap: 6, alignSelf: "center" },
+    dotDim: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: theme.textMuted,
+      opacity: 0.4,
+    },
+    dotActive: { backgroundColor: theme.primary, opacity: 1 },
+  });

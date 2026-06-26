@@ -1,9 +1,6 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState } from "react";
-import { ActivityIndicator,
+  ActivityIndicator,
   Alert,
   FlatList,
   Pressable,
@@ -11,7 +8,7 @@ import { ActivityIndicator,
   ScrollView,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 import {
   BarChart3,
@@ -28,6 +25,7 @@ import {
   X,
 } from "lucide-react-native";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import {
@@ -102,11 +100,17 @@ function sprintDaysLeft(endDate?: string): number {
   return Math.max(0, Math.ceil((endUTC - todayUTC) / 86400000));
 }
 
+// Stable empty references so memoized derivations don't recompute while a query
+// is still resolving (data is undefined until the first fetch lands).
+const EMPTY_TASKS: Task[] = [];
+const EMPTY_SPRINTS: Sprint[] = [];
+
 export default function TasksScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const params = useLocalSearchParams<{ tab?: string }>();
   const [tab, setTab] = useState<Tab>(
     params.tab === "sprint"
@@ -115,13 +119,7 @@ export default function TasksScreen() {
         ? "service-desk"
         : "backlog",
   );
-  const [backlog, setBacklog] = useState<Task[]>([]);
-  const [sprints, setSprints] = useState<Sprint[]>([]);
   const [activeSprintId, setActiveSprintId] = useState<number | null>(null);
-  const [sprintTasks, setSprintTasks] = useState<Task[]>([]);
-  const [sprintTaskStats, setSprintTaskStats] = useState<TaskStats | null>(null);
-  const [sprintStats, setSprintStats] = useState<SprintStats | null>(null);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -153,33 +151,47 @@ export default function TasksScreen() {
     return q;
   }, [filterAssignee, filterPriority, filterStatus, filterSearch]);
 
-  const load = useCallback(async () => {
-    try {
-      const [bRes, spRes] = await Promise.allSettled([
-        getBacklog(backlogQuery),
-        getAvailableSprints(),
-      ]);
-      if (bRes.status === "fulfilled") setBacklog(bRes.value.data.tasks || []);
-      if (spRes.status === "fulfilled") {
-        const list = spRes.value.data || [];
-        setSprints(list);
-        setActiveSprintId((prev) => {
-          if (prev && list.some((s) => s.id === prev)) return prev;
-          const active = list.find((s) => s.status === "active") || list[0];
-          return active?.id ?? null;
-        });
-      }
-    } catch {
-      /* ignore */
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [backlogQuery]);
+  const backlogKey = useMemo(
+    () => ["tasks", "backlog", backlogQuery],
+    [backlogQuery],
+  );
 
+  // Stale-while-revalidate: the backlog + sprint list (restored from MMKV on a
+  // cold start, or a previous visit) render instantly while a background
+  // refetch keeps them current. Each list is its own query so a transient
+  // failure of one keeps the other's last-good data (React Query retains the
+  // previous `data` when a refetch throws). The full-screen spinner only shows
+  // on a true cold cache.
+  const {
+    data: backlog = EMPTY_TASKS,
+    isLoading,
+    refetch: refetchBacklog,
+  } = useQuery({
+    queryKey: backlogKey,
+    queryFn: async () => {
+      const { data } = await getBacklog(backlogQuery);
+      return data.tasks || [];
+    },
+  });
+
+  const { data: sprints = EMPTY_SPRINTS, refetch: refetchSprints } = useQuery({
+    queryKey: ["tasks", "sprints"],
+    queryFn: async () => {
+      const { data } = await getAvailableSprints();
+      return data || [];
+    },
+  });
+
+  // Keep the selected sprint valid as the list changes: preserve the user's
+  // choice when it still exists, otherwise fall back to the active (or first)
+  // sprint. Mirrors the original load()'s functional setActiveSprintId.
   useEffect(() => {
-    load();
-  }, [load]);
+    setActiveSprintId((prev) => {
+      if (prev && sprints.some((s) => s.id === prev)) return prev;
+      const active = sprints.find((s) => s.status === "active") || sprints[0];
+      return active?.id ?? null;
+    });
+  }, [sprints]);
 
   // Assignable users power the import panel's assignee picker.
   useEffect(() => {
@@ -188,58 +200,78 @@ export default function TasksScreen() {
       .catch(() => {});
   }, []);
 
-  // Load the selected sprint's tasks + stats whenever it changes.
-  const reloadSprint = useCallback(() => {
-    if (!activeSprintId) {
-      setSprintTasks([]);
-      setSprintTaskStats(null);
-      setSprintStats(null);
-      return;
-    }
-    getSprintTasks(activeSprintId)
-      .then((r) => {
-        setSprintTasks(r.data.tasks || []);
-        setSprintTaskStats(r.data.stats || null);
-      })
-      .catch(() => {
-        setSprintTasks([]);
-        setSprintTaskStats(null);
-      });
-    getSprintStats(activeSprintId)
-      .then((r) => setSprintStats(r.data))
-      .catch(() => setSprintStats(null));
-  }, [activeSprintId]);
+  // Selected sprint's tasks + stats. Disabled (and reset to empty) when no
+  // sprint is selected.
+  const { data: sprintDetail } = useQuery({
+    queryKey: ["tasks", "sprint", activeSprintId],
+    enabled: activeSprintId != null,
+    queryFn: async () => {
+      const [tasksRes, statsRes] = await Promise.allSettled([
+        getSprintTasks(activeSprintId as number),
+        getSprintStats(activeSprintId as number),
+      ]);
+      return {
+        tasks:
+          tasksRes.status === "fulfilled"
+            ? tasksRes.value.data.tasks || []
+            : [],
+        taskStats:
+          tasksRes.status === "fulfilled"
+            ? tasksRes.value.data.stats || null
+            : null,
+        sprintStats:
+          statsRes.status === "fulfilled" ? statsRes.value.data : null,
+      };
+    },
+  });
+  const sprintTasks = sprintDetail?.tasks ?? EMPTY_TASKS;
+  const sprintTaskStats = sprintDetail?.taskStats ?? null;
+  const sprintStats = sprintDetail?.sprintStats ?? null;
 
-  useEffect(() => {
-    reloadSprint();
-  }, [reloadSprint]);
-
+  // Background-refresh everything on focus: marks the task queries stale so they
+  // refetch while the cached lists stay on screen — no blank spinner.
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, [load]),
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    }, [queryClient]),
   );
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    load();
-    reloadSprint();
-  }, [load, reloadSprint]);
+    try {
+      await Promise.all([
+        refetchBacklog(),
+        refetchSprints(),
+        queryClient.invalidateQueries({ queryKey: ["tasks", "sprint"] }),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetchBacklog, refetchSprints, queryClient]);
+
+  // Background-refresh just the selected sprint's tasks/stats (e.g. after a
+  // Kanban drag). Cached board stays visible while it revalidates.
+  const reloadSprint = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["tasks", "sprint"] });
+  }, [queryClient]);
 
   const toggle = useCallback(
     async (task: Task) => {
       const next = task.status === "done" ? "pending" : "done";
-      setBacklog((prev) =>
-        prev.map((t) => (t.id === task.id ? { ...t, status: next } : t)),
+      // Optimistic update straight into the query cache so the row flips
+      // instantly; reconcile with the server on completion.
+      queryClient.setQueryData<Task[]>(backlogKey, (prev) =>
+        prev
+          ? prev.map((t) => (t.id === task.id ? { ...t, status: next } : t))
+          : prev,
       );
       try {
         await updateTaskStatus(task.id, next);
-        load();
-      } catch {
-        load();
+      } finally {
+        queryClient.invalidateQueries({ queryKey: backlogKey });
       }
     },
-    [load],
+    [queryClient, backlogKey],
   );
 
   const activeSprint = sprints.find((s) => s.id === activeSprintId) || null;
@@ -249,10 +281,12 @@ export default function TasksScreen() {
     setBusy(true);
     try {
       await startSprint(activeSprint.id);
-      await load();
-      reloadSprint();
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to start sprint");
+      Alert.alert(
+        "Error",
+        e?.response?.data?.error || "Failed to start sprint",
+      );
     } finally {
       setBusy(false);
     }
@@ -272,8 +306,7 @@ export default function TasksScreen() {
             setBusy(true);
             try {
               await completeSprint(activeSprint.id, "backlog");
-              await load();
-              reloadSprint();
+              queryClient.invalidateQueries({ queryKey: ["tasks"] });
             } catch (e: any) {
               Alert.alert(
                 "Error",
@@ -315,8 +348,7 @@ export default function TasksScreen() {
       setImportConfigTask(null);
       setImportAssignedTo(null);
       setImportDueDate("");
-      await load();
-      reloadSprint();
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
     } catch (e: any) {
       Alert.alert(
         "Error",
@@ -327,7 +359,7 @@ export default function TasksScreen() {
     }
   }
 
-  if (loading) {
+  if (isLoading) {
     return (
       <View style={[styles.screen, styles.center]}>
         <ActivityIndicator size="large" color={theme.primary} />
@@ -341,7 +373,10 @@ export default function TasksScreen() {
         active={tab === "backlog"}
         onPress={() => setTab("backlog")}
         icon={
-          <Inbox size={15} color={tab === "backlog" ? "#fff" : theme.textSecondary} />
+          <Inbox
+            size={15}
+            color={tab === "backlog" ? "#fff" : theme.textSecondary}
+          />
         }
         label={`Backlog${backlog.length > 0 ? ` (${backlog.length})` : ""}`}
       />
@@ -349,7 +384,10 @@ export default function TasksScreen() {
         active={tab === "sprint"}
         onPress={() => setTab("sprint")}
         icon={
-          <Rocket size={15} color={tab === "sprint" ? "#fff" : theme.textSecondary} />
+          <Rocket
+            size={15}
+            color={tab === "sprint" ? "#fff" : theme.textSecondary}
+          />
         }
         label="Sprint"
       />
@@ -474,7 +512,9 @@ export default function TasksScreen() {
                       }}
                     >
                       <Download size={15} color={theme.primary} />
-                      <Text style={styles.toolbarBtnText}>Import from Backlog</Text>
+                      <Text style={styles.toolbarBtnText}>
+                        Import from Backlog
+                      </Text>
                     </Pressable>
                   </View>
                 ) : null}
@@ -524,13 +564,19 @@ export default function TasksScreen() {
                                   ]}
                                 >
                                   <Text
-                                    style={[styles.importPriText, { color: pr.color }]}
+                                    style={[
+                                      styles.importPriText,
+                                      { color: pr.color },
+                                    ]}
                                   >
                                     {pr.label}
                                   </Text>
                                 </View>
                               ) : null}
-                              <Text style={styles.importItemTitle} numberOfLines={1}>
+                              <Text
+                                style={styles.importItemTitle}
+                                numberOfLines={1}
+                              >
                                 {t.title}
                               </Text>
                               {!configuring ? (
@@ -547,7 +593,9 @@ export default function TasksScreen() {
                                     );
                                   }}
                                 >
-                                  <Text style={styles.importBtnText}>Import</Text>
+                                  <Text style={styles.importBtnText}>
+                                    Import
+                                  </Text>
                                 </Pressable>
                               ) : null}
                             </View>
@@ -599,7 +647,9 @@ export default function TasksScreen() {
                                       setImportDueDate("");
                                     }}
                                   >
-                                    <Text style={styles.importCancelText}>Cancel</Text>
+                                    <Text style={styles.importCancelText}>
+                                      Cancel
+                                    </Text>
                                   </Pressable>
                                 </View>
                               </View>
@@ -654,12 +704,17 @@ export default function TasksScreen() {
                       <View style={styles.lifecycleRow}>
                         {activeSprint.status === "planned" ? (
                           <Pressable
-                            style={[styles.lifecycleBtn, busy && styles.disabled]}
+                            style={[
+                              styles.lifecycleBtn,
+                              busy && styles.disabled,
+                            ]}
                             onPress={handleStartSprint}
                             disabled={busy}
                           >
                             <Play size={14} color="#fff" />
-                            <Text style={styles.lifecycleBtnText}>Start Sprint</Text>
+                            <Text style={styles.lifecycleBtnText}>
+                              Start Sprint
+                            </Text>
                           </Pressable>
                         ) : null}
                         {activeSprint.status === "active" ? (
@@ -797,7 +852,10 @@ export default function TasksScreen() {
                     return (
                       <Pressable
                         key={v}
-                        style={[styles.segmentBtn, active && styles.segmentBtnActive]}
+                        style={[
+                          styles.segmentBtn,
+                          active && styles.segmentBtnActive,
+                        ]}
                         onPress={() => setFilterAssignee(v)}
                       >
                         <Text
@@ -866,11 +924,18 @@ export default function TasksScreen() {
             <Pressable
               style={styles.card}
               onPress={() =>
-                router.push({ pathname: "/tasks/[id]", params: { id: String(item.id) } })
+                router.push({
+                  pathname: "/tasks/[id]",
+                  params: { id: String(item.id) },
+                })
               }
               android_ripple={{ color: theme.surfaceHover }}
             >
-              <Pressable onPress={() => toggle(item)} hitSlop={8} style={styles.check}>
+              <Pressable
+                onPress={() => toggle(item)}
+                hitSlop={8}
+                style={styles.check}
+              >
                 {done ? (
                   <CheckCircle2 size={22} color={theme.success} />
                 ) : (
@@ -878,7 +943,10 @@ export default function TasksScreen() {
                 )}
               </Pressable>
               <View style={styles.cardBody}>
-                <Text style={[styles.title, done && styles.titleDone]} numberOfLines={2}>
+                <Text
+                  style={[styles.title, done && styles.titleDone]}
+                  numberOfLines={2}
+                >
                   {item.issue_key ? `${item.issue_key}  ` : ""}
                   {item.title}
                 </Text>
@@ -890,7 +958,9 @@ export default function TasksScreen() {
                   </View>
                   {pr ? (
                     <View style={styles.priority}>
-                      <View style={[styles.dot, { backgroundColor: pr.color }]} />
+                      <View
+                        style={[styles.dot, { backgroundColor: pr.color }]}
+                      />
                       <Text style={styles.priorityText}>{pr.label}</Text>
                     </View>
                   ) : null}
@@ -903,7 +973,9 @@ export default function TasksScreen() {
           <View style={styles.empty}>
             <Inbox size={40} color={theme.textMuted} />
             <Text style={styles.emptyText}>
-              {activeFilterCount > 0 ? "No matching tickets" : "Backlog is empty"}
+              {activeFilterCount > 0
+                ? "No matching tickets"
+                : "Backlog is empty"}
             </Text>
             <Text style={styles.emptySub}>
               {activeFilterCount > 0
@@ -944,7 +1016,9 @@ function TabButton({
       onPress={onPress}
     >
       {icon}
-      <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
+      <Text style={[styles.tabText, active && styles.tabTextActive]}>
+        {label}
+      </Text>
     </Pressable>
   );
 }

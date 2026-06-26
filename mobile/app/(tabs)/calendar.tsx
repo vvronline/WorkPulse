@@ -1,16 +1,13 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState } from "react";
-import { ActivityIndicator,
+  ActivityIndicator,
   Alert,
   Modal,
   Pressable,
   ScrollView,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 import {
   AlertTriangle,
@@ -41,6 +38,8 @@ import {
 import { SERVER_ORIGIN } from "../../src/config";
 import { Linking } from "react-native";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "expo-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { socket } from "../../src/realtime/socket";
 import { makeStyles } from "./calendar.styles";
 
@@ -77,44 +76,56 @@ function buildMonthGrid(cursor: Date): Date[] {
   return days;
 }
 
+// Stable empty reference so memoized derivations don't recompute while the
+// query is still resolving (data is undefined until the first fetch lands).
+const EMPTY_EVENTS: CalendarEvent[] = [];
+
+async function fetchCalendarEvents(cursor: Date): Promise<CalendarEvent[]> {
+  // Fetch a generous range (month grid +/-) so week/day views within the
+  // visible window are covered.
+  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+  const grid = buildMonthGrid(first);
+  const from = grid[0].toISOString();
+  const to = new Date(grid[41].getTime() + 24 * 3600 * 1000).toISOString();
+  const { data } = await getCalendarEvents(from, to);
+  return data || [];
+}
+
 export default function CalendarScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  const queryClient = useQueryClient();
   const [view, setView] = useState<"month" | "week" | "day">("month");
   const [cursor, setCursor] = useState(new Date());
   const [selected, setSelected] = useState(ymd(new Date()));
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState<CalendarEvent | null>(null);
 
   const monthDays = useMemo(() => buildMonthGrid(cursor), [cursor]);
 
-  const load = useCallback(async (forCursor: Date) => {
-    setLoading(true);
-    // Fetch a generous range (month grid +/-) so week/day views within the
-    // visible window are covered.
-    const first = new Date(forCursor.getFullYear(), forCursor.getMonth(), 1);
-    const grid = buildMonthGrid(first);
-    const from = grid[0].toISOString();
-    const to = new Date(grid[41].getTime() + 24 * 3600 * 1000).toISOString();
-    try {
-      const { data } = await getCalendarEvents(from, to);
-      setEvents(data || []);
-    } catch {
-      /* ignore */
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Stale-while-revalidate per visible month. Cached events (restored from MMKV
+  // on a cold start, or a previous visit) render the grid instantly while a
+  // background refetch keeps it current — no spinner blocking the calendar.
+  const calendarKey = useMemo(
+    () => ["calendar", "events", cursor.getFullYear(), cursor.getMonth()],
+    [cursor],
+  );
+  const { data, isFetching } = useQuery({
+    queryKey: calendarKey,
+    queryFn: () => fetchCalendarEvents(cursor),
+  });
+  const events = data ?? EMPTY_EVENTS;
+  const loading = isFetching;
 
-  useEffect(() => {
-    load(cursor);
-  }, [cursor, load]);
+  // Background-refresh on focus + on real-time calendar/meeting broadcasts
+  // (new event, edit, or cancel — including from another device). Cached data
+  // stays visible; mirrors the web Calendar's useWebSocket subscription.
+  useFocusEffect(
+    useCallback(() => {
+      queryClient.invalidateQueries({ queryKey: calendarKey });
+    }, [queryClient, calendarKey]),
+  );
 
-  // Real-time refresh: refetch when a calendar/meeting change is broadcast
-  // (new event, edit, or meeting cancel — including from another device).
-  // Mirrors the web Calendar's useWebSocket subscription.
   useEffect(() => {
     const off = socket.subscribe((msg) => {
       if (
@@ -122,11 +133,11 @@ export default function CalendarScreen() {
         msg.type === "meeting_updated" ||
         msg.type === "meeting_cancelled"
       ) {
-        load(cursor);
+        queryClient.invalidateQueries({ queryKey: calendarKey });
       }
     });
     return off;
-  }, [cursor, load]);
+  }, [queryClient, calendarKey]);
 
   // Map day -> events for quick lookup.
   const byDay = useMemo(() => {
@@ -190,13 +201,21 @@ export default function CalendarScreen() {
         <View style={styles.monthHeader}>
           <Text style={styles.monthLabel}>{headerLabel}</Text>
           <View style={styles.monthNav}>
-            <Pressable style={styles.navBtn} onPress={() => shift(-1)} hitSlop={6}>
+            <Pressable
+              style={styles.navBtn}
+              onPress={() => shift(-1)}
+              hitSlop={6}
+            >
               <ChevronLeft size={20} color={theme.textSecondary} />
             </Pressable>
             <Pressable style={styles.todayBtn} onPress={goToday}>
               <Text style={styles.todayText}>Today</Text>
             </Pressable>
-            <Pressable style={styles.navBtn} onPress={() => shift(1)} hitSlop={6}>
+            <Pressable
+              style={styles.navBtn}
+              onPress={() => shift(1)}
+              hitSlop={6}
+            >
               <ChevronRight size={20} color={theme.textSecondary} />
             </Pressable>
           </View>
@@ -210,7 +229,9 @@ export default function CalendarScreen() {
               style={[styles.viewBtn, view === v && styles.viewBtnActive]}
               onPress={() => setView(v)}
             >
-              <Text style={[styles.viewText, view === v && styles.viewTextActive]}>
+              <Text
+                style={[styles.viewText, view === v && styles.viewTextActive]}
+              >
                 {v[0].toUpperCase() + v.slice(1)}
               </Text>
             </Pressable>
@@ -259,7 +280,9 @@ export default function CalendarScreen() {
                   day: "numeric",
                 })}
               </Text>
-              {loading ? <ActivityIndicator color={theme.primary} size="small" /> : null}
+              {loading ? (
+                <ActivityIndicator color={theme.primary} size="small" />
+              ) : null}
             </View>
 
             {selectedEvents.length === 0 ? (
@@ -277,7 +300,10 @@ export default function CalendarScreen() {
                     android_ripple={{ color: theme.surfaceHover }}
                   >
                     <View
-                      style={[styles.colorBar, { backgroundColor: item.color || theme.primary }]}
+                      style={[
+                        styles.colorBar,
+                        { backgroundColor: item.color || theme.primary },
+                      ]}
                     />
                     <View style={styles.eventBody}>
                       <View style={styles.eventTitleRow}>
@@ -290,7 +316,9 @@ export default function CalendarScreen() {
                       </View>
                       <View style={styles.eventMeta}>
                         <Clock size={12} color={theme.textMuted} />
-                        <Text style={styles.eventTime}>{fmtEventTime(item)}</Text>
+                        <Text style={styles.eventTime}>
+                          {fmtEventTime(item)}
+                        </Text>
                       </View>
                       {item.description ? (
                         <Text style={styles.eventDesc} numberOfLines={2}>
@@ -327,7 +355,7 @@ export default function CalendarScreen() {
         onSaved={() => {
           setModal(false);
           setEditing(null);
-          load(cursor);
+          queryClient.invalidateQueries({ queryKey: calendarKey });
         }}
       />
     </View>
@@ -369,7 +397,11 @@ function MonthView({
           const isSelected = key === selected;
           const dayEvents = byDay[key] || [];
           return (
-            <Pressable key={key} style={styles.cell} onPress={() => onSelect(key)}>
+            <Pressable
+              key={key}
+              style={styles.cell}
+              onPress={() => onSelect(key)}
+            >
               <View
                 style={[
                   styles.cellInner,
@@ -392,7 +424,11 @@ function MonthView({
                       key={i}
                       style={[
                         styles.dayDot,
-                        { backgroundColor: ev.meeting_code ? theme.primary : ev.color || theme.primary },
+                        {
+                          backgroundColor: ev.meeting_code
+                            ? theme.primary
+                            : ev.color || theme.primary,
+                        },
                       ]}
                     />
                   ))}
@@ -516,14 +552,21 @@ function HourlyGrid({
           <Text style={styles.hourLabel}>All day</Text>
           <View style={styles.hourCell}>
             {allDay.map((ev) => {
-              const evColor = ev.meeting_code ? theme.primary : ev.color || theme.primary;
+              const evColor = ev.meeting_code
+                ? theme.primary
+                : ev.color || theme.primary;
               return (
                 <Pressable
                   key={ev.id}
-                  style={[styles.hourEvent, { backgroundColor: evColor + "33", borderColor: evColor }]}
+                  style={[
+                    styles.hourEvent,
+                    { backgroundColor: evColor + "33", borderColor: evColor },
+                  ]}
                   onPress={() => onEvent(ev)}
                 >
-                  {ev.meeting_code ? <Video size={11} color={theme.primary} /> : null}
+                  {ev.meeting_code ? (
+                    <Video size={11} color={theme.primary} />
+                  ) : null}
                   <Text style={styles.hourEventText} numberOfLines={1}>
                     {ev.title}
                   </Text>
@@ -538,14 +581,21 @@ function HourlyGrid({
           <Text style={styles.hourLabel}>{label(h)}</Text>
           <View style={styles.hourCell}>
             {(byHour[h] || []).map((ev) => {
-              const evColor = ev.meeting_code ? theme.primary : ev.color || theme.primary;
+              const evColor = ev.meeting_code
+                ? theme.primary
+                : ev.color || theme.primary;
               return (
                 <Pressable
                   key={ev.id}
-                  style={[styles.hourEvent, { backgroundColor: evColor + "33", borderColor: evColor }]}
+                  style={[
+                    styles.hourEvent,
+                    { backgroundColor: evColor + "33", borderColor: evColor },
+                  ]}
                   onPress={() => onEvent(ev)}
                 >
-                  {ev.meeting_code ? <Video size={11} color={theme.primary} /> : null}
+                  {ev.meeting_code ? (
+                    <Video size={11} color={theme.primary} />
+                  ) : null}
                   <Text style={styles.hourEventText} numberOfLines={1}>
                     {ev.title}
                   </Text>
@@ -604,9 +654,15 @@ function EventModal({
   // Meeting scheduling state (create-mode only, mirrors the web EventFormModal).
   const [addMeeting, setAddMeeting] = useState(false);
   // Separate required / optional participant lists (matches the web modal).
-  const [requiredParticipants, setRequiredParticipants] = useState<Invitee[]>([]);
-  const [optionalParticipants, setOptionalParticipants] = useState<Invitee[]>([]);
-  const [pickerTarget, setPickerTarget] = useState<"required" | "optional">("required");
+  const [requiredParticipants, setRequiredParticipants] = useState<Invitee[]>(
+    [],
+  );
+  const [optionalParticipants, setOptionalParticipants] = useState<Invitee[]>(
+    [],
+  );
+  const [pickerTarget, setPickerTarget] = useState<"required" | "optional">(
+    "required",
+  );
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Invitee[]>([]);
   const [searching, setSearching] = useState(false);
@@ -614,7 +670,9 @@ function EventModal({
   const [allowScreenShare, setAllowScreenShare] = useState(true);
   const [conflicts, setConflicts] = useState<MeetingConflict[]>([]);
   // Participant roster for an existing meeting-linked event (edit mode).
-  const [meetingParticipants, setMeetingParticipants] = useState<MeetingParticipant[]>([]);
+  const [meetingParticipants, setMeetingParticipants] = useState<
+    MeetingParticipant[]
+  >([]);
 
   const allParticipants = useMemo(
     () => [...requiredParticipants, ...optionalParticipants],
@@ -837,7 +895,10 @@ function EventModal({
             await deleteCalendarEvent(editing.id);
             onSaved();
           } catch (e: any) {
-            Alert.alert("Error", e?.response?.data?.error || "Failed to delete");
+            Alert.alert(
+              "Error",
+              e?.response?.data?.error || "Failed to delete",
+            );
           } finally {
             setDeleting(false);
           }
@@ -847,7 +908,12 @@ function EventModal({
   }
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
       <View style={styles.modalOverlay}>
         <ScrollView
           style={styles.modalScroll}
@@ -856,7 +922,11 @@ function EventModal({
         >
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>
-              {!editing ? "New Event" : readOnly ? "Event Details" : "Edit Event"}
+              {!editing
+                ? "New Event"
+                : readOnly
+                  ? "Event Details"
+                  : "Edit Event"}
             </Text>
             <Pressable onPress={onClose} hitSlop={8}>
               <X size={22} color={theme.textSecondary} />
@@ -882,7 +952,11 @@ function EventModal({
 
           <Text style={styles.label}>Description (optional)</Text>
           <TextInput
-            style={[styles.input, styles.textarea, readOnly && styles.inputDisabled]}
+            style={[
+              styles.input,
+              styles.textarea,
+              readOnly && styles.inputDisabled,
+            ]}
             placeholder="Details"
             placeholderTextColor={theme.textMuted}
             value={description}
@@ -998,7 +1072,10 @@ function EventModal({
                             p.participant_type === "required",
                         )
                         .map((p) => (
-                          <View key={String(p.user_id)} style={styles.rosterBadge}>
+                          <View
+                            key={String(p.user_id)}
+                            style={styles.rosterBadge}
+                          >
                             <Text style={styles.rosterBadgeText}>
                               {String(p.full_name || p.username || "User")}
                               {p.role === "organizer" ? " (organizer)" : ""}
@@ -1018,7 +1095,10 @@ function EventModal({
                           .map((p) => (
                             <View
                               key={String(p.user_id)}
-                              style={[styles.rosterBadge, styles.rosterBadgeOptional]}
+                              style={[
+                                styles.rosterBadge,
+                                styles.rosterBadgeOptional,
+                              ]}
                             >
                               <Text style={styles.rosterBadgeText}>
                                 {String(p.full_name || p.username || "User")}
@@ -1130,14 +1210,16 @@ function EventModal({
                     <Pressable
                       style={[
                         styles.pickerTargetBtn,
-                        pickerTarget === "required" && styles.pickerTargetBtnActive,
+                        pickerTarget === "required" &&
+                          styles.pickerTargetBtnActive,
                       ]}
                       onPress={() => setPickerTarget("required")}
                     >
                       <Text
                         style={[
                           styles.pickerTargetText,
-                          pickerTarget === "required" && styles.pickerTargetTextActive,
+                          pickerTarget === "required" &&
+                            styles.pickerTargetTextActive,
                         ]}
                       >
                         Required
@@ -1146,14 +1228,16 @@ function EventModal({
                     <Pressable
                       style={[
                         styles.pickerTargetBtn,
-                        pickerTarget === "optional" && styles.pickerTargetBtnActive,
+                        pickerTarget === "optional" &&
+                          styles.pickerTargetBtnActive,
                       ]}
                       onPress={() => setPickerTarget("optional")}
                     >
                       <Text
                         style={[
                           styles.pickerTargetText,
-                          pickerTarget === "optional" && styles.pickerTargetTextActive,
+                          pickerTarget === "optional" &&
+                            styles.pickerTargetTextActive,
                         ]}
                       >
                         Optional
@@ -1198,8 +1282,8 @@ function EventModal({
                       <View style={{ flex: 1 }}>
                         {conflicts.map((c) => (
                           <Text key={c.userId} style={styles.conflictText}>
-                            <Text style={styles.conflictName}>{c.name}</Text> has
-                            a conflict: “{c.events[0]?.title}”
+                            <Text style={styles.conflictName}>{c.name}</Text>{" "}
+                            has a conflict: “{c.events[0]?.title}”
                           </Text>
                         ))}
                       </View>
@@ -1210,10 +1294,16 @@ function EventModal({
                     style={styles.settingRow}
                     onPress={() => setMuteOnJoin((v) => !v)}
                   >
-                    <View style={[styles.checkbox, muteOnJoin && styles.checkboxOn]}>
-                      {muteOnJoin ? <Text style={styles.checkMark}>✓</Text> : null}
+                    <View
+                      style={[styles.checkbox, muteOnJoin && styles.checkboxOn]}
+                    >
+                      {muteOnJoin ? (
+                        <Text style={styles.checkMark}>✓</Text>
+                      ) : null}
                     </View>
-                    <Text style={styles.settingText}>Mute participants on join</Text>
+                    <Text style={styles.settingText}>
+                      Mute participants on join
+                    </Text>
                   </Pressable>
                   <Pressable
                     style={styles.settingRow}
@@ -1239,7 +1329,10 @@ function EventModal({
           {/* Invitees can't save — only the organizer sees the Save button. */}
           {!readOnly ? (
             <Pressable
-              style={[styles.submit, (!title.trim() || busy) && styles.submitDisabled]}
+              style={[
+                styles.submit,
+                (!title.trim() || busy) && styles.submitDisabled,
+              ]}
               onPress={submit}
               disabled={!title.trim() || busy}
             >

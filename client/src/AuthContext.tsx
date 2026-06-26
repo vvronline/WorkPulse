@@ -9,6 +9,7 @@ import {
 } from "react";
 import { getProfile, logoutUser, refreshToken } from "./api";
 import { REFRESH_TOKEN_INTERVAL } from "./constants";
+import { queryClient, PERSISTED_QUERY_CACHE_KEY } from "./queryClient";
 import type { User } from "./types";
 
 interface AuthContextValue {
@@ -61,6 +62,7 @@ function sanitizeForCache(
 const TENANT_SCOPED_CACHE_KEYS = [
   "workpulse_agile_config_v1", // AgileConfigContext — tenant workflow/board config
   "workpulse.notificationPrefs", // NotificationPrefsContext — per-user prefs
+  PERSISTED_QUERY_CACHE_KEY, // React Query persisted snapshot — tenant server data
 ];
 // Dynamic per-user keys share a stable prefix; clear every match.
 const TENANT_SCOPED_CACHE_PREFIXES = [
@@ -68,6 +70,15 @@ const TENANT_SCOPED_CACHE_PREFIXES = [
 ];
 
 function clearTenantScopedCaches(): void {
+  try {
+    // Drop the in-memory React Query cache too — removing only the persisted
+    // localStorage snapshot would leave the live cache to be re-persisted, and
+    // (on the desktop app, which never reloads between logout and login) let the
+    // next account briefly read the previous tenant's data within staleTime.
+    queryClient.clear();
+  } catch {
+    /* best-effort — must not block auth */
+  }
   try {
     TENANT_SCOPED_CACHE_KEYS.forEach((key) => localStorage.removeItem(key));
     // Snapshot the keys first — removing while iterating localStorage is
@@ -88,7 +99,21 @@ function clearTenantScopedCaches(): void {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  // Seed from the display-safe localStorage cache synchronously so a cold start
+  // (notably the desktop app relaunching from a killed state) paints the app
+  // shell immediately instead of blocking on the getProfile() round-trip. The
+  // cache only holds SAFE_CACHE_FIELDS (no role/org_id/has_reports), so
+  // role-gated UI stays fail-closed until the background verify below resolves.
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const cached = localStorage.getItem("user");
+      if (!cached) return null;
+      const parsed = JSON.parse(cached);
+      return parsed ? (sanitizeForCache(parsed) as User) : null;
+    } catch {
+      return null;
+    }
+  });
   const [isInitializing, setIsInitializing] = useState(true);
 
   useEffect(() => {
@@ -253,11 +278,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user, saveAuth, updateUser, logout, isInitializing],
   );
 
-  return (
-    <AuthContext.Provider value={value}>
-      {!isInitializing && children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export const useAuth = (): AuthContextValue => {

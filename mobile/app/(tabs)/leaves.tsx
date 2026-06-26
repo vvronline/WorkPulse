@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -8,7 +8,8 @@ import {
   Text,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarOff, Plus } from "lucide-react-native";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
@@ -30,39 +31,62 @@ function fmtDate(d: string) {
   });
 }
 
+const LEAVES_QUERY_KEY = ["leaves", "list"] as const;
+
+// Stable empty references so memoized derivations don't recompute while the
+// query is still resolving (data is undefined until the first fetch lands).
+const EMPTY_BALANCES: LeaveBalance[] = [];
+const EMPTY_LEAVES: Leave[] = [];
+
+async function fetchLeaves(): Promise<{
+  balances: LeaveBalance[];
+  leaves: Leave[];
+}> {
+  const [balRes, leaveRes] = await Promise.allSettled([
+    getLeaveBalance(),
+    getLeaves(),
+  ]);
+  return {
+    balances: balRes.status === "fulfilled" ? balRes.value.data || [] : [],
+    leaves: leaveRes.status === "fulfilled" ? leaveRes.value.data || [] : [],
+  };
+}
+
 export default function LeavesScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
-  const [balances, setBalances] = useState<LeaveBalance[]>([]);
-  const [leaves, setLeaves] = useState<Leave[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  // Stale-while-revalidate: cached balances/leaves (restored from MMKV on a cold
+  // start) render instantly while a background refetch refreshes them — the
+  // full-screen spinner only shows on the very first load with no cache.
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: LEAVES_QUERY_KEY,
+    queryFn: fetchLeaves,
+  });
+  const balances = data?.balances ?? EMPTY_BALANCES;
+  const leaves = data?.leaves ?? EMPTY_LEAVES;
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
+  // Background-refresh whenever the tab regains focus (e.g. after applying for
+  // leave on another screen). Cached data stays visible — no blank spinner.
+  useFocusEffect(
+    useCallback(() => {
+      queryClient.invalidateQueries({ queryKey: LEAVES_QUERY_KEY });
+    }, [queryClient]),
+  );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     try {
-      const [balRes, leaveRes] = await Promise.allSettled([
-        getLeaveBalance(),
-        getLeaves(),
-      ]);
-      if (balRes.status === "fulfilled") setBalances(balRes.value.data || []);
-      if (leaveRes.status === "fulfilled") setLeaves(leaveRes.value.data || []);
+      await refetch();
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [refetch]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    load();
-  }, [load]);
-
-  if (loading) {
+  if (isLoading) {
     return (
       <View style={[styles.screen, styles.center]}>
         <ActivityIndicator size="large" color={theme.primary} />
@@ -84,7 +108,10 @@ export default function LeavesScreen() {
     >
       <View style={styles.headerRow}>
         <Text style={styles.heading}>Leaves</Text>
-        <Pressable style={styles.applyBtn} onPress={() => router.push("/leaves/apply")}>
+        <Pressable
+          style={styles.applyBtn}
+          onPress={() => router.push("/leaves/apply")}
+        >
           <Plus size={16} color="#fff" />
           <Text style={styles.applyText}>Apply</Text>
         </Pressable>
@@ -101,8 +128,12 @@ export default function LeavesScreen() {
                 key={b.leave_type}
                 style={[styles.balanceCard, { borderColor: meta.color + "55" }]}
               >
-                <View style={[styles.balanceBar, { backgroundColor: meta.color }]} />
-                <Text style={styles.balanceType}>{b.policy_name || meta.label}</Text>
+                <View
+                  style={[styles.balanceBar, { backgroundColor: meta.color }]}
+                />
+                <Text style={styles.balanceType}>
+                  {b.policy_name || meta.label}
+                </Text>
                 <Text style={[styles.balanceRemaining, { color: meta.color }]}>
                   {remaining}
                 </Text>
@@ -129,12 +160,16 @@ export default function LeavesScreen() {
             const status = leaveStatusMeta(l.status);
             return (
               <View key={l.id} style={styles.leaveCard}>
-                <View style={[styles.leaveDot, { backgroundColor: type.color }]} />
+                <View
+                  style={[styles.leaveDot, { backgroundColor: type.color }]}
+                />
                 <View style={styles.leaveBody}>
                   <Text style={styles.leaveType}>{type.label}</Text>
                   <Text style={styles.leaveDate}>
                     {fmtDate(l.date)}
-                    {l.duration && l.duration !== "full" ? ` · ${l.duration}` : ""}
+                    {l.duration && l.duration !== "full"
+                      ? ` · ${l.duration}`
+                      : ""}
                   </Text>
                   {l.reason ? (
                     <Text style={styles.leaveReason} numberOfLines={1}>
@@ -158,79 +193,83 @@ export default function LeavesScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { alignItems: "center", justifyContent: "center" },
-  container: { padding: 16, gap: 14, paddingBottom: 32 },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  applyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: theme.primary,
-    borderRadius: theme.radiusFull,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  applyText: { color: "#fff", fontSize: 13, fontWeight: "600" },
-  heading: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: theme.text,
-    letterSpacing: -0.5,
-  },
-  balanceGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  balanceCard: {
-    width: "47.5%",
-    flexGrow: 1,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderRadius: theme.radiusLg,
-    padding: 14,
-    overflow: "hidden",
-  },
-  balanceBar: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 3,
-  },
-  balanceType: { fontSize: 12, color: theme.textSecondary, fontWeight: "600" },
-  balanceRemaining: { fontSize: 28, fontWeight: "800", marginVertical: 2 },
-  balanceMeta: { fontSize: 11, color: theme.textMuted },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: theme.textSecondary,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginTop: 4,
-  },
-  leaveCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 14,
-  },
-  leaveDot: { width: 10, height: 10, borderRadius: 5 },
-  leaveBody: { flex: 1, gap: 2 },
-  leaveType: { fontSize: 14, fontWeight: "600", color: theme.text },
-  leaveDate: { fontSize: 12, color: theme.textSecondary },
-  leaveReason: { fontSize: 12, color: theme.textMuted },
-  badge: {
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  badgeText: { fontSize: 11, fontWeight: "600" },
-  empty: { alignItems: "center", gap: 10, paddingTop: 40 },
-  emptyText: { color: theme.textMuted, fontSize: 14 },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { alignItems: "center", justifyContent: "center" },
+    container: { padding: 16, gap: 14, paddingBottom: 32 },
+    headerRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+    },
+    applyBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      backgroundColor: theme.primary,
+      borderRadius: theme.radiusFull,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+    },
+    applyText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+    heading: {
+      fontSize: 24,
+      fontWeight: "800",
+      color: theme.text,
+      letterSpacing: -0.5,
+    },
+    balanceGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    balanceCard: {
+      width: "47.5%",
+      flexGrow: 1,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderRadius: theme.radiusLg,
+      padding: 14,
+      overflow: "hidden",
+    },
+    balanceBar: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      height: 3,
+    },
+    balanceType: {
+      fontSize: 12,
+      color: theme.textSecondary,
+      fontWeight: "600",
+    },
+    balanceRemaining: { fontSize: 28, fontWeight: "800", marginVertical: 2 },
+    balanceMeta: { fontSize: 11, color: theme.textMuted },
+    sectionTitle: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: theme.textSecondary,
+      textTransform: "uppercase",
+      letterSpacing: 0.6,
+      marginTop: 4,
+    },
+    leaveCard: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 14,
+    },
+    leaveDot: { width: 10, height: 10, borderRadius: 5 },
+    leaveBody: { flex: 1, gap: 2 },
+    leaveType: { fontSize: 14, fontWeight: "600", color: theme.text },
+    leaveDate: { fontSize: 12, color: theme.textSecondary },
+    leaveReason: { fontSize: 12, color: theme.textMuted },
+    badge: {
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    badgeText: { fontSize: 11, fontWeight: "600" },
+    empty: { alignItems: "center", gap: 10, paddingTop: 40 },
+    emptyText: { color: theme.textMuted, fontSize: 14 },
+  });
