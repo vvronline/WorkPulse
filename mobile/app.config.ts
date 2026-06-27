@@ -8,11 +8,13 @@ import { version as APP_VERSION } from "./package.json";
 // Default backend targets. Override per-build via environment variables
 // (EAS secrets / .env) without touching source.
 const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL || "https://workpulse-prod.up.railway.app/api";
+  process.env.EXPO_PUBLIC_API_BASE_URL ||
+  "https://workpulse-prod.up.railway.app/api";
 const WS_BASE_URL =
   process.env.EXPO_PUBLIC_WS_BASE_URL || "wss://workpulse-prod.up.railway.app";
 const TENOR_API_KEY = process.env.EXPO_PUBLIC_TENOR_API_KEY || "";
-const TENOR_CLIENT_KEY = process.env.EXPO_PUBLIC_TENOR_CLIENT_KEY || "workpulse-chat";
+const TENOR_CLIENT_KEY =
+  process.env.EXPO_PUBLIC_TENOR_CLIENT_KEY || "workpulse-chat";
 const ANDROID_GOOGLE_SERVICES_FILE =
   process.env.EXPO_ANDROID_GOOGLE_SERVICES_FILE ||
   process.env.GOOGLE_SERVICES_JSON ||
@@ -88,6 +90,24 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   plugins: [
     "expo-router",
+    // Signal-style launch splash: the brand mark centered (small) on a solid
+    // brand-navy background, matching Signal-Android's Android-12 SplashScreen
+    // (windowSplashScreenBackground = brand color, windowSplashScreenAnimatedIcon
+    // = centered logo). backgroundColor #0a0e1c == ADAPTIVE_BG in
+    // scripts/generate-icons.cjs so the splash, adaptive-icon bg and brand all match.
+    [
+      "expo-splash-screen",
+      {
+        image: "./assets/splash-icon.png",
+        imageWidth: 200,
+        resizeMode: "contain",
+        backgroundColor: "#0a0e1c",
+        dark: {
+          image: "./assets/splash-icon.png",
+          backgroundColor: "#0a0e1c",
+        },
+      },
+    ],
     "expo-secure-store",
     // Re-applies the Gradle JVM heap/metaspace settings during `expo prebuild`.
     // CI regenerates the gitignored android/ project on every run, which
@@ -136,8 +156,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // calls channel can ring with the WorkPulse tone instead of the system
     // default in the killed/background status-bar state.
     "./scripts/withAndroidRingtoneAssets",
-    // Copies the monochrome notification small icon (assets/notification/
-    // notification_icon.xml) into android res/drawable so Notifee can resolve
+    // Copies the white-silhouette notification small icon (assets/notification/
+    // notification_icon.png) into android res/drawable so Notifee can resolve
     // `smallIcon: "notification_icon"`. Without a resolvable small drawable,
     // Android DROPS the message notification silently (sound plays, but no
     // status-bar entry) — the root cause of "messages: only sound, no banner".

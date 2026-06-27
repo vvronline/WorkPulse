@@ -3,7 +3,6 @@
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "node",
-    "ignoreDeprecations": "6.0",
     "lib": ["ES2022", "DOM"],
     "rootDir": ".",
     "outDir": ".",
@@ -19,8 +18,8 @@
     "noImplicitAny": true,
     "strictNullChecks": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["node"]
+    "types": ["node"],
   },
   "include": ["*.ts"],
-  "exclude": ["node_modules", "dist", "build", "icons"]
+  "exclude": ["node_modules", "dist", "build", "icons"],
 }

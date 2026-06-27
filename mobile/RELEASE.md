@@ -36,8 +36,8 @@ prebuild + native modules). Before cutting a release:
 ## App icon
 
 The launcher icon is the **same artwork as the desktop `.exe`**
-(`desktop/icons/icon.svg`). The mobile launcher / splash / favicon PNGs in
-`mobile/assets/` are generated from that SVG by:
+(`desktop/icons/icon-source.png`). The mobile launcher / splash / favicon PNGs in
+`mobile/assets/` are generated from that source by:
 
 ```bash
 cd mobile
@@ -47,7 +47,7 @@ npm run generate-icons   # writes assets/icon.png, splash-icon.png, favicon.png,
 
 These generated PNGs are committed and consumed by `expo prebuild` during the
 CI build, so the APK ships with the desktop logo. Re-run the script and commit
-whenever `desktop/icons/icon.svg` changes.
+whenever `desktop/icons/icon-source.png` changes.
 
 ## Cutting a release
 

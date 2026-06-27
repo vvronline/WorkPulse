@@ -1,15 +1,15 @@
 /**
  * In-app updater for the WorkPulse mobile (Android) app.
  *
- * Completely INDEPENDENT of the desktop updater. Desktop releases use `vX.Y.Z`
- * tags + electron-updater + latest.yml; mobile releases use `mobile-vX.Y.Z`
- * tags and ship a single `WorkPulse-<version>.apk` asset (see
- * .github/workflows/mobile-release.yml). This module only ever looks at
- * `mobile-v*` releases so the two channels never collide.
+ * Completely INDEPENDENT of the desktop updater. Both channels now serve their
+ * assets + version manifest from Cloudflare R2 behind a public custom domain
+ * (see docs/OTA_R2_MIGRATION_PLAN.md), which lets the GitHub repo stay private
+ * while devices keep updating. Desktop reads `desktop/latest.json`; mobile reads
+ * `mobile/latest.json`, so the two channels never collide.
  *
  * Flow:
- *   1. checkForMobileUpdate() → query GitHub releases, find the latest
- *      `mobile-v*` release, compare semver to the running app version.
+ *   1. checkForMobileUpdate() → fetch `mobile/latest.json` from R2, compare its
+ *      semver to the running app version.
  *   2. downloadAndInstallApk() → download the APK into app storage with live
  *      progress, then hand it to the Android package installer via a
  *      content:// URI (FileProvider) + ACTION_INSTALL_PACKAGE intent.
@@ -21,41 +21,36 @@ import Constants from "expo-constants";
 import * as FileSystem from "expo-file-system/legacy";
 import * as IntentLauncher from "expo-intent-launcher";
 
-const GITHUB_OWNER = "vvronline";
-const GITHUB_REPO = "WorkPulse";
-
-// Mobile release tags look like `mobile-v1.0.28`. This regex isolates them so
-// we never pick up a desktop `vX.Y.Z` release.
-const MOBILE_TAG_RE = /^mobile-v(\d+\.\d+\.\d+)$/;
+// OTA base URL (Cloudflare R2 public custom domain). Baked at build time via
+// EXPO_PUBLIC_OTA_BASE_URL (see mobile-release.yml); falls back to the
+// production CDN for local/dev builds.
+const OTA_BASE_URL = (
+  process.env.EXPO_PUBLIC_OTA_BASE_URL || "https://cdn.workpulse.app"
+).replace(/\/+$/, "");
+const MOBILE_LATEST_JSON_URL = `${OTA_BASE_URL}/mobile/latest.json`;
 
 export interface MobileUpdateInfo {
   available: boolean;
-  /** Latest version available on GitHub, e.g. "1.0.29". */
+  /** Latest version available on the CDN, e.g. "1.0.29". */
   version?: string;
   /** Current running app version. */
   currentVersion?: string;
-  /** Plain-text release notes (markdown body from the GitHub release). */
+  /** Plain-text release notes (markdown body from the release manifest). */
   notes?: string;
   /** Direct download URL for the APK asset. */
   apkUrl?: string;
-  /** Browser URL for the release page (fallback). */
+  /** Browser URL for the release folder (fallback). */
   releaseUrl?: string;
   /** Reason when unavailable: "up-to-date" | "no-release" | "error" | "unsupported". */
   reason?: string;
 }
 
-interface GitHubAsset {
-  name?: string;
-  browser_download_url?: string;
-}
-
-interface GitHubRelease {
-  tag_name?: string;
-  html_url?: string;
-  body?: string;
-  draft?: boolean;
-  prerelease?: boolean;
-  assets?: GitHubAsset[];
+/** Shape of mobile/latest.json published by the mobile release workflow. */
+interface MobileLatestManifest {
+  version?: string;
+  apkUrl?: string;
+  notes?: string;
+  releaseUrl?: string;
 }
 
 /** The running app version (from app.config.ts → extra.APP_VERSION). */
@@ -66,8 +61,14 @@ export function getCurrentVersion(): string {
 
 /** Compare two semver strings (a.b.c). Returns 1 if a>b, -1 if a<b, 0 if equal. */
 function compareSemver(a: string, b: string): number {
-  const pa = a.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pa = a
+    .replace(/^v/, "")
+    .split(".")
+    .map((n) => parseInt(n, 10) || 0);
+  const pb = b
+    .replace(/^v/, "")
+    .split(".")
+    .map((n) => parseInt(n, 10) || 0);
   for (let i = 0; i < 3; i++) {
     if ((pa[i] || 0) > (pb[i] || 0)) return 1;
     if ((pa[i] || 0) < (pb[i] || 0)) return -1;
@@ -76,7 +77,7 @@ function compareSemver(a: string, b: string): number {
 }
 
 /**
- * Check GitHub for a newer mobile release. Returns `{ available: false }` with
+ * Check the CDN for a newer mobile release. Returns `{ available: false }` with
  * a `reason` on any non-update outcome so callers can decide whether to surface
  * anything to the user.
  */
@@ -89,50 +90,45 @@ export async function checkForMobileUpdate(): Promise<MobileUpdateInfo> {
   }
 
   try {
-    const res = await fetch(
-      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=100`,
-      {
-        headers: {
-          Accept: "application/vnd.github.v3+json",
-          "User-Agent": "WorkPulse-Mobile",
-        },
+    const res = await fetch(MOBILE_LATEST_JSON_URL, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "WorkPulse-Mobile",
       },
-    );
+      // The object is served no-cache, but be explicit so we never read a stale
+      // cached manifest and miss a freshly-published version.
+      cache: "no-store",
+    });
     if (!res.ok) {
-      return { available: false, currentVersion, reason: "error" };
+      // 404 = no release has been published to the CDN yet.
+      return {
+        available: false,
+        currentVersion,
+        reason: res.status === 404 ? "no-release" : "error",
+      };
     }
-    const releases = (await res.json()) as GitHubRelease[];
 
-    // Filter to published mobile releases and pick the highest semver.
-    const mobileReleases = releases
-      .filter((r) => !r.draft && !r.prerelease && r.tag_name && MOBILE_TAG_RE.test(r.tag_name))
-      .map((r) => ({
-        release: r,
-        version: (r.tag_name as string).match(MOBILE_TAG_RE)![1],
-      }))
-      .sort((a, b) => compareSemver(b.version, a.version));
-
-    if (mobileReleases.length === 0) {
+    const latest = (await res.json()) as MobileLatestManifest;
+    if (!latest.version) {
       return { available: false, currentVersion, reason: "no-release" };
     }
 
-    const latest = mobileReleases[0];
     if (compareSemver(latest.version, currentVersion) <= 0) {
-      return { available: false, currentVersion, version: latest.version, reason: "up-to-date" };
+      return {
+        available: false,
+        currentVersion,
+        version: latest.version,
+        reason: "up-to-date",
+      };
     }
-
-    // Find the APK asset on the latest release.
-    const apkAsset = (latest.release.assets || []).find((a) =>
-      a.name?.toLowerCase().endsWith(".apk"),
-    );
 
     return {
       available: true,
       version: latest.version,
       currentVersion,
-      notes: cleanReleaseNotes(latest.release.body || ""),
-      apkUrl: apkAsset?.browser_download_url,
-      releaseUrl: latest.release.html_url,
+      notes: cleanReleaseNotes(latest.notes || ""),
+      apkUrl: latest.apkUrl,
+      releaseUrl: latest.releaseUrl,
     };
   } catch {
     return { available: false, currentVersion, reason: "error" };
@@ -173,7 +169,9 @@ export async function downloadAndInstallApk(
     {},
     (progress) => {
       if (onProgress && progress.totalBytesExpectedToWrite > 0) {
-        onProgress(progress.totalBytesWritten / progress.totalBytesExpectedToWrite);
+        onProgress(
+          progress.totalBytesWritten / progress.totalBytesExpectedToWrite,
+        );
       }
     },
   );
@@ -188,11 +186,14 @@ export async function downloadAndInstallApk(
   // installer with read permission granted.
   const contentUri = await FileSystem.getContentUriAsync(result.uri);
 
-  await IntentLauncher.startActivityAsync("android.intent.action.INSTALL_PACKAGE", {
-    data: contentUri,
-    flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
-    type: "application/vnd.android.package-archive",
-  });
+  await IntentLauncher.startActivityAsync(
+    "android.intent.action.INSTALL_PACKAGE",
+    {
+      data: contentUri,
+      flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+      type: "application/vnd.android.package-archive",
+    },
+  );
 }
 
 /**

@@ -107,7 +107,7 @@ const MESSAGE_CHANNEL_ID = "messages_v2";
 // status-bar entry) — the root cause of "messages: only sound, no banner". The
 // previous "ic_launcher" value only existed as an ADAPTIVE `mipmap`, which
 // Android rejects as a small icon. See scripts/withAndroidNotificationIcon.js +
-// res/drawable/notification_icon.xml.
+// res/drawable/notification_icon.png (a white silhouette of the brand logo).
 const MESSAGE_SMALL_ICON = "notification_icon";
 
 // SecureStore key holding the admin-set org branding logo URL. Cached by the

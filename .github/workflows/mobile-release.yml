@@ -21,7 +21,7 @@ name: Mobile Release
 on:
   push:
     tags:
-      - 'mobile-v*' # e.g. mobile-v1.0.0, mobile-v1.2.3
+      - "mobile-v*" # e.g. mobile-v1.0.0, mobile-v1.2.3
 
 permissions:
   contents: write
@@ -60,6 +60,10 @@ jobs:
       # via repo variables) if you ever ship a build pointing at a different API.
       EXPO_PUBLIC_API_BASE_URL: https://workpulse-prod.up.railway.app/api
       EXPO_PUBLIC_WS_BASE_URL: wss://workpulse-prod.up.railway.app
+      # OTA update source (Cloudflare R2 public custom domain). Baked into the JS
+      # bundle so the in-app updater reads mobile/latest.json from the CDN instead
+      # of the (now private) GitHub releases API.
+      EXPO_PUBLIC_OTA_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
       EXPO_ANDROID_GOOGLE_SERVICES_FILE: ./google-services.json
     steps:
       - uses: actions/checkout@v6
@@ -83,7 +87,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -435,3 +439,89 @@ jobs:
           fi
           echo "::error::Failed to publish release mobile-v${VERSION} (id=${RELEASE_ID})"
           exit 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Publish the APK + version manifest to Cloudflare R2 (S3-compatible) so the
+  # in-app updater can deliver OTA updates while the GitHub repo stays PRIVATE.
+  # Keeps the newest 5 releases and prunes older ones. Runs in parallel with the
+  # GitHub `release` job during the transitional period; the GitHub job can be
+  # dropped once every device is on a build that reads from R2.
+  # ──────────────────────────────────────────────────────────────────────────
+  publish-r2:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      # Recent aws-cli v2 sends x-amz-checksum-* headers R2 can reject with 501.
+      # These disable that; older aws-cli simply ignores the vars.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      R2_BUCKET: ${{ vars.R2_BUCKET }}
+      R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-apk
+          path: release-assets
+
+      - name: Upload APK to R2 (immutable, long cache)
+        run: |
+          set -euo pipefail
+          TAG="mobile-v${VERSION}"
+          APK="release-assets/WorkPulse-${VERSION}.apk"
+          test -f "$APK" || { echo "::error::Missing $APK"; exit 1; }
+          aws s3 cp "$APK" "s3://${R2_BUCKET}/mobile/releases/${TAG}/WorkPulse-${VERSION}.apk" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/vnd.android.package-archive" \
+            --cache-control "public, max-age=31536000, immutable"
+
+      - name: Build release notes manifest
+        run: |
+          set -euo pipefail
+          PREV_TAG=$(git tag --sort=-creatordate | grep '^mobile-v' | sed -n '2p' || true)
+          NOTES=""
+          if [ -n "$PREV_TAG" ]; then
+            NOTES=$(git log "${PREV_TAG}"..HEAD --pretty=format:'- %s' --no-merges | head -30 || true)
+          fi
+          jq -n \
+            --arg version "$VERSION" \
+            --arg apkUrl  "${R2_PUBLIC_BASE_URL}/mobile/releases/mobile-v${VERSION}/WorkPulse-${VERSION}.apk" \
+            --arg notes   "$NOTES" \
+            --arg releaseUrl "${R2_PUBLIC_BASE_URL}/mobile/releases/mobile-v${VERSION}/" \
+            '{version:$version, apkUrl:$apkUrl, notes:$notes, releaseUrl:$releaseUrl}' \
+            > latest.json
+          cat latest.json
+
+      - name: Write mobile latest.json (stable pointer, no-cache)
+        run: |
+          set -euo pipefail
+          aws s3 cp latest.json "s3://${R2_BUCKET}/mobile/latest.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Prune old mobile releases (keep newest 5)
+        run: |
+          set -euo pipefail
+          all=$(aws s3 ls "s3://${R2_BUCKET}/mobile/releases/" --endpoint-url "$R2_ENDPOINT" \
+                | awk '{print $2}' | sed 's#/##' | grep -E '^mobile-v[0-9]' || true)
+          if [ -z "$all" ]; then echo "Nothing to prune"; exit 0; fi
+          sorted=$(echo "$all" | sort -V)
+          total=$(echo "$sorted" | grep -c . || true)
+          if [ "${total:-0}" -gt 5 ]; then
+            for r in $(echo "$sorted" | head -n $((total - 5))); do
+              echo "Pruning mobile/releases/${r}"
+              aws s3 rm "s3://${R2_BUCKET}/mobile/releases/${r}/" --recursive --endpoint-url "$R2_ENDPOINT"
+            done
+          else
+            echo "Only ${total:-0} mobile releases; keeping all"
+          fi

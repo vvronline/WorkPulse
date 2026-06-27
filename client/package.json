@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "generate-emoji": "node ../scripts/generate-emoji.mjs"
+    "generate-emoji": "node ../scripts/generate-emoji.mjs",
+    "generate-icons": "node scripts/generate-icons.cjs"
   },
   "keywords": [],
   "author": "",

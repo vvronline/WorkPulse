@@ -3,7 +3,7 @@ name: Desktop Release
 on:
   push:
     tags:
-      - 'v*' # Triggers on version tags like v1.0.0, v1.2.3
+      - "v*" # Triggers on version tags like v1.0.0, v1.2.3
 
 permissions:
   contents: write
@@ -54,7 +54,7 @@ jobs:
         working-directory: client
         env:
           VITE_WS_URL: wss://workpulse-prod.up.railway.app/ws
-          VITE_ELECTRON: 'true'
+          VITE_ELECTRON: "true"
         run: npm run build
 
       - name: Upload client build
@@ -190,7 +190,7 @@ jobs:
         working-directory: desktop
         env:
           # Quiet down electron-builder native dependency rebuild noise on CI
-          USE_HARD_LINKS: 'false'
+          USE_HARD_LINKS: "false"
         run: |
           set -e
           MAX_ATTEMPTS=4
@@ -547,3 +547,79 @@ jobs:
           echo "Token scope check (whoami):"
           gh api user --jq '.login' || true
           exit 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Publish installers + electron-updater manifests (latest*.yml) to Cloudflare
+  # R2 (S3-compatible) so the desktop auto-updater can deliver updates while the
+  # GitHub repo stays PRIVATE. Keeps the newest 5 releases and prunes older ones.
+  # Runs in parallel with `release-notes` during the transitional period; the
+  # GitHub release job can be dropped once every device is on a build that reads
+  # its feed from R2.
+  # ──────────────────────────────────────────────────────────────────────────
+  publish-r2:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      # Recent aws-cli v2 sends x-amz-checksum-* headers R2 can reject with 501.
+      # These disable that; older aws-cli simply ignores the vars.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      R2_BUCKET: ${{ vars.R2_BUCKET }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - name: Download all installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          path: installers
+          merge-multiple: true
+
+      - name: Upload installers to R2 (immutable, long cache)
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          DEST="s3://${R2_BUCKET}/desktop/releases/${TAG}/"
+          echo "Uploading $(ls -1 installers | wc -l) files to ${DEST}"
+          # Installers + blockmaps: versioned folder is immutable, cache forever.
+          aws s3 cp installers/ "$DEST" --recursive \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "*.yml" --exclude "*.yaml"
+          # latest*.yml: mark no-cache so a re-published same-version build (or a
+          # CDN edge that cached an older manifest) is always picked up.
+          aws s3 cp installers/ "$DEST" --recursive \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "text/yaml" \
+            --cache-control "no-cache" \
+            --exclude "*" --include "*.yml" --include "*.yaml"
+
+      - name: Write desktop latest.json (stable pointer, no-cache)
+        run: |
+          set -euo pipefail
+          printf '{"version":"%s","tag":"v%s"}' "$VERSION" "$VERSION" > latest.json
+          cat latest.json
+          aws s3 cp latest.json "s3://${R2_BUCKET}/desktop/latest.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Prune old desktop releases (keep newest 5)
+        run: |
+          set -euo pipefail
+          all=$(aws s3 ls "s3://${R2_BUCKET}/desktop/releases/" --endpoint-url "$R2_ENDPOINT" \
+                | awk '{print $2}' | sed 's#/##' | grep -E '^v[0-9]' || true)
+          if [ -z "$all" ]; then echo "Nothing to prune"; exit 0; fi
+          sorted=$(echo "$all" | sort -V)
+          total=$(echo "$sorted" | grep -c . || true)
+          if [ "${total:-0}" -gt 5 ]; then
+            for r in $(echo "$sorted" | head -n $((total - 5))); do
+              echo "Pruning desktop/releases/${r}"
+              aws s3 rm "s3://${R2_BUCKET}/desktop/releases/${r}/" --recursive --endpoint-url "$R2_ENDPOINT"
+            done
+          else
+            echo "Only ${total:-0} desktop releases; keeping all"
+          fi
