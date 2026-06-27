@@ -14,7 +14,9 @@ const TONE_KEY = "wp_emoji_skin_tone";
 const MAX_RECENT = 36;
 
 export const USING_BUNDLED = HAS_BUNDLED_ASSETS && GENERATED_EMOJI.length > 0;
-export const ALL_EMOJI: Emoji[] = USING_BUNDLED ? GENERATED_EMOJI : CURATED_EMOJI;
+export const ALL_EMOJI: Emoji[] = USING_BUNDLED
+  ? GENERATED_EMOJI
+  : CURATED_EMOJI;
 
 const BY_ID = new Map<string, Emoji>();
 for (const e of ALL_EMOJI) BY_ID.set(e.id, e);
@@ -65,9 +67,10 @@ export async function hydrateEmojiStore(): Promise<void> {
 }
 
 function persistRecents(): void {
-  SecureStore.setItemAsync(RECENT_KEY, JSON.stringify(recentsCache.slice(0, MAX_RECENT))).catch(
-    () => {}
-  );
+  SecureStore.setItemAsync(
+    RECENT_KEY,
+    JSON.stringify(recentsCache.slice(0, MAX_RECENT)),
+  ).catch(() => {});
 }
 
 // ── Skin tone ────────────────────────────────────────────────────────────────
@@ -98,35 +101,93 @@ export function recordRecent(id: string): void {
   } else {
     recentsCache.push({ id, count: 1, last: Date.now() });
   }
-  recentsCache.sort((a, b) => b.count * 1e9 + b.last - (a.count * 1e9 + a.last));
+  recentsCache.sort(
+    (a, b) => b.count * 1e9 + b.last - (a.count * 1e9 + a.last),
+  );
   recentsCache = recentsCache.slice(0, MAX_RECENT);
   persistRecents();
 }
 
 export function getRecentEmoji(): Emoji[] {
-  return recentsCache.map((r) => BY_ID.get(r.id)).filter((e): e is Emoji => !!e);
+  return recentsCache
+    .map((r) => BY_ID.get(r.id))
+    .filter((e): e is Emoji => !!e);
 }
 
 // ── Search ───────────────────────────────────────────────────────────────────
+interface SearchEntry {
+  e: Emoji;
+  tokens: string[]; // individual searchable tokens (lowercase)
+  hay: string; // full joined haystack for substring fallback
+}
+
+// Pre-built at module load (once). For each emoji, extract tokens from:
+// - id split on _, -, spaces
+// - each keyword
+// - each word of the lowercased name
+const SEARCH_INDEX: SearchEntry[] = ALL_EMOJI.map((e) => {
+  const idTokens = e.id
+    .toLowerCase()
+    .split(/[-_\s]+/)
+    .filter(Boolean);
+  const nameTokens = e.name.toLowerCase().split(/\s+/).filter(Boolean);
+  const kwTokens = e.keywords.map((k) => k.toLowerCase());
+  const tokens = Array.from(new Set([...idTokens, ...nameTokens, ...kwTokens]));
+  const hay = tokens.join(" ");
+  return { e, tokens, hay };
+});
+
 export function searchEmoji(query: string): Emoji[] {
-  const q = query.trim().toLowerCase();
+  // Strip leading/trailing colons (":thumbsup:" → "thumbsup")
+  const q = query
+    .trim()
+    .toLowerCase()
+    .replace(/^:(.+):$/, "$1");
   if (!q) return [];
-  const terms = q.split(/\s+/);
+
+  const terms = q.split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [];
+
   const scored: { e: Emoji; score: number }[] = [];
-  for (const e of ALL_EMOJI) {
-    const hay = `${e.id} ${e.name} ${e.keywords.join(" ")}`.toLowerCase();
-    let score = 0;
-    let all = true;
-    for (const t of terms) {
-      const i = hay.indexOf(t);
-      if (i < 0) {
-        all = false;
-        break;
+
+  for (const { e, tokens, hay } of SEARCH_INDEX) {
+    let totalScore = 0;
+    let allMatch = true;
+
+    for (const term of terms) {
+      let termScore = 0;
+
+      // Score against each pre-computed token:
+      //   4 — exact match, 3 — prefix, 2 — substring within token
+      for (const token of tokens) {
+        if (token === term) {
+          termScore = Math.max(termScore, 4); // exact token match
+          break;
+        } else if (token.startsWith(term)) {
+          termScore = Math.max(termScore, 3); // prefix of a token
+        } else if (token.includes(term)) {
+          termScore = Math.max(termScore, 2); // substring within a token
+        }
       }
-      score += i === 0 ? 3 : hay[i - 1] === " " ? 2 : 1;
+
+      // Fallback: substring anywhere in the full haystack
+      if (termScore === 0) {
+        if (hay.includes(term)) {
+          termScore = 1;
+        } else {
+          allMatch = false;
+          break;
+        }
+      }
+
+      totalScore += termScore;
     }
-    if (all) scored.push({ e, score });
+
+    if (allMatch && totalScore > 0) {
+      scored.push({ e, score: totalScore });
+    }
   }
+
   scored.sort((a, b) => b.score - a.score || a.e.sortOrder - b.e.sortOrder);
   return scored.map((s) => s.e);
 }

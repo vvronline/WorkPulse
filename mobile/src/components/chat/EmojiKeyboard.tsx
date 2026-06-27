@@ -174,16 +174,12 @@ export default function EmojiKeyboard({
     [handlePick, styles, tone],
   );
 
-  // Search + skin-tone row. Rendered as the scrolling list's HEADER (not a
-  // fixed sibling) so it scrolls away as the user browses — freeing the full
-  // panel height for emoji, exactly like Signal-Android. The skin-tone popup
-  // is NOT rendered here — it lives at the panel root (see `wrap` below) so it
-  // floats above the emoji grid instead of being clipped by the scroll list's
-  // content area.
-  const TopRow = useCallback(
-    () => (
+  return (
+    <View style={[styles.wrap, { height: effectiveHeight }]}>
+      {/* ── Fixed header (always mounted, never remounted) ── */}
       <View style={styles.topRowWrap}>
         <View style={styles.topRow}>
+          {/* Search input */}
           <View style={styles.searchBox}>
             <SearchIcon size={16} color={theme.textMuted} />
             <TextInput
@@ -198,8 +194,9 @@ export default function EmojiKeyboard({
               onFocus={onSearchFocus}
               onBlur={onSearchBlur}
               autoCorrect={false}
+              returnKeyType="search"
             />
-            {query.length > 0 ? (
+            {query.length > 0 && (
               <Pressable
                 onPress={() => {
                   setQuery("");
@@ -209,8 +206,9 @@ export default function EmojiKeyboard({
               >
                 <XIcon size={15} color={theme.textMuted} />
               </Pressable>
-            ) : null}
+            )}
           </View>
+          {/* Skin-tone toggle */}
           <Pressable
             style={styles.toneBtn}
             onPress={() => setToneOpen((v) => !v)}
@@ -218,6 +216,7 @@ export default function EmojiKeyboard({
             <Text style={styles.toneText}>{SKIN_TONES[tone].swatch}</Text>
           </Pressable>
         </View>
+        {/* Media shortcut row */}
         <View style={styles.mediaRow}>
           <Pressable style={styles.mediaBtn} onPress={onOpenGif}>
             <Text style={styles.mediaBtnText}>GIF</Text>
@@ -227,14 +226,8 @@ export default function EmojiKeyboard({
           </Pressable>
         </View>
       </View>
-    ),
-    [onOpenGif, onOpenSticker, query, tone, styles, theme],
-  );
 
-  return (
-    <View style={[styles.wrap, { height: effectiveHeight }]}>
-      {/* Grid (search results OR sectioned categories). The search + skin-tone
-          row lives in the list HEADER so it scrolls with the content. */}
+      {/* ── Emoji grid ── */}
       {searching ? (
         <FlatList
           data={searchRows}
@@ -243,7 +236,6 @@ export default function EmojiKeyboard({
           style={styles.gridList}
           contentContainerStyle={styles.grid}
           showsVerticalScrollIndicator={false}
-          ListHeaderComponent={TopRow}
           ListEmptyComponent={
             <View style={styles.empty}>
               <Text style={styles.emptyText}>No emoji found</Text>
@@ -261,7 +253,6 @@ export default function EmojiKeyboard({
           style={styles.gridList}
           contentContainerStyle={styles.grid}
           showsVerticalScrollIndicator={false}
-          ListHeaderComponent={TopRow}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={viewabilityConfig}
           onScrollToIndexFailed={() => {}}
@@ -272,8 +263,7 @@ export default function EmojiKeyboard({
         />
       )}
 
-      {/* Bottom category strip (Signal-style) + backspace — the ONLY pinned
-          element, so the grid + search both get the maximum scroll area. */}
+      {/* ── Bottom category strip + backspace ── */}
       {!searching && (
         <View style={styles.bottomStrip}>
           <FlatList
@@ -300,10 +290,7 @@ export default function EmojiKeyboard({
         </View>
       )}
 
-      {/* Skin-tone popup — rendered at the PANEL ROOT (a sibling of the scroll
-          list), not inside the list header, so it floats ABOVE the emoji grid
-          instead of being clipped by the list's content area. Anchored to the
-          top-right beneath the tone swatch. */}
+      {/* ── Floating skin-tone popup ── */}
       {toneOpen && (
         <View style={styles.tonePopup}>
           {SKIN_TONES.map((t) => (
