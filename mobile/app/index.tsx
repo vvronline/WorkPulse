@@ -190,14 +190,16 @@ export default function Index() {
     setPendingCall(callRoute);
   }
 
-  // Cold-start message-notification tap for an authenticated user → open the
-  // EXACT conversation directly (no chat-list detour).
+  // Cold-start message-notification tap for an authenticated user → restore the
+  // tab shell FIRST, then let the Chat tab push the exact thread. This keeps the
+  // (tabs) route under `/chat/[id]`, so Android back/gesture returns to the chat
+  // list instead of treating the thread as the app root and exiting.
   if (chatConversationId && user) {
     return (
       <Redirect
         href={{
-          pathname: "/chat/[id]",
-          params: { id: chatConversationId },
+          pathname: "/(tabs)/chat",
+          params: { openConversationId: chatConversationId },
         }}
       />
     );

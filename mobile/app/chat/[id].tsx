@@ -142,10 +142,16 @@ export default function ChatThread() {
                 }
               : {
                   title: c.name || "Chat",
-                  // Native-stack MERGES options across re-renders, so the
-                  // `headerLeft` (X) set while in selection mode would otherwise
-                  // linger after exiting. Reset it to the default back button.
-                  headerLeft: undefined,
+                  // Render our own deterministic up button instead of relying on
+                  // native-stack to restore its default back button after the
+                  // selection/search headers override `headerLeft`. If this
+                  // thread was opened as a cold-start root route, the handler
+                  // falls back to the chat tab instead of exiting the app.
+                  headerLeft: () => (
+                    <Pressable onPress={c.goBackToChatList} hitSlop={8}>
+                      <ArrowLeft size={22} color={theme.text} />
+                    </Pressable>
+                  ),
                   headerTitle: () => (
                     // Signal-style: tapping the title/avatar opens the
                     // conversation profile (Conversation Settings) screen.

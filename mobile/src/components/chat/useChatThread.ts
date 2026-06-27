@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BackHandler,
   InteractionManager,
   Keyboard,
   Vibration,
@@ -1988,6 +1989,41 @@ export function useChatThread() {
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
   }
 
+  const goBackToChatList = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+
+    // Fallback for external/deep-link launches where this thread is the first
+    // route in the stack. Signal-Android uses explicit up-navigation to the
+    // conversation list in this case instead of letting Back finish the task.
+    router.replace("/(tabs)/chat" as never);
+  }, [router]);
+
+  const handleThreadBack = useCallback(() => {
+    if (selectionMode) {
+      clearSelection();
+      return true;
+    }
+    if (searchMode) {
+      closeSearch();
+      return true;
+    }
+    goBackToChatList();
+    return true;
+  }, [goBackToChatList, searchMode, selectionMode]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const sub = BackHandler.addEventListener(
+        "hardwareBackPress",
+        handleThreadBack,
+      );
+      return () => sub.remove();
+    }, [handleThreadBack]),
+  );
+
   // Scroll the (inverted) list to a matched message and flash its highlight.
   // Re-applies highlightedId even for the same id by briefly clearing it so the
   // bubble's highlight effect re-fires when stepping onto the same match twice.
@@ -2809,6 +2845,7 @@ export function useChatThread() {
     peerStatus,
     headerSubtitle,
     startCall,
+    goBackToChatList,
     openHeaderPanel,
     // Signal-style overflow menu + navigation
     menuOpen,

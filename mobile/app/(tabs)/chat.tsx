@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import {
   Archive,
   BellDot,
@@ -129,6 +129,7 @@ export default function ChatScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
+  const params = useLocalSearchParams<{ openConversationId?: string }>();
   const { user } = useAuth();
   // Meetings chat is gated behind the `meetings` plan feature (mirrors the web
   // ChatSidebar, which only renders the Meetings tab when it's enabled).
@@ -150,6 +151,7 @@ export default function ChatScreen() {
   // refresh (a busy conversation used to trigger a full getConversations()
   // fetch PER message). The ref holds the pending debounce timer.
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openedFromLaunchParamRef = useRef<string | null>(null);
 
   // Search (people) — mirrors web ≥2-char threshold.
   const [showSearch, setShowSearch] = useState(false);
@@ -325,6 +327,26 @@ export default function ChatScreen() {
       },
     });
   }
+
+  useEffect(() => {
+    const target = String(params.openConversationId || "").trim();
+    if (!target || openedFromLaunchParamRef.current === target) return;
+
+    openedFromLaunchParamRef.current = target;
+    setTab("msgs");
+    router.setParams({ openConversationId: undefined });
+
+    const conv = items.find((c) => String(c.id) === target);
+    if (conv) {
+      openConv(conv);
+      return;
+    }
+
+    // Cold notification launches may arrive before the conversation list has
+    // rehydrated. Open by id immediately; the thread resolves name/avatar from
+    // cache/network just like Signal's recipient-id based conversation intents.
+    router.push({ pathname: "/chat/[id]", params: { id: target } });
+  }, [items, params.openConversationId, router]);
 
   // Call back from a history entry (mirrors the web Calls tab, where rows are
   // actionable). Group calls aren't supported by the 1:1 native call screen,
