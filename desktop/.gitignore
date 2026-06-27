@@ -11,4 +11,5 @@ tray.js
 updater.js
 callPipWindow.js
 generate-icons.js
+biometric.js
 *.js.map

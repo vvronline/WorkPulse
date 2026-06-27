@@ -3,6 +3,10 @@
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "node",
+    // `moduleResolution: "node"` (aka node10) is deprecated and TypeScript now
+    // errors (TS5107) instead of warning, which fails the desktop release build
+    // at `npm run build:main`. Silence it without changing resolution behavior.
+    "ignoreDeprecations": "6.0",
     "lib": ["ES2022", "DOM"],
     "rootDir": ".",
     "outDir": ".",
