@@ -110,11 +110,16 @@ const makeStyles = (theme: Theme) =>
       flexDirection: "row",
       alignItems: "center",
       gap: 10,
-      paddingHorizontal: 14,
+      marginHorizontal: 8,
+      marginBottom: 4,
+      paddingHorizontal: 12,
       paddingVertical: 8,
-      backgroundColor: theme.bgSecondary,
-      borderTopWidth: 1,
-      borderTopColor: theme.border,
+      backgroundColor: theme.inputBg,
+      borderRadius: 12,
+      // Signal-style left accent bar instead of a full-width footer divider, so
+      // the reply context reads as a card floating over the conversation.
+      borderLeftWidth: 3,
+      borderLeftColor: theme.primary,
     },
     replyBarName: {
       fontSize: 12,

@@ -2137,7 +2137,9 @@ export function useChatThread() {
     });
   }
 
-  function openSharedMedia(tab: "media" | "files" | "links" = "media") {
+  function openSharedMedia(
+    tab: "images" | "videos" | "media" | "files" | "links" = "images",
+  ) {
     router.push({
       pathname: "/chat/shared",
       params: { id: String(convId), name: name || "", tab },

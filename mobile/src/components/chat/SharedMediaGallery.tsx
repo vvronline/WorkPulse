@@ -25,8 +25,18 @@ import { AuthedImage } from "../AuthedImage";
 import { extractFirstUrl, fmtDateTime, fmtSize } from "./chatUtils";
 import { openAuthedFile } from "./openAuthedFile";
 import MediaViewerPager, { type ViewerMediaItem } from "./MediaViewerPager";
+import InlineVideo, { VIDEO_AVAILABLE } from "./InlineVideo";
 
-type Tab = "media" | "files" | "links";
+type Tab = "images" | "videos" | "files" | "links";
+
+// Earlier callers (header menu / conversation profile) deep-link with the
+// legacy combined "media" tab — map it to the new dedicated Images tab.
+function normalizeTab(t?: string): Tab {
+  if (t === "videos") return "videos";
+  if (t === "files") return "files";
+  if (t === "links") return "links";
+  return "images";
+}
 
 type LinkItem = {
   id: number;
@@ -49,8 +59,12 @@ function isVideoShared(f: SharedFile): boolean {
 }
 
 /**
- * SharedMediaGallery — Signal-Android's MediaOverview, in three tabs:
- *   • Media  — image/video grid (3 cols) → in-app full-screen pager viewer.
+ * SharedMediaGallery — Signal-Android's MediaOverview, in four tabs:
+ *   • Images — image grid (3 cols) → in-app full-screen pager viewer.
+ *   • Videos — video grid (3 cols); each cell is an InlineVideo that shows the
+ *              poster frame + play button and opens its own native full-screen
+ *              player on tap (the pager viewer is image-only, which is why
+ *              shared videos previously would not play).
  *   • Files  — document/audio rows → open via the authed downloader (the
  *              /uploads route is behind Bearer auth, so a bare Linking.openURL
  *              401s — this is the root cause of the "shared file view broken").
@@ -58,15 +72,15 @@ function isVideoShared(f: SharedFile): boolean {
  */
 export default function SharedMediaGallery({
   convId,
-  initialTab = "media",
+  initialTab,
 }: {
   convId: number;
-  initialTab?: Tab;
+  initialTab?: string;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { width } = useWindowDimensions();
-  const [tab, setTab] = useState<Tab>(initialTab);
+  const [tab, setTab] = useState<Tab>(normalizeTab(initialTab));
   const [loading, setLoading] = useState(true);
   const [files, setFiles] = useState<SharedFile[]>([]);
   const [links, setLinks] = useState<LinkItem[]>([]);
@@ -119,27 +133,28 @@ export default function SharedMediaGallery({
     load();
   }, [load]);
 
-  // Media = images + videos (have inline thumbnails). Files = everything else
-  // (documents + audio). Both already arrive newest-first from the server.
-  const media = useMemo(
-    () => files.filter((f) => isImageShared(f) || isVideoShared(f)),
-    [files],
-  );
+  // Images, videos and documents are kept in separate tabs. Files = everything
+  // that is neither an image nor a video (documents + audio). All already arrive
+  // newest-first from the server.
+  const images = useMemo(() => files.filter(isImageShared), [files]);
+  const videos = useMemo(() => files.filter(isVideoShared), [files]);
   const docs = useMemo(
     () => files.filter((f) => !isImageShared(f) && !isVideoShared(f)),
     [files],
   );
 
+  // The full-screen swipeable viewer is image-only (videos play in their own
+  // native player via InlineVideo).
   const viewerItems: ViewerMediaItem[] = useMemo(
     () =>
-      media.map((f) => ({
+      images.map((f) => ({
         id: f.id,
         file_url: f.file_url,
         file_name: f.file_name,
         sender_name: f.sender_name,
         created_at: f.created_at,
       })),
-    [media],
+    [images],
   );
 
   const openFile = useCallback(async (f: SharedFile) => {
@@ -160,9 +175,15 @@ export default function SharedMediaGallery({
     <View style={styles.wrap}>
       <View style={styles.tabs}>
         <TabBtn
-          label="Media"
-          active={tab === "media"}
-          onPress={() => setTab("media")}
+          label="Images"
+          active={tab === "images"}
+          onPress={() => setTab("images")}
+          styles={styles}
+        />
+        <TabBtn
+          label="Videos"
+          active={tab === "videos"}
+          onPress={() => setTab("videos")}
           styles={styles}
         />
         <TabBtn
@@ -181,17 +202,17 @@ export default function SharedMediaGallery({
 
       {loading ? (
         <ActivityIndicator style={styles.loading} color={theme.primary} />
-      ) : tab === "media" ? (
-        media.length === 0 ? (
-          <Empty label="No media yet" styles={styles} />
+      ) : tab === "images" ? (
+        images.length === 0 ? (
+          <Empty label="No images yet" styles={styles} />
         ) : (
           <FlatList
             // Distinct key per tab: switching tabs swaps a numColumns={3} grid
             // for a single-column list. RN throws a FATAL "Changing numColumns
             // on the fly is not supported" if the SAME FlatList instance changes
             // numColumns — keying each list forces a fresh instance per tab.
-            key="media-grid"
-            data={media}
+            key="images-grid"
+            data={images}
             numColumns={COLS}
             keyExtractor={(f) => String(f.id)}
             contentContainerStyle={{ paddingBottom: 24 }}
@@ -200,7 +221,6 @@ export default function SharedMediaGallery({
               const resolved = uploadUrl(item.file_url) || undefined;
               const isLocal =
                 !!resolved && /^(file|content|data):/i.test(resolved);
-              const isVid = isVideoShared(item);
               return (
                 <Pressable
                   style={{ width: cell, height: cell }}
@@ -219,11 +239,66 @@ export default function SharedMediaGallery({
                       resizeMode="cover"
                     />
                   )}
-                  {isVid ? (
-                    <View style={styles.playBadge}>
+                </Pressable>
+              );
+            }}
+          />
+        )
+      ) : tab === "videos" ? (
+        videos.length === 0 ? (
+          <Empty label="No videos yet" styles={styles} />
+        ) : (
+          <FlatList
+            key="videos-grid"
+            data={videos}
+            numColumns={COLS}
+            keyExtractor={(f) => String(f.id)}
+            contentContainerStyle={{ paddingBottom: 24 }}
+            columnWrapperStyle={{ gap: GRID_GAP, marginBottom: GRID_GAP }}
+            renderItem={({ item }) => {
+              const resolved = uploadUrl(item.file_url) || undefined;
+              const isLocal =
+                !!resolved && /^(file|content|data):/i.test(resolved);
+              // InlineVideo renders the poster frame + play button and opens its
+              // own native full-screen player on tap (with transport controls
+              // and Bearer-auth for the protected /uploads route). When the
+              // native video module is unavailable, fall back to a tappable
+              // poster that opens the file through the authed downloader.
+              if (VIDEO_AVAILABLE && resolved) {
+                return (
+                  <InlineVideo
+                    uri={resolved}
+                    isLocal={isLocal}
+                    style={{ width: cell, height: cell }}
+                  />
+                );
+              }
+              return (
+                <Pressable
+                  style={{ width: cell, height: cell }}
+                  disabled={opening === item.id}
+                  onPress={() => openFile(item)}
+                >
+                  {isLocal ? (
+                    <Image
+                      source={{ uri: resolved }}
+                      style={styles.gridImg}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <AuthedImage
+                      uri={resolved}
+                      style={styles.gridImg}
+                      resizeMode="cover"
+                    />
+                  )}
+                  <View style={styles.playBadge}>
+                    {opening === item.id ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
                       <Play size={18} color="#fff" fill="#fff" />
-                    </View>
-                  ) : null}
+                    )}
+                  </View>
                 </Pressable>
               );
             }}
@@ -394,6 +469,11 @@ const makeStyles = (theme: Theme) =>
     },
     rowTitle: { fontSize: 14, color: theme.text, fontFamily: theme.fontMedium },
     rowSub: { fontSize: 12, color: theme.textSecondary, marginTop: 3 },
-    emptyWrap: { flex: 1, alignItems: "center", justifyContent: "center", paddingTop: 60 },
+    emptyWrap: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingTop: 60,
+    },
     emptyText: { fontSize: 14, color: theme.textMuted },
   });

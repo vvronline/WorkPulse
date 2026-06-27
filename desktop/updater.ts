@@ -31,18 +31,28 @@ function buildBadgeDataUrl(label: string, size: number): string {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
-// OTA assets + version manifests are served from Cloudflare R2 behind a public
-// custom domain (see docs/OTA_R2_MIGRATION_PLAN.md). This lets the GitHub repo
-// stay private while devices keep auto-updating. Override at build time via the
-// OTA_BASE_URL env var; otherwise fall back to the production CDN.
-const OTA_BASE_URL = (
-  process.env.OTA_BASE_URL || "https://cdn.workpulse.app"
-).replace(/\/+$/, "");
+// Update assets can be served from two places:
+//   1. Cloudflare R2 (custom domain) — used when OTA_BASE_URL is baked in at
+//      build time. Lets a PRIVATE GitHub repo keep auto-updating.
+//   2. GitHub Releases — the fallback when R2 is not configured. The desktop
+//      release workflow already attaches `latest.yml` + installers to each
+//      `v*` GitHub release, so this works out of the box for a public repo.
+// If OTA_BASE_URL is empty we go straight to the GitHub fallback.
+const OTA_BASE_URL = (process.env.OTA_BASE_URL || "").replace(/\/+$/, "");
 
 // Desktop and mobile releases share the bucket but live under separate prefixes
 // (`desktop/` vs `mobile/`) with their own `latest.json`, so the two channels
 // never collide — the desktop app only ever reads `desktop/latest.json`.
-const DESKTOP_LATEST_JSON_URL = `${OTA_BASE_URL}/desktop/latest.json`;
+const DESKTOP_LATEST_JSON_URL = OTA_BASE_URL
+  ? `${OTA_BASE_URL}/desktop/latest.json`
+  : "";
+
+// GitHub repo that hosts the releases. Desktop releases are tagged `vX.Y.Z`;
+// mobile releases use `mobile-vX.Y.Z` and MUST be ignored here, otherwise
+// electron-updater would try to read a non-existent `latest.yml` from a mobile
+// release (the original cause of the 404 update error).
+const GITHUB_OWNER = "vvronline";
+const GITHUB_REPO = "WorkPulse";
 
 interface DesktopLatestManifest {
   /** e.g. "1.6.95" */
@@ -51,59 +61,118 @@ interface DesktopLatestManifest {
   tag?: string;
 }
 
-/**
- * Resolve the latest DESKTOP release tag (e.g. "v1.6.29") by fetching the small
- * `desktop/latest.json` manifest from R2. This replaces the old GitHub releases
- * API call so updates keep working with a PRIVATE repo. Returns null on any
- * failure so callers can fall back gracefully.
- */
-async function resolveLatestDesktopTag(): Promise<string | null> {
-  try {
+interface DesktopFeed {
+  /** Release tag, e.g. "v1.6.95". */
+  tag: string;
+  /** Feed URL whose `latest.yml` electron-updater should read. */
+  url: string;
+}
+
+/** GET a URL and parse the body as JSON. Rejects on non-2xx / timeout. */
+function httpGetJson<T>(url: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
     const https = require("https");
-    const manifest = await new Promise<DesktopLatestManifest>(
-      (resolve, reject) => {
-        const req = https.get(
-          DESKTOP_LATEST_JSON_URL,
-          {
-            headers: {
-              "User-Agent": "WorkPulse-Desktop",
-              Accept: "application/json",
-              // Always revalidate so a freshly-published version is seen
-              // immediately (the object is also served no-cache).
-              "Cache-Control": "no-cache",
-            },
-          },
-          (res: import("http").IncomingMessage) => {
-            let body = "";
-            res.on("data", (c: Buffer) => (body += c));
-            res.on("end", () => {
-              if (res.statusCode === 200) {
-                try {
-                  resolve(JSON.parse(body));
-                } catch (e) {
-                  reject(e);
-                }
-              } else {
-                reject(new Error(`R2 ${res.statusCode}`));
-              }
-            });
-          },
-        );
-        req.on("error", reject);
-        req.setTimeout(10000, () => {
-          req.destroy();
-          reject(new Error("timeout"));
+    const req = https.get(
+      url,
+      {
+        headers: {
+          "User-Agent": "WorkPulse-Desktop",
+          Accept: "application/json",
+          "Cache-Control": "no-cache",
+        },
+      },
+      (res: import("http").IncomingMessage) => {
+        let body = "";
+        res.on("data", (c: Buffer) => (body += c));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try {
+              resolve(JSON.parse(body) as T);
+            } catch (e) {
+              reject(e);
+            }
+          } else {
+            reject(new Error(`HTTP ${res.statusCode}`));
+          }
         });
       },
     );
+    req.on("error", reject);
+    req.setTimeout(10000, () => {
+      req.destroy();
+      reject(new Error("timeout"));
+    });
+  });
+}
 
-    // Prefer an explicit tag; otherwise derive it from version.
+/** Compare two semver strings (a.b.c). Returns 1 if a>b, -1 if a<b, 0 equal. */
+function compareSemver(a: string, b: string): number {
+  const pa = a
+    .replace(/^v/, "")
+    .split(".")
+    .map((n) => parseInt(n, 10) || 0);
+  const pb = b
+    .replace(/^v/, "")
+    .split(".")
+    .map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+  }
+  return 0;
+}
+
+/**
+ * Resolve the latest DESKTOP release tag (e.g. "v1.6.29") from the R2
+ * `desktop/latest.json` manifest. Returns null on any failure so callers can
+ * fall back to the GitHub releases API.
+ */
+async function resolveLatestDesktopTagFromR2(): Promise<string | null> {
+  if (!DESKTOP_LATEST_JSON_URL) return null;
+  try {
+    const manifest = await httpGetJson<DesktopLatestManifest>(
+      DESKTOP_LATEST_JSON_URL,
+    );
     const tag =
       manifest.tag || (manifest.version ? `v${manifest.version}` : null);
     return tag || null;
   } catch (err) {
     console.error(
-      "[updater] Failed to resolve latest desktop tag:",
+      "[updater] Failed to resolve latest desktop tag from R2:",
+      (err as Error)?.message,
+    );
+    return null;
+  }
+}
+
+interface GitHubRelease {
+  tag_name?: string;
+  draft?: boolean;
+  prerelease?: boolean;
+}
+
+/**
+ * Resolve the latest DESKTOP release tag from the GitHub releases API. Only
+ * considers published, non-prerelease releases whose tag is `vX.Y.Z` (desktop),
+ * explicitly skipping `mobile-vX.Y.Z` releases. Works for a public repo without
+ * any auth token. Returns null on failure.
+ */
+async function resolveLatestDesktopTagFromGitHub(): Promise<string | null> {
+  try {
+    const releases = await httpGetJson<GitHubRelease[]>(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=30`,
+    );
+    const desktopTags = (releases || [])
+      .filter((r) => !r.draft && !r.prerelease && r.tag_name)
+      .map((r) => r.tag_name as string)
+      // Desktop tags look like "v1.6.95"; ignore "mobile-v..." and anything else.
+      .filter((t) => /^v\d+\.\d+\.\d+$/.test(t));
+    if (desktopTags.length === 0) return null;
+    desktopTags.sort(compareSemver);
+    return desktopTags[desktopTags.length - 1];
+  } catch (err) {
+    console.error(
+      "[updater] Failed to resolve latest desktop tag from GitHub:",
       (err as Error)?.message,
     );
     return null;
@@ -111,22 +180,43 @@ async function resolveLatestDesktopTag(): Promise<string | null> {
 }
 
 /**
- * Point electron-updater at a SPECIFIC desktop release's asset folder on R2 so
- * it fetches that release's latest.yml + installers. The `path:` entries inside
- * latest.yml resolve relative to this feed URL.
+ * Work out which release feed electron-updater should read from. Prefers R2
+ * (when OTA_BASE_URL is configured) and falls back to GitHub Releases.
+ */
+async function resolveDesktopFeed(): Promise<DesktopFeed | null> {
+  const r2Tag = await resolveLatestDesktopTagFromR2();
+  if (r2Tag) {
+    return { tag: r2Tag, url: `${OTA_BASE_URL}/desktop/releases/${r2Tag}/` };
+  }
+  const ghTag = await resolveLatestDesktopTagFromGitHub();
+  if (ghTag) {
+    return {
+      tag: ghTag,
+      url: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${ghTag}/`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Point electron-updater at a SPECIFIC desktop release's asset folder so it
+ * fetches that release's latest.yml + installers. The `path:` entries inside
+ * latest.yml resolve relative to this feed URL. We use a `generic` feed for
+ * both R2 and GitHub so we never let electron-updater's default GitHub provider
+ * auto-pick the newest release in the repo (which may be a mobile release).
  */
 async function pointFeedAtLatestDesktopRelease(): Promise<void> {
-  const tag = await resolveLatestDesktopTag();
-  if (!tag) {
+  const feed = await resolveDesktopFeed();
+  if (!feed) {
     // Could not resolve — leave electron-updater on its configured provider.
     // We'll still surface a clean error if the check fails.
     return;
   }
   autoUpdater.setFeedURL({
     provider: "generic",
-    url: `${OTA_BASE_URL}/desktop/releases/${tag}/`,
+    url: feed.url,
   });
-  console.log(`[updater] Feed pinned to desktop release ${tag}`);
+  console.log(`[updater] Feed pinned to desktop release ${feed.tag}`);
 }
 
 type ReleaseNoteEntry = string | { version?: string; note?: string | null };

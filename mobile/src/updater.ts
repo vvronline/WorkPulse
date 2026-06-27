@@ -21,13 +21,26 @@ import Constants from "expo-constants";
 import * as FileSystem from "expo-file-system/legacy";
 import * as IntentLauncher from "expo-intent-launcher";
 
-// OTA base URL (Cloudflare R2 public custom domain). Baked at build time via
-// EXPO_PUBLIC_OTA_BASE_URL (see mobile-release.yml); falls back to the
-// production CDN for local/dev builds.
-const OTA_BASE_URL = (
-  process.env.EXPO_PUBLIC_OTA_BASE_URL || "https://cdn.workpulse.app"
-).replace(/\/+$/, "");
-const MOBILE_LATEST_JSON_URL = `${OTA_BASE_URL}/mobile/latest.json`;
+// Update delivery has two sources:
+//   1. Cloudflare R2 (custom domain) — used when EXPO_PUBLIC_OTA_BASE_URL is
+//      baked in at build time (see mobile-release.yml). Lets a PRIVATE GitHub
+//      repo keep delivering OTA APK updates.
+//   2. GitHub Releases — the fallback when R2 is not configured. The mobile
+//      release workflow already attaches the APK to each `mobile-vX.Y.Z`
+//      GitHub release, so this works out of the box for a public repo.
+// If the OTA base URL is empty we go straight to the GitHub fallback.
+const OTA_BASE_URL = (process.env.EXPO_PUBLIC_OTA_BASE_URL || "").replace(
+  /\/+$/,
+  "",
+);
+const MOBILE_LATEST_JSON_URL = OTA_BASE_URL
+  ? `${OTA_BASE_URL}/mobile/latest.json`
+  : "";
+
+// GitHub repo that hosts the releases. Mobile releases are tagged
+// `mobile-vX.Y.Z` (desktop uses `vX.Y.Z`), so we only ever look at mobile tags.
+const GITHUB_OWNER = "vvronline";
+const GITHUB_REPO = "WorkPulse";
 
 export interface MobileUpdateInfo {
   available: boolean;
@@ -77,9 +90,12 @@ function compareSemver(a: string, b: string): number {
 }
 
 /**
- * Check the CDN for a newer mobile release. Returns `{ available: false }` with
- * a `reason` on any non-update outcome so callers can decide whether to surface
+ * Check for a newer mobile release. Returns `{ available: false }` with a
+ * `reason` on any non-update outcome so callers can decide whether to surface
  * anything to the user.
+ *
+ * Tries the R2 manifest first (when configured), then falls back to the GitHub
+ * releases API so updates keep working even when R2 is not set up.
  */
 export async function checkForMobileUpdate(): Promise<MobileUpdateInfo> {
   const currentVersion = getCurrentVersion();
@@ -89,6 +105,23 @@ export async function checkForMobileUpdate(): Promise<MobileUpdateInfo> {
     return { available: false, currentVersion, reason: "unsupported" };
   }
 
+  // 1. Cloudflare R2 manifest (only when an OTA base URL was baked in).
+  if (MOBILE_LATEST_JSON_URL) {
+    const fromR2 = await checkR2ForMobileUpdate(currentVersion);
+    // Only fall through to GitHub when R2 was unreachable / had no release.
+    if (fromR2.reason !== "no-release" && fromR2.reason !== "error") {
+      return fromR2;
+    }
+  }
+
+  // 2. GitHub releases fallback (works for a public repo, no auth token).
+  return checkGitHubForMobileUpdate(currentVersion);
+}
+
+/** Query the R2 `mobile/latest.json` manifest. */
+async function checkR2ForMobileUpdate(
+  currentVersion: string,
+): Promise<MobileUpdateInfo> {
   try {
     const res = await fetch(MOBILE_LATEST_JSON_URL, {
       headers: {
@@ -133,6 +166,91 @@ export async function checkForMobileUpdate(): Promise<MobileUpdateInfo> {
   } catch {
     return { available: false, currentVersion, reason: "error" };
   }
+}
+
+/** Minimal shape of the GitHub releases API response we rely on. */
+interface GitHubReleaseAsset {
+  name?: string;
+  browser_download_url?: string;
+}
+interface GitHubRelease {
+  tag_name?: string;
+  html_url?: string;
+  body?: string;
+  draft?: boolean;
+  prerelease?: boolean;
+  assets?: GitHubReleaseAsset[];
+}
+
+/**
+ * Find the newest published `mobile-vX.Y.Z` GitHub release and compare it to the
+ * running version. Picks the first `.apk` asset as the download URL.
+ */
+async function checkGitHubForMobileUpdate(
+  currentVersion: string,
+): Promise<MobileUpdateInfo> {
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=30`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": "WorkPulse-Mobile",
+        },
+        cache: "no-store",
+      },
+    );
+    if (!res.ok) {
+      return {
+        available: false,
+        currentVersion,
+        reason: res.status === 404 ? "no-release" : "error",
+      };
+    }
+
+    const releases = (await res.json()) as GitHubRelease[];
+    const mobileReleases = (releases || [])
+      .filter((r) => !r.draft && !r.prerelease && r.tag_name)
+      .map((r) => ({ ...r, version: tagToVersion(r.tag_name as string) }))
+      .filter((r) => r.version != null) as Array<
+      GitHubRelease & { version: string }
+    >;
+    if (mobileReleases.length === 0) {
+      return { available: false, currentVersion, reason: "no-release" };
+    }
+    mobileReleases.sort((a, b) => compareSemver(a.version, b.version));
+    const latest = mobileReleases[mobileReleases.length - 1];
+
+    if (compareSemver(latest.version, currentVersion) <= 0) {
+      return {
+        available: false,
+        currentVersion,
+        version: latest.version,
+        reason: "up-to-date",
+      };
+    }
+
+    const apkAsset = (latest.assets || []).find((a) =>
+      (a.name || "").toLowerCase().endsWith(".apk"),
+    );
+
+    return {
+      available: true,
+      version: latest.version,
+      currentVersion,
+      notes: cleanReleaseNotes(latest.body || ""),
+      apkUrl: apkAsset?.browser_download_url,
+      releaseUrl: latest.html_url,
+    };
+  } catch {
+    return { available: false, currentVersion, reason: "error" };
+  }
+}
+
+/** Convert a `mobile-vX.Y.Z` tag to its `X.Y.Z` version; null if not a mobile tag. */
+function tagToVersion(tag: string): string | null {
+  const m = /^mobile-v(\d+\.\d+\.\d+)$/.exec(tag);
+  return m ? m[1] : null;
 }
 
 /**

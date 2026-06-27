@@ -549,15 +549,42 @@ jobs:
           exit 1
 
   # ──────────────────────────────────────────────────────────────────────────
+  # Detect whether Cloudflare R2 is configured. Secrets cannot be referenced in
+  # a job-level `if:`, so we surface a boolean output here and gate `publish-r2`
+  # on it. When R2 is not set up the R2 job is skipped entirely (the GitHub
+  # release still ships, and the apps fall back to GitHub for updates).
+  # ──────────────────────────────────────────────────────────────────────────
+  r2-config:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check R2 configuration
+        id: check
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+        run: |
+          if [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] \
+             && [ -n "$R2_ACCOUNT_ID" ] && [ -n "$R2_BUCKET" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "R2 is configured; will publish to R2."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::R2 is not configured; skipping R2 publish (GitHub release still ships)."
+          fi
+
+  # ──────────────────────────────────────────────────────────────────────────
   # Publish installers + electron-updater manifests (latest*.yml) to Cloudflare
   # R2 (S3-compatible) so the desktop auto-updater can deliver updates while the
   # GitHub repo stays PRIVATE. Keeps the newest 5 releases and prunes older ones.
-  # Runs in parallel with `release-notes` during the transitional period; the
-  # GitHub release job can be dropped once every device is on a build that reads
-  # its feed from R2.
+  # Skipped automatically when R2 is not configured (see r2-config above).
   # ──────────────────────────────────────────────────────────────────────────
   publish-r2:
-    needs: [validate, build]
+    needs: [validate, build, r2-config]
+    if: needs.r2-config.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
