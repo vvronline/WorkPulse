@@ -1188,21 +1188,19 @@ export function useChatThread() {
         );
         return;
       }
-      // Switch the audio session into record mode BEFORE preparing/recording.
+      // Expo Audio v56 still requires an explicit prepare step before record().
+      // If prepare fails on Android we must NOT swallow it, otherwise the
+      // mic-tap appears to do nothing and the real failure is hidden.
       await setAudioModeAsync({
         allowsRecording: true,
         playsInSilentMode: true,
       });
-      // prepareToRecordAsync MUST resolve before record() — calling record()
-      // on an unprepared recorder silently no-ops on Android, which is why the
-      // Mic button "did nothing" (no recording bar, nothing sent).
-      try {
-        await recorder.prepareToRecordAsync();
-      } catch {
-        // Some Android devices/reporting paths expose a prepared recorder
-        // already; keep going and attempt to start recording.
+      await recorder.prepareToRecordAsync();
+      const prepared = await recorder.getStatus();
+      if (!prepared.canRecord) {
+        throw new Error("Recorder could not be prepared.");
       }
-      await recorder.record();
+      recorder.record();
       // Flip the recording UI ON synchronously — don't wait for the polled
       // `recorderState.isRecording` (which can miss the transition on Android,
       // leaving the mic tap with no visible recording bar). The composer's
@@ -1226,22 +1224,55 @@ export function useChatThread() {
   }
 
   async function stopRecordingAndSend() {
+    if (!recordingRef.current && !recorderState.isRecording) return;
     // Clear the recording UI immediately so the bar collapses on tap.
     recordingRef.current = false;
     setIsRecordingActive(false);
+
+    let uri: string | null = null;
+    let durationMillis = recorderState.durationMillis || 0;
     try {
       await recorder.stop();
-    } catch {
-      /* the recorder may already be stopped; fall through to upload the uri */
+      const status = recorder.getStatus();
+      uri = status?.url || recorder.uri;
+      durationMillis = Math.max(durationMillis, status?.durationMillis || 0);
+    } catch (e: any) {
+      alert(
+        "Recording failed",
+        e?.message || "Could not finish the voice recording.",
+      );
+      return;
+    } finally {
+      // Restore the playback audio session — leaving allowsRecording=true
+      // routes/silences subsequent voice-note playback on iOS.
+      setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => {});
     }
-    // Restore the playback audio session — leaving allowsRecording=true
-    // routes/silences subsequent voice-note playback on iOS.
-    setAudioModeAsync({
-      allowsRecording: false,
-      playsInSilentMode: true,
-    }).catch(() => {});
-    const uri = recorder.uri;
-    if (!uri) return;
+
+    if (!uri) {
+      alert("Recording failed", "No recording file was created.");
+      return;
+    }
+    if (durationMillis < 350) {
+      alert(
+        "Recording too short",
+        "Hold the mic a little longer before sending.",
+      );
+      return;
+    }
+    try {
+      const info = await FileSystem.getInfoAsync(uri);
+      if (!info.exists || (info.size ?? 0) <= 0) {
+        alert("Recording failed", "The recorded file is empty.");
+        return;
+      }
+    } catch {
+      alert("Recording failed", "The recorded file could not be read.");
+      return;
+    }
+
     enqueueMediaUpload({
       uri,
       fileName: `voice-${Date.now()}.m4a`,
@@ -1250,6 +1281,7 @@ export function useChatThread() {
   }
 
   async function cancelRecording() {
+    if (!recordingRef.current && !recorderState.isRecording) return;
     // Clear the recording UI immediately so the bar collapses on tap.
     recordingRef.current = false;
     setIsRecordingActive(false);
@@ -1257,12 +1289,13 @@ export function useChatThread() {
       await recorder.stop();
     } catch {
       /* ignore */
+    } finally {
+      // Same audio-session restore as stopRecordingAndSend.
+      setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => {});
     }
-    // Same audio-session restore as stopRecordingAndSend.
-    setAudioModeAsync({
-      allowsRecording: false,
-      playsInSilentMode: true,
-    }).catch(() => {});
   }
 
   const uploadSingleMedia = useCallback(

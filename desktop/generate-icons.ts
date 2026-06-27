@@ -51,12 +51,15 @@ async function generate(): Promise<void> {
     console.log(`  ✓ ${size}x${size}.png`);
   }
 
-  // Main icon.png (256x256 — used by the Electron window on macOS/Linux + PiP).
+  // Main icon.png (512x512 — used by the Electron window on macOS/Linux + PiP,
+  // and as electron-builder's source icon for the macOS/Windows targets).
+  // It MUST stay >= 512x512: electron-builder rejects a smaller image when
+  // packaging the macOS app ("image ... must be at least 512x512").
   fs.writeFileSync(
     path.join(ICONS_DIR, "icon.png"),
-    await renderPng(source, 256),
+    await renderPng(source, 512),
   );
-  console.log("  ✓ icon.png (256x256)");
+  console.log("  ✓ icon.png (512x512)");
 
   // Dedicated, pre-sharpened system-tray bitmaps. Electron's runtime
   // nativeImage.resize() is a low-quality scaler, so downscaling the 256px
