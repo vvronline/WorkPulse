@@ -35,6 +35,7 @@ import { setPendingChat, persistPendingChat } from "../realtime/pendingChat";
 import { sendMessage, markConversationRead } from "../features";
 import { loadCallPrefs } from "./callPrefsStore";
 import { getToken } from "../auth/tokenStore";
+import { storage } from "../storage/mmkv";
 import {
   startRinging,
   stopRinging,
@@ -120,6 +121,7 @@ type NotifeeModule = any;
 type AndroidImportanceEnum = Record<string, number>;
 type AndroidCategoryEnum = Record<string, string>;
 type AndroidVisibilityEnum = Record<string, number>;
+type AndroidStyleEnum = Record<string, number>;
 type EventTypeEnum = Record<string, number>;
 type AndroidNotificationSettingEnum = Record<string, number>;
 
@@ -169,6 +171,88 @@ function messageNotificationId(messageId: string): string {
   return `wp-msg-${messageId}`;
 }
 
+// STABLE per-conversation notification id. Posting a new message with the SAME
+// id makes Notifee UPDATE the single status-bar entry instead of stacking a
+// fresh entry per message — the core of Signal-Android's "one notification per
+// conversation" grouping. The per-message id above is kept only for legacy
+// event payloads that still carry it.
+function messageConversationNotificationId(conversationId: string): string {
+  return `wp-convo-${conversationId}`;
+}
+
+// ── MessagingStyle thread store ────────────────────────────────────────────
+// Signal accumulates the recent unread lines for a conversation and renders
+// them as a single expandable MessagingStyle notification. The headless FCM
+// task has no React/zustand state, so we persist the running history in MMKV
+// (which works in the background) keyed by conversation. Capped to the last few
+// lines (Signal shows ~7) with a TTL so stale threads don't grow unbounded.
+const THREAD_STORE_PREFIX = "wp-msg-thread:";
+const THREAD_MAX_MESSAGES = 7;
+const THREAD_TTL_MS = 24 * 60 * 60 * 1000; // 1 day
+
+export interface ThreadMessage {
+  text: string;
+  senderName: string;
+  /** epoch ms */
+  timestamp: number;
+}
+
+function threadStoreKey(conversationId: string): string {
+  return `${THREAD_STORE_PREFIX}${conversationId}`;
+}
+
+/**
+ * Append a freshly-received message to the conversation's persisted history and
+ * return the capped, chronologically-ordered list to render in MessagingStyle.
+ * Best-effort: any storage failure falls back to just the new message so the
+ * notification still shows something.
+ */
+function appendThreadMessage(
+  conversationId: string,
+  message: ThreadMessage,
+): ThreadMessage[] {
+  const key = threadStoreKey(conversationId);
+  let existing: ThreadMessage[] = [];
+  try {
+    const raw = storage.getString(key);
+    if (raw) {
+      const parsed = JSON.parse(raw) as ThreadMessage[];
+      if (Array.isArray(parsed)) existing = parsed;
+    }
+  } catch {
+    // corrupt/missing — start fresh
+  }
+
+  const now = Date.now();
+  const merged = [...existing, message]
+    // Drop anything older than the TTL so a long-dormant thread doesn't
+    // resurface stale lines when a new message finally arrives.
+    .filter(
+      (m) =>
+        m &&
+        typeof m.timestamp === "number" &&
+        now - m.timestamp < THREAD_TTL_MS,
+    )
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-THREAD_MAX_MESSAGES);
+
+  try {
+    storage.set(key, JSON.stringify(merged));
+  } catch {
+    // best-effort
+  }
+  return merged.length ? merged : [message];
+}
+
+/** Clears a conversation's accumulated notification history (read/opened). */
+function clearThread(conversationId: string): void {
+  try {
+    storage.remove(threadStoreKey(conversationId));
+  } catch {
+    // best-effort
+  }
+}
+
 // Notifee VALIDATES `vibrationPattern`: it MUST have an EVEN number of entries
 // (alternating wait/buzz durations) and createChannel()/displayNotification()
 // THROW on a malformed (odd-length) pattern. A throw inside createMessageChannel
@@ -198,6 +282,7 @@ class NotifeeService {
   private AndroidImportance: AndroidImportanceEnum = {};
   private AndroidCategory: AndroidCategoryEnum = {};
   private AndroidVisibility: AndroidVisibilityEnum = {};
+  private AndroidStyle: AndroidStyleEnum = {};
   private EventType: EventTypeEnum = {};
   private AndroidNotificationSetting: AndroidNotificationSettingEnum = {};
   private resolved = false;
@@ -213,6 +298,7 @@ class NotifeeService {
       this.AndroidImportance = mod?.AndroidImportance || {};
       this.AndroidCategory = mod?.AndroidCategory || {};
       this.AndroidVisibility = mod?.AndroidVisibility || {};
+      this.AndroidStyle = mod?.AndroidStyle || {};
       this.EventType = mod?.EventType || {};
       this.AndroidNotificationSetting = mod?.AndroidNotificationSetting || {};
     } catch {
@@ -1011,6 +1097,59 @@ class NotifeeService {
     const badgeCount = Number(data.badgeCount ?? data.unreadCount);
     const hasBadge = Number.isFinite(badgeCount) && badgeCount >= 0;
 
+    // STABLE per-conversation id: posting each new message under the SAME id
+    // makes Notifee UPDATE the single status-bar entry rather than stacking a
+    // fresh entry per message. This is the core of "group all messages from a
+    // person into one notification" (Signal-Android parity). Fall back to the
+    // legacy per-message id only when no conversation is known.
+    const conversationId = data.conversationId;
+    const notificationId = conversationId
+      ? messageConversationNotificationId(conversationId)
+      : id;
+
+    const senderName =
+      data.senderName || data.title || payload.title || "New message";
+
+    // Accumulate the conversation's recent lines so the notification can render
+    // them as an expandable MessagingStyle (history), mirroring Signal. Persisted
+    // in MMKV because the headless FCM task has no React/zustand state.
+    const threadMessages: ThreadMessage[] = conversationId
+      ? appendThreadMessage(conversationId, {
+          text: body,
+          senderName,
+          timestamp: Date.now(),
+        })
+      : [{ text: body, senderName, timestamp: Date.now() }];
+
+    const distinctSenders = new Set(threadMessages.map((m) => m.senderName));
+    const isGroupThread = distinctSenders.size > 1;
+
+    // Build the MessagingStyle from the accumulated history. `personIcon` (the
+    // locally-cached sender avatar) is attached on the SECOND post once the
+    // avatar download completes; the first post renders without it.
+    const buildMessagingStyle = (personIcon?: string) => ({
+      type: this.AndroidStyle.MESSAGING ?? 3,
+      // Top-level person is the device user (the recipient of these messages).
+      person: { name: "You" },
+      messages: threadMessages.map((m) => ({
+        text: m.text,
+        timestamp: m.timestamp,
+        person: {
+          name: m.senderName,
+          // Only the latest sender's avatar is available locally; attach it to
+          // their line(s) so MessagingStyle shows the sender photo.
+          ...(personIcon && m.senderName === senderName
+            ? { icon: personIcon }
+            : {}),
+        },
+      })),
+      // For a multi-sender (group) conversation, show the group title so the
+      // expanded view reads like a group thread.
+      ...(isGroupThread
+        ? { group: true, title: data.title || senderName }
+        : {}),
+    });
+
     // Build the base Android options ONCE so the initial (no-avatar) post and the
     // later avatar-update post stay perfectly in sync.
     const baseAndroid = (largeIconOpts: Record<string, unknown>) => ({
@@ -1029,6 +1168,11 @@ class NotifeeService {
       ...(hasBadge ? { badgeCount } : {}),
       // Chat-avatar largeIcon (circular) — parity with the call notification.
       ...largeIconOpts,
+      // SIGNAL-PARITY grouping: render the accumulated conversation history as an
+      // expandable MessagingStyle. Combined with the stable per-conversation id,
+      // this collapses N messages from a person into ONE status-bar entry that
+      // shows the recent lines instead of N separate notifications.
+      style: buildMessagingStyle(largeIconOpts.largeIcon as string | undefined),
       // SIGNAL-PARITY status-bar actions. "Reply" attaches a RemoteInput so the
       // user can type a reply inline from the notification shade without opening
       // the app; "Mark as read" clears the unread state. Both are handled by
@@ -1061,7 +1205,7 @@ class NotifeeService {
     ): Promise<void> => {
       try {
         await notifee.displayNotification({
-          ...(id ? { id } : {}),
+          ...(notificationId ? { id: notificationId } : {}),
           title,
           body,
           data: { ...data } as Record<string, string>,
@@ -1078,7 +1222,7 @@ class NotifeeService {
         try {
           await this.createMessageChannel();
           await notifee.displayNotification({
-            ...(id ? { id } : {}),
+            ...(notificationId ? { id: notificationId } : {}),
             title,
             body,
             data: { ...data } as Record<string, string>,
@@ -1089,13 +1233,16 @@ class NotifeeService {
               sound: "default",
               smallIcon: MESSAGE_SMALL_ICON,
               ...largeIconOpts,
+              style: buildMessagingStyle(
+                largeIconOpts.largeIcon as string | undefined,
+              ),
               ...(hasBadge ? { badgeCount } : {}),
             },
           });
         } catch (err2) {
           try {
             await notifee.displayNotification({
-              ...(id ? { id } : {}),
+              ...(notificationId ? { id: notificationId } : {}),
               title,
               body,
               data: { ...data } as Record<string, string>,
@@ -1296,9 +1443,17 @@ class NotifeeService {
     if (!isPress && !isAction) return false;
 
     const convIdNum = Number(conversationId);
+    // The delivered notification's id is now the STABLE per-conversation id, so
+    // detail.notification.id already targets the grouped entry. Fall back to
+    // deriving it from the conversation (then the legacy per-message id) so an
+    // older in-flight notification is still cancellable.
     const notificationId =
       detail?.notification?.id ||
-      (data.messageId ? messageNotificationId(data.messageId) : undefined);
+      (conversationId
+        ? messageConversationNotificationId(conversationId)
+        : data.messageId
+          ? messageNotificationId(data.messageId)
+          : undefined);
 
     // ── "Mark as read" action ────────────────────────────────────────────
     if (pressActionId === "mark_read") {
@@ -1307,6 +1462,9 @@ class NotifeeService {
       } catch (err) {
         console.warn("[NotifeeService] Failed to mark conversation read:", err);
       }
+      // Clear the accumulated MessagingStyle history so the NEXT message starts
+      // a fresh thread instead of resurfacing already-read lines.
+      if (conversationId) clearThread(conversationId);
       try {
         if (notificationId) await notifee.cancelNotification(notificationId);
       } catch {
@@ -1336,6 +1494,8 @@ class NotifeeService {
           // Best-effort: also clear the unread state for the conversation.
           await markConversationRead(convIdNum).catch(() => {});
         }
+        // The thread is now read — drop the accumulated MessagingStyle history.
+        if (conversationId) clearThread(conversationId);
 
         // Update the notification IN PLACE to confirm the reply was sent
         // ("You: <reply>"), mirroring Signal, then auto-cancel after a moment.
@@ -1390,6 +1550,9 @@ class NotifeeService {
     } catch {
       /* best-effort */
     }
+    // Opening the conversation reads it — clear the grouped history so a later
+    // message starts a fresh notification thread.
+    if (conversationId) clearThread(conversationId);
 
     try {
       // Deep link straight to the 1:1/group thread. Works for a warm or
