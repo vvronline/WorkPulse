@@ -192,16 +192,22 @@ jobs:
           # Quiet down electron-builder native dependency rebuild noise on CI
           USE_HARD_LINKS: "false"
         run: |
-          set -e
           MAX_ATTEMPTS=4
           ATTEMPT=1
           until [ "$ATTEMPT" -gt "$MAX_ATTEMPTS" ]; do
             echo "── electron-builder attempt ${ATTEMPT}/${MAX_ATTEMPTS} ──"
-            if npx electron-builder ${{ matrix.args }} --publish never; then
+            # Capture the real exit code. Do NOT wrap this in `if`: a failed `if`
+            # condition with no `else` makes the compound statement return 0, so
+            # `$?` afterwards is 0 and every failure gets silently swallowed —
+            # which is why the job used to limp on to the upload step and fail
+            # there with a confusing "No files were found" error instead of
+            # surfacing the actual electron-builder error here.
+            EXIT=0
+            npx electron-builder ${{ matrix.args }} --publish never || EXIT=$?
+            if [ "$EXIT" -eq 0 ]; then
               echo "Build succeeded on attempt ${ATTEMPT}"
               exit 0
             fi
-            EXIT=$?
             echo "::warning::electron-builder failed on attempt ${ATTEMPT} (exit ${EXIT})"
             if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
               echo "::error::electron-builder failed after ${MAX_ATTEMPTS} attempts"
