@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Stack } from "expo-router";
 import {
   ActivityIndicator,
   BackHandler,
@@ -576,6 +577,153 @@ export default function SharedMediaGallery({
 
   return (
     <View style={styles.wrap}>
+      <Stack.Screen
+        options={
+          selectionMode
+            ? {
+                title: `${selectedIds.size} / ${currentItems.length}`,
+                headerLeft: () => (
+                  <Pressable
+                    onPress={clearSelection}
+                    style={styles.headerIconBtn}
+                  >
+                    <X size={22} color={theme.text} />
+                  </Pressable>
+                ),
+                headerRight: () => (
+                  <View style={styles.headerActionRow}>
+                    <Pressable
+                      onPress={
+                        allSelected
+                          ? deselectAllCurrentTab
+                          : selectAllCurrentTab
+                      }
+                      style={styles.headerIconBtn}
+                    >
+                      <Check
+                        size={22}
+                        color={allSelected ? theme.primary : theme.textMuted}
+                      />
+                    </Pressable>
+                    <Pressable
+                      onPress={onDeleteSelected}
+                      disabled={!canDelete || !!actionBusy}
+                      style={[
+                        styles.headerIconBtn,
+                        (!canDelete || !!actionBusy) &&
+                          styles.headerIconDisabled,
+                      ]}
+                    >
+                      {actionBusy === "delete" ? (
+                        <ActivityIndicator size={16} color={theme.danger} />
+                      ) : (
+                        <Trash2
+                          size={22}
+                          color={
+                            canDelete && !actionBusy
+                              ? theme.danger
+                              : theme.textMuted
+                          }
+                        />
+                      )}
+                    </Pressable>
+                    <Pressable
+                      onPress={openForwardPicker}
+                      disabled={!canForward || !!actionBusy}
+                      style={[
+                        styles.headerIconBtn,
+                        (!canForward || !!actionBusy) &&
+                          styles.headerIconDisabled,
+                      ]}
+                    >
+                      {actionBusy === "forward" ? (
+                        <ActivityIndicator size={16} color={theme.text} />
+                      ) : (
+                        <Forward
+                          size={22}
+                          color={
+                            canForward && !actionBusy
+                              ? theme.text
+                              : theme.textMuted
+                          }
+                        />
+                      )}
+                    </Pressable>
+                    <Pressable
+                      onPress={onShareSelected}
+                      disabled={!canShare || !!actionBusy}
+                      style={[
+                        styles.headerIconBtn,
+                        (!canShare || !!actionBusy) &&
+                          styles.headerIconDisabled,
+                      ]}
+                    >
+                      {actionBusy === "share" ? (
+                        <ActivityIndicator size={16} color={theme.text} />
+                      ) : (
+                        <Share2
+                          size={22}
+                          color={
+                            canShare && !actionBusy
+                              ? theme.text
+                              : theme.textMuted
+                          }
+                        />
+                      )}
+                    </Pressable>
+                    <Pressable
+                      onPress={onDownloadSelected}
+                      disabled={!canDownload || !!actionBusy}
+                      style={[
+                        styles.headerIconBtn,
+                        (!canDownload || !!actionBusy) &&
+                          styles.headerIconDisabled,
+                      ]}
+                    >
+                      {actionBusy === "download" ? (
+                        <ActivityIndicator size={16} color={theme.text} />
+                      ) : (
+                        <Download
+                          size={22}
+                          color={
+                            canDownload && !actionBusy
+                              ? theme.text
+                              : theme.textMuted
+                          }
+                        />
+                      )}
+                    </Pressable>
+                    <Pressable
+                      onPress={openEditModal}
+                      disabled={!canEdit || !!actionBusy}
+                      style={[
+                        styles.headerIconBtn,
+                        (!canEdit || !!actionBusy) && styles.headerIconDisabled,
+                      ]}
+                    >
+                      {actionBusy === "edit" ? (
+                        <ActivityIndicator size={16} color={theme.text} />
+                      ) : (
+                        <Pencil
+                          size={22}
+                          color={
+                            canEdit && !actionBusy
+                              ? theme.text
+                              : theme.textMuted
+                          }
+                        />
+                      )}
+                    </Pressable>
+                  </View>
+                ),
+              }
+            : {
+                title: "Shared media",
+                headerLeft: undefined,
+                headerRight: undefined,
+              }
+        }
+      />
       <View style={styles.tabs}>
         <TabBtn
           label="Images"
@@ -603,120 +751,10 @@ export default function SharedMediaGallery({
         />
       </View>
 
-      {selectionMode ? (
-        <>
-          <View style={styles.selectionHeader}>
-            <Pressable
-              style={styles.selectionHeaderBtn}
-              onPress={clearSelection}
-            >
-              <X size={18} color={theme.text} />
-              <Text style={styles.selectionHeaderBtnText}>Clear</Text>
-            </Pressable>
-            <Text style={styles.selectionTitle}>
-              {selectedIds.size}
-              {" / "}
-              {currentItems.length}
-            </Text>
-            <Pressable
-              style={styles.selectionHeaderBtn}
-              onPress={
-                allSelected ? deselectAllCurrentTab : selectAllCurrentTab
-              }
-            >
-              <Check
-                size={18}
-                color={allSelected ? theme.textMuted : theme.text}
-              />
-              <Text
-                style={[
-                  styles.selectionHeaderBtnText,
-                  allSelected && styles.actionTextDisabled,
-                ]}
-              >
-                {allSelected ? "Deselect all" : "Select all"}
-              </Text>
-            </Pressable>
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.actionBarScroll}
-            contentContainerStyle={styles.actionBar}
-          >
-            <ActionBtn
-              icon={
-                <Trash2
-                  size={18}
-                  color={canDelete ? theme.danger : theme.textMuted}
-                />
-              }
-              label="Delete"
-              danger
-              disabled={!canDelete || !!actionBusy}
-              loading={actionBusy === "delete"}
-              onPress={onDeleteSelected}
-              styles={styles}
-            />
-            <ActionBtn
-              icon={
-                <Forward
-                  size={18}
-                  color={canForward ? theme.text : theme.textMuted}
-                />
-              }
-              label="Forward"
-              disabled={!canForward || !!actionBusy}
-              loading={actionBusy === "forward"}
-              onPress={openForwardPicker}
-              styles={styles}
-            />
-            <ActionBtn
-              icon={
-                <Share2
-                  size={18}
-                  color={canShare ? theme.text : theme.textMuted}
-                />
-              }
-              label="Share"
-              disabled={!canShare || !!actionBusy}
-              loading={actionBusy === "share"}
-              onPress={onShareSelected}
-              styles={styles}
-            />
-            <ActionBtn
-              icon={
-                <Download
-                  size={18}
-                  color={canDownload ? theme.text : theme.textMuted}
-                />
-              }
-              label="Download"
-              disabled={!canDownload || !!actionBusy}
-              loading={actionBusy === "download"}
-              onPress={onDownloadSelected}
-              styles={styles}
-            />
-            <ActionBtn
-              icon={
-                <Pencil
-                  size={18}
-                  color={canEdit ? theme.text : theme.textMuted}
-                />
-              }
-              label="Edit"
-              disabled={!canEdit || !!actionBusy}
-              loading={actionBusy === "edit"}
-              onPress={openEditModal}
-              styles={styles}
-            />
-          </ScrollView>
-          {selectionHint ? (
-            <View style={styles.hintRow}>
-              <Text style={styles.hintText}>{selectionHint}</Text>
-            </View>
-          ) : null}
-        </>
+      {selectionMode && selectionHint ? (
+        <View style={styles.hintRow}>
+          <Text style={styles.hintText}>{selectionHint}</Text>
+        </View>
       ) : null}
 
       {loading ? (
@@ -1107,58 +1145,6 @@ function TabBtn({
   );
 }
 
-function ActionBtn({
-  icon,
-  label,
-  disabled,
-  danger,
-  loading,
-  onPress,
-  styles,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  disabled?: boolean;
-  danger?: boolean;
-  loading?: boolean;
-  onPress: () => void;
-  styles: ReturnType<typeof makeStyles>;
-}) {
-  return (
-    <Pressable
-      style={[
-        styles.actionBtn,
-        disabled && styles.actionBtnDisabled,
-        danger && !disabled && styles.actionBtnDanger,
-      ]}
-      disabled={disabled}
-      onPress={onPress}
-    >
-      {loading ? (
-        <ActivityIndicator
-          size={16}
-          color={
-            danger
-              ? styles.actionBtnTextDanger.color
-              : styles.actionBtnText.color
-          }
-        />
-      ) : (
-        icon
-      )}
-      <Text
-        style={[
-          styles.actionBtnText,
-          disabled && styles.actionTextDisabled,
-          danger && !disabled && styles.actionBtnTextDanger,
-        ]}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 function Empty({
   label,
   styles,
@@ -1278,8 +1264,22 @@ const makeStyles = (theme: Theme) =>
     },
     hintText: {
       fontSize: 12,
-      color: theme.textSecondary,
+      color: theme.textMuted,
       fontStyle: "italic",
+    },
+    headerIconBtn: {
+      padding: 8,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    headerIconDisabled: {
+      opacity: 0.4,
+    },
+    headerActionRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 2,
+      marginRight: 4,
     },
     loading: { paddingVertical: 40 },
     gridImg: {
