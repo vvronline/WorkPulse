@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   FlatList,
@@ -36,58 +37,74 @@ function timeAgo(iso: string) {
   });
 }
 
+type NotificationsData = { notifications: Notification[]; unread: number };
+const EMPTY_NOTIFICATIONS: NotificationsData = { notifications: [], unread: 0 };
+
 export default function NotificationsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [items, setItems] = useState<Notification[]>([]);
-  const [unread, setUnread] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getNotifications();
-      setItems(data.notifications || []);
-      setUnread(data.unread || 0);
-    } catch {
-      /* ignore */
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+  const { data = EMPTY_NOTIFICATIONS, isLoading: loading } = useQuery({
+    queryKey: ["notifications"],
+    queryFn: async () => {
+      const res = await getNotifications();
+      return {
+        notifications: res.data.notifications || [],
+        unread: res.data.unread || 0,
+      } as NotificationsData;
+    },
+  });
+  const items = data.notifications;
+  const unread = data.unread;
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    load();
-  }, [load]);
+    await queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    setRefreshing(false);
+  }, [queryClient]);
 
-  const onPressItem = useCallback(async (n: Notification) => {
-    if (n.is_read) return;
-    setItems((prev) =>
-      prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)),
-    );
-    setUnread((u) => Math.max(0, u - 1));
-    try {
-      await markNotificationRead(n.id);
-    } catch {
-      /* ignore */
-    }
-  }, []);
+  const onPressItem = useCallback(
+    async (n: Notification) => {
+      if (n.is_read) return;
+      queryClient.setQueryData<NotificationsData>(["notifications"], (prev) =>
+        prev
+          ? {
+              notifications: prev.notifications.map((x) =>
+                x.id === n.id ? { ...x, is_read: true } : x,
+              ),
+              unread: Math.max(0, prev.unread - 1),
+            }
+          : prev,
+      );
+      try {
+        await markNotificationRead(n.id);
+      } catch {
+        /* ignore */
+      }
+    },
+    [queryClient],
+  );
 
   const onMarkAll = useCallback(async () => {
-    setItems((prev) => prev.map((x) => ({ ...x, is_read: true })));
-    setUnread(0);
+    queryClient.setQueryData<NotificationsData>(["notifications"], (prev) =>
+      prev
+        ? {
+            notifications: prev.notifications.map((x) => ({
+              ...x,
+              is_read: true,
+            })),
+            unread: 0,
+          }
+        : prev,
+    );
     try {
       await markAllNotificationsRead();
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [queryClient]);
 
   if (loading) {
     return (
@@ -163,46 +180,49 @@ export default function NotificationsScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { alignItems: "center", justifyContent: "center" },
-  list: { padding: 16, gap: 10, paddingBottom: 32 },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  heading: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: theme.text,
-    letterSpacing: -0.5,
-  },
-  unread: { fontSize: 13, color: theme.primary, marginTop: 2 },
-  markAll: { flexDirection: "row", alignItems: "center", gap: 5 },
-  markAllText: { color: theme.primary, fontWeight: "600", fontSize: 13 },
-  card: {
-    flexDirection: "row",
-    gap: 10,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 14,
-  },
-  cardUnread: { borderColor: theme.primary + "55", backgroundColor: theme.primaryGlow },
-  unreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: theme.primary,
-    marginTop: 5,
-  },
-  cardBody: { flex: 1, gap: 3 },
-  title: { fontSize: 14, fontWeight: "600", color: theme.text },
-  body: { fontSize: 13, color: theme.textSecondary, lineHeight: 18 },
-  task: { fontSize: 12, color: theme.primaryLight },
-  time: { fontSize: 11, color: theme.textMuted, marginTop: 2 },
-  empty: { alignItems: "center", gap: 10, paddingTop: 80 },
-  emptyText: { color: theme.textMuted, fontSize: 14 },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { alignItems: "center", justifyContent: "center" },
+    list: { padding: 16, gap: 10, paddingBottom: 32 },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 12,
+    },
+    heading: {
+      fontSize: 24,
+      fontWeight: "800",
+      color: theme.text,
+      letterSpacing: -0.5,
+    },
+    unread: { fontSize: 13, color: theme.primary, marginTop: 2 },
+    markAll: { flexDirection: "row", alignItems: "center", gap: 5 },
+    markAllText: { color: theme.primary, fontWeight: "600", fontSize: 13 },
+    card: {
+      flexDirection: "row",
+      gap: 10,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 14,
+    },
+    cardUnread: {
+      borderColor: theme.primary + "55",
+      backgroundColor: theme.primaryGlow,
+    },
+    unreadDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: theme.primary,
+      marginTop: 5,
+    },
+    cardBody: { flex: 1, gap: 3 },
+    title: { fontSize: 14, fontWeight: "600", color: theme.text },
+    body: { fontSize: 13, color: theme.textSecondary, lineHeight: 18 },
+    task: { fontSize: 12, color: theme.primaryLight },
+    time: { fontSize: 11, color: theme.textMuted, marginTop: 2 },
+    empty: { alignItems: "center", gap: 10, paddingTop: 80 },
+    emptyText: { color: theme.textMuted, fontSize: 14 },
+  });

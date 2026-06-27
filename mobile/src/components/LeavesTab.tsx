@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Modal,
@@ -44,6 +45,11 @@ import {
 
 /* ───────────────────────── helpers ───────────────────────── */
 
+const EMPTY_POLICIES: LeavePolicy[] = [];
+const EMPTY_LEAVES: Leave[] = [];
+const EMPTY_BALANCES: LeaveBalance[] = [];
+const EMPTY_ALL_BALANCES: AllBalanceRow[] = [];
+
 function ymd(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
     d.getDate(),
@@ -62,7 +68,11 @@ function fmtDate(str: string): string {
 function getDateRange(from: string, to: string, skipWeekends = true): string[] {
   const dates: string[] = [];
   const end = new Date(to + "T00:00:00");
-  for (let d = new Date(from + "T00:00:00"); d <= end; d.setDate(d.getDate() + 1)) {
+  for (
+    let d = new Date(from + "T00:00:00");
+    d <= end;
+    d.setDate(d.getDate() + 1)
+  ) {
     const dow = d.getDay();
     if (skipWeekends && (dow === 0 || dow === 6)) continue;
     dates.push(ymd(d));
@@ -98,10 +108,7 @@ export default function LeavesTab() {
   const isHR = ["hr_admin", "super_admin", "platform_admin"].includes(
     user?.role || "",
   );
-  const tabs = useMemo(
-    () => BASE_TABS.filter((t) => !t.hr || isHR),
-    [isHR],
-  );
+  const tabs = useMemo(() => BASE_TABS.filter((t) => !t.hr || isHR), [isHR]);
   const [subTab, setSubTab] = useState<SubTab>("request");
 
   return (
@@ -144,53 +151,40 @@ function RequestTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { alert, confirm, dialog } = useDialog();
-  const [policies, setPolicies] = useState<LeavePolicy[]>([]);
-  const [leaves, setLeaves] = useState<Leave[]>([]);
-  const [balances, setBalances] = useState<LeaveBalance[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const [filterMonth, setFilterMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
+  const year = parseInt(filterMonth.split("-")[0]);
 
-  const loadPolicies = useCallback(async () => {
-    try {
-      const { data } = await getLeavePolicies();
-      setPolicies(data || []);
-    } catch {
-      /* fall back to defaults */
-    }
-  }, []);
+  const { data: policies = EMPTY_POLICIES } = useQuery({
+    queryKey: ["leaves", "policies"],
+    queryFn: async () => (await getLeavePolicies()).data || EMPTY_POLICIES,
+  });
 
-  const loadData = useCallback(async () => {
-    try {
+  const { data: leaves = EMPTY_LEAVES, isLoading: loading } = useQuery({
+    queryKey: ["leaves", "history", filterMonth],
+    queryFn: async () => {
       const [y, m] = filterMonth.split("-");
       const from = `${filterMonth}-01`;
       const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
       const to = `${filterMonth}-${lastDay}`;
-      const [leavesRes, balancesRes] = await Promise.all([
-        getLeaves(from, to),
-        getLeaveBalance(parseInt(y)).catch(() => ({ data: [] as LeaveBalance[] })),
-      ]);
-      setLeaves(leavesRes.data || []);
-      setBalances(balancesRes.data || []);
-    } catch {
-      /* ignore */
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [filterMonth]);
+      return (await getLeaves(from, to)).data || EMPTY_LEAVES;
+    },
+  });
 
-  useEffect(() => {
-    loadPolicies();
-  }, [loadPolicies]);
+  const { data: balances = EMPTY_BALANCES } = useQuery({
+    queryKey: ["leaves", "balance", year],
+    queryFn: async () =>
+      (await getLeaveBalance(year).catch(() => ({ data: EMPTY_BALANCES })))
+        .data || EMPTY_BALANCES,
+  });
 
-  useEffect(() => {
-    setLoading(true);
-    loadData();
-  }, [loadData]);
+  const refresh = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["leaves"] });
+  }, [queryClient]);
 
   const confirmWithdraw = (leave: Leave) => {
     const needsApproval = leave.status === "approved";
@@ -208,7 +202,7 @@ function RequestTab() {
             "Done",
             (res.data as any)?.message || "Withdrawal request submitted",
           );
-          loadData();
+          refresh();
         } catch (err: any) {
           alert(
             "Error",
@@ -226,17 +220,17 @@ function RequestTab() {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={() => {
+          onRefresh={async () => {
             setRefreshing(true);
-            loadPolicies();
-            loadData();
+            await queryClient.invalidateQueries({ queryKey: ["leaves"] });
+            setRefreshing(false);
           }}
           tintColor={theme.primary}
         />
       }
     >
       <LeaveBalanceCards balances={balances} />
-      <LeaveRequestForm policies={policies} onSuccess={loadData} />
+      <LeaveRequestForm policies={policies} onSuccess={refresh} />
 
       <View style={styles.monthFilterRow}>
         <Text style={styles.sectionTitle}>Leave History</Text>
@@ -289,7 +283,10 @@ function LeaveRequestForm({
   );
 
   useEffect(() => {
-    if (!typeOptions.some((t) => t.value === leaveType) && typeOptions.length > 0) {
+    if (
+      !typeOptions.some((t) => t.value === leaveType) &&
+      typeOptions.length > 0
+    ) {
       setLeaveType(typeOptions[0].value);
     }
   }, [typeOptions, leaveType]);
@@ -303,7 +300,10 @@ function LeaveRequestForm({
     setSubmitting(true);
     try {
       if (isRange) {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+        if (
+          !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)
+        ) {
           alert("Invalid date", "Use the format YYYY-MM-DD.");
           return;
         }
@@ -323,7 +323,8 @@ function LeaveRequestForm({
         });
         alert(
           "Submitted",
-          (res.data as any)?.message || `${rangeDays.length} leave(s) submitted`,
+          (res.data as any)?.message ||
+            `${rangeDays.length} leave(s) submitted`,
         );
         setReason("");
         setDuration("full");
@@ -364,10 +365,7 @@ function LeaveRequestForm({
       } catch {
         // ignore reconciliation failure and fall through to error alert
       }
-      alert(
-        "Error",
-        err?.response?.data?.error || "Failed to submit leave",
-      );
+      alert("Error", err?.response?.data?.error || "Failed to submit leave");
     } finally {
       setSubmitting(false);
     }
@@ -436,7 +434,8 @@ function LeaveRequestForm({
           </Pressable>
           {rangeDays.length > 0 ? (
             <Text style={styles.rangePreview}>
-              {rangeDays.length} working day{rangeDays.length !== 1 ? "s" : ""} selected
+              {rangeDays.length} working day{rangeDays.length !== 1 ? "s" : ""}{" "}
+              selected
             </Text>
           ) : null}
         </>
@@ -487,7 +486,10 @@ function LeaveRequestForm({
             onPress={() => setDuration(d.value)}
           >
             <Text
-              style={[styles.segText, duration === d.value && styles.segTextActive]}
+              style={[
+                styles.segText,
+                duration === d.value && styles.segTextActive,
+              ]}
             >
               {d.label}
             </Text>
@@ -546,8 +548,10 @@ function LeaveBalanceCards({ balances }: { balances: LeaveBalance[] }) {
         const used = Number(b.used ?? 0) || 0;
         const total = quota + carried;
         const available = total - used;
-        const pct = total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
-        const barColor = pct >= 80 ? "#ef4444" : pct >= 50 ? "#f59e0b" : type.color;
+        const pct =
+          total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
+        const barColor =
+          pct >= 80 ? "#ef4444" : pct >= 50 ? "#f59e0b" : type.color;
         const Icon = type.Icon;
         return (
           <View key={`${b.leave_type}-${b.year}`} style={styles.balanceCard}>
@@ -609,7 +613,8 @@ function LeaveHistory({
     () =>
       personalLeaves.reduce(
         (acc, l) =>
-          acc + (l.duration === "half" ? 0.5 : l.duration === "quarter" ? 0.25 : 1),
+          acc +
+          (l.duration === "half" ? 0.5 : l.duration === "quarter" ? 0.25 : 1),
         0,
       ),
     [personalLeaves],
@@ -620,7 +625,9 @@ function LeaveHistory({
   const rejected = personalLeaves.filter((l) => l.status === "rejected").length;
 
   if (loading) {
-    return <ActivityIndicator color={theme.primary} style={{ marginTop: 20 }} />;
+    return (
+      <ActivityIndicator color={theme.primary} style={{ marginTop: 20 }} />
+    );
   }
 
   return (
@@ -646,8 +653,7 @@ function LeaveHistory({
         <View style={styles.leaveList}>
           {personalLeaves.map((leave) => {
             const type = lookupType(leave.leave_type);
-            const status =
-              STATUS_CONFIG[leave.status] ?? STATUS_CONFIG.pending;
+            const status = STATUS_CONFIG[leave.status] ?? STATUS_CONFIG.pending;
             const durLabel =
               leave.duration === "half"
                 ? "Half Day"
@@ -670,9 +676,14 @@ function LeaveHistory({
                   <View style={styles.leaveTopRow}>
                     <Text style={styles.leaveTypeName}>{type.label}</Text>
                     <View
-                      style={[styles.statusBadge, { backgroundColor: status.bg }]}
+                      style={[
+                        styles.statusBadge,
+                        { backgroundColor: status.bg },
+                      ]}
                     >
-                      <Text style={[styles.statusText, { color: status.color }]}>
+                      <Text
+                        style={[styles.statusText, { color: status.color }]}
+                      >
                         {status.label}
                       </Text>
                     </View>
@@ -726,24 +737,12 @@ function BalancesTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const [year, setYear] = useState(new Date().getFullYear());
-  const [balances, setBalances] = useState<LeaveBalance[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await getLeaveBalance(year);
-      setBalances(data || []);
-    } catch {
-      setBalances([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [year]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data: balances = EMPTY_BALANCES, isLoading: loading } = useQuery({
+    queryKey: ["leaves", "balance", year],
+    queryFn: async () =>
+      (await getLeaveBalance(year).catch(() => ({ data: EMPTY_BALANCES })))
+        .data || EMPTY_BALANCES,
+  });
 
   const years = [year - 1, year, year + 1];
 
@@ -779,14 +778,17 @@ function BalancesTab() {
           const used = Number(b.used ?? 0) || 0;
           const total = quota + carried;
           const available = total - used;
-          const pct = total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
+          const pct =
+            total > 0 ? Math.min(Math.round((used / total) * 100), 100) : 0;
           const barColor =
             pct >= 80 ? "#ef4444" : pct >= 50 ? "#f59e0b" : type.color;
           const Icon = type.Icon;
           return (
             <View key={b.leave_type} style={styles.detailCard}>
               <View style={styles.detailTop}>
-                <View style={[styles.balanceIcon, { backgroundColor: type.bg }]}>
+                <View
+                  style={[styles.balanceIcon, { backgroundColor: type.bg }]}
+                >
                   <Icon size={18} color={type.color} />
                 </View>
                 <View>
@@ -821,7 +823,9 @@ function BalancesTab() {
                 />
               </View>
               {carried > 0 ? (
-                <Text style={styles.balanceMeta}>{carried} carried forward</Text>
+                <Text style={styles.balanceMeta}>
+                  {carried} carried forward
+                </Text>
               ) : null}
             </View>
           );
@@ -891,26 +895,17 @@ function PoliciesTab() {
   const isHR = ["hr_admin", "super_admin", "platform_admin"].includes(
     user?.role || "",
   );
-  const [policies, setPolicies] = useState<LeavePolicy[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [editing, setEditing] = useState<PolicyDraft | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await getLeavePolicies();
-      setPolicies(data || []);
-    } catch {
-      setPolicies([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data: policies = EMPTY_POLICIES, isLoading: loading } = useQuery({
+    queryKey: ["leaves", "policies"],
+    queryFn: async () => (await getLeavePolicies()).data || EMPTY_POLICIES,
+  });
+  const reloadPolicies = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["leaves", "policies"] });
+  }, [queryClient]);
 
   const openCreate = () => setEditing({ ...POLICY_DEFAULTS });
 
@@ -936,12 +931,9 @@ function PoliciesTab() {
       onConfirm: async () => {
         try {
           await deleteLeavePolicy(p.id);
-          load();
+          reloadPolicies();
         } catch (e: any) {
-          alert(
-            "Error",
-            e?.response?.data?.error || "Failed to delete policy",
-          );
+          alert("Error", e?.response?.data?.error || "Failed to delete policy");
         }
       },
     });
@@ -978,12 +970,9 @@ function PoliciesTab() {
     try {
       await saveLeavePolicy(payload);
       setEditing(null);
-      load();
+      reloadPolicies();
     } catch (e: any) {
-      alert(
-        "Error",
-        e?.response?.data?.error || "Failed to save policy",
-      );
+      alert("Error", e?.response?.data?.error || "Failed to save policy");
     } finally {
       setSaving(false);
     }
@@ -1011,7 +1000,9 @@ function PoliciesTab() {
       {loading ? (
         <ActivityIndicator color={theme.primary} style={{ marginTop: 24 }} />
       ) : policies.length === 0 ? (
-        <Text style={styles.emptyDetail}>No leave policies configured yet.</Text>
+        <Text style={styles.emptyDetail}>
+          No leave policies configured yet.
+        </Text>
       ) : (
         <View style={{ gap: 10, marginTop: 6 }}>
           {policies.map((p) => {
@@ -1022,17 +1013,12 @@ function PoliciesTab() {
             return (
               <View key={p.id} style={styles.policyItem}>
                 <View
-                  style={[
-                    styles.balanceIcon,
-                    { backgroundColor: type.bg },
-                  ]}
+                  style={[styles.balanceIcon, { backgroundColor: type.bg }]}
                 >
                   <Icon size={18} color={color} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.policyName}>
-                    {p.name || type.label}
-                  </Text>
+                  <Text style={styles.policyName}>{p.name || type.label}</Text>
                   <Text style={styles.policyMeta}>
                     {p.annual_quota != null
                       ? `${p.annual_quota} days/year`
@@ -1074,8 +1060,14 @@ function PoliciesTab() {
         animationType="fade"
         onRequestClose={() => setEditing(null)}
       >
-        <Pressable style={styles.modalBackdrop} onPress={() => setEditing(null)}>
-          <Pressable style={styles.modalBox} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setEditing(null)}
+        >
+          <Pressable
+            style={styles.modalBox}
+            onPress={(e) => e.stopPropagation()}
+          >
             <View style={styles.policyModalHeader}>
               <Text style={styles.modalTitle}>
                 {isExisting ? "Edit Policy" : "New Leave Policy"}
@@ -1085,7 +1077,10 @@ function PoliciesTab() {
               </Pressable>
             </View>
 
-            <ScrollView style={{ maxHeight: 460 }} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              style={{ maxHeight: 460 }}
+              keyboardShouldPersistTaps="handled"
+            >
               <Text style={styles.label}>Leave Type Name</Text>
               <TextInput
                 style={[styles.input, isExisting && styles.inputDisabled]}
@@ -1155,9 +1150,7 @@ function PoliciesTab() {
                 value={editing?.accrual_type ?? "annual"}
                 options={ACCRUAL_OPTIONS}
                 onChange={(v) =>
-                  setEditing((p) =>
-                    p ? { ...p, accrual_type: String(v) } : p,
-                  )
+                  setEditing((p) => (p ? { ...p, accrual_type: String(v) } : p))
                 }
               />
 
@@ -1172,7 +1165,9 @@ function PoliciesTab() {
                 />
               </View>
               <View style={styles.toggleRow}>
-                <Text style={styles.toggleLabel}>Allow Quarter-day requests</Text>
+                <Text style={styles.toggleLabel}>
+                  Allow Quarter-day requests
+                </Text>
                 <Switch
                   value={!!editing?.quarter_day_allowed}
                   onValueChange={(v) =>
@@ -1219,34 +1214,24 @@ function AllBalancesTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { alert, dialog } = useDialog();
-  const [rows, setRows] = useState<AllBalanceRow[]>([]);
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
   const [editItem, setEditItem] = useState<AllBalanceRow | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
+  const { data: rows = EMPTY_ALL_BALANCES, isLoading: loading } = useQuery({
+    queryKey: ["leaves", "allBalances"],
+    queryFn: async () => {
       const { data } = await getAllLeaveBalances("all");
-      setRows(Array.isArray(data) ? data : []);
-    } catch {
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+      return Array.isArray(data) ? data : EMPTY_ALL_BALANCES;
+    },
+  });
 
   const filtered = useMemo(
     () =>
       rows.filter(
         (b) =>
-          !search ||
-          b.full_name?.toLowerCase().includes(search.toLowerCase()),
+          !search || b.full_name?.toLowerCase().includes(search.toLowerCase()),
       ),
     [rows, search],
   );
@@ -1263,12 +1248,9 @@ function AllBalancesTab() {
         carried_forward: editItem.carried_forward,
       });
       setEditItem(null);
-      load();
+      queryClient.invalidateQueries({ queryKey: ["leaves", "allBalances"] });
     } catch (e: any) {
-      alert(
-        "Error",
-        e?.response?.data?.error || "Failed to update balance",
-      );
+      alert("Error", e?.response?.data?.error || "Failed to update balance");
     } finally {
       setSaving(false);
     }
@@ -1305,7 +1287,10 @@ function AllBalancesTab() {
             const barColor =
               pct >= 80 ? "#ef4444" : pct >= 50 ? "#f59e0b" : type.color;
             return (
-              <View key={`${b.user_id}-${b.leave_type}-${i}`} style={styles.detailCard}>
+              <View
+                key={`${b.user_id}-${b.leave_type}-${i}`}
+                style={styles.detailCard}
+              >
                 <View style={styles.allBalTop}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.policyName}>{b.full_name}</Text>
@@ -1359,8 +1344,14 @@ function AllBalancesTab() {
         animationType="fade"
         onRequestClose={() => setEditItem(null)}
       >
-        <Pressable style={styles.modalBackdrop} onPress={() => setEditItem(null)}>
-          <Pressable style={styles.modalBox} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setEditItem(null)}
+        >
+          <Pressable
+            style={styles.modalBox}
+            onPress={(e) => e.stopPropagation()}
+          >
             <Text style={styles.modalTitle}>
               Edit Balance — {editItem?.full_name}
             </Text>
@@ -1429,412 +1420,432 @@ function AllBalancesTab() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  body: { padding: 16, paddingBottom: 40, gap: 12 },
-  subTabRow: {
-    flexDirection: "row",
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-  },
-  subTab: {
-    flex: 1,
-    paddingVertical: 9,
-    paddingHorizontal: 6,
-    borderRadius: theme.radiusSm,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-  },
-  subTabActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  subTabText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
-  subTabTextActive: { color: "#fff" },
+    body: { padding: 16, paddingBottom: 40, gap: 12 },
+    subTabRow: {
+      flexDirection: "row",
+      gap: 8,
+      paddingHorizontal: 16,
+      paddingTop: 12,
+    },
+    subTab: {
+      flex: 1,
+      paddingVertical: 9,
+      paddingHorizontal: 6,
+      borderRadius: theme.radiusSm,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    subTabActive: {
+      backgroundColor: theme.primary,
+      borderColor: theme.primary,
+    },
+    subTabText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
+    subTabTextActive: { color: "#fff" },
 
-  // card / form
-  card: {
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusLg,
-    padding: 16,
-    gap: 4,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: theme.text,
-    marginBottom: 6,
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: theme.textSecondary,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginTop: 12,
-    marginBottom: 6,
-  },
-  input: {
-    backgroundColor: theme.inputBg,
-    borderWidth: 1,
-    borderColor: theme.inputBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: theme.text,
-    fontSize: 15,
-  },
-  textarea: { minHeight: 70, textAlignVertical: "top" },
-  timeRow: { flexDirection: "row", gap: 12 },
-  segmented: {
-    flexDirection: "row",
-    backgroundColor: theme.surface,
-    borderRadius: theme.radiusSm,
-    padding: 3,
-    gap: 3,
-  },
-  segBtn: {
-    flex: 1,
-    paddingVertical: 9,
-    borderRadius: 5,
-    alignItems: "center",
-  },
-  segActive: { backgroundColor: theme.primary },
-  segText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
-  segTextActive: { color: "#fff" },
-  checkRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 12,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 5,
-    borderWidth: 1.5,
-    borderColor: theme.inputBorder,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxOn: { backgroundColor: theme.primary, borderColor: theme.primary },
-  checkMark: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  checkLabel: { color: theme.textSecondary, fontSize: 14 },
-  rangePreview: {
-    color: theme.primary,
-    fontSize: 13,
-    fontWeight: "600",
-    marginTop: 8,
-  },
-  emptyHint: { color: theme.textMuted, fontSize: 13, marginTop: 4 },
-  typeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  typeChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: theme.radiusSm,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    backgroundColor: theme.glass,
-  },
-  typeChipText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
-  submit: {
-    backgroundColor: theme.primary,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 14,
-    alignItems: "center",
-    marginTop: 18,
-  },
-  submitDisabled: { opacity: 0.5 },
-  submitText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+    // card / form
+    card: {
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusLg,
+      padding: 16,
+      gap: 4,
+    },
+    cardTitle: {
+      fontSize: 16,
+      fontWeight: "700",
+      color: theme.text,
+      marginBottom: 6,
+    },
+    label: {
+      fontSize: 11,
+      fontWeight: "600",
+      color: theme.textSecondary,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+      marginTop: 12,
+      marginBottom: 6,
+    },
+    input: {
+      backgroundColor: theme.inputBg,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      color: theme.text,
+      fontSize: 15,
+    },
+    textarea: { minHeight: 70, textAlignVertical: "top" },
+    timeRow: { flexDirection: "row", gap: 12 },
+    segmented: {
+      flexDirection: "row",
+      backgroundColor: theme.surface,
+      borderRadius: theme.radiusSm,
+      padding: 3,
+      gap: 3,
+    },
+    segBtn: {
+      flex: 1,
+      paddingVertical: 9,
+      borderRadius: 5,
+      alignItems: "center",
+    },
+    segActive: { backgroundColor: theme.primary },
+    segText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
+    segTextActive: { color: "#fff" },
+    checkRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      marginTop: 12,
+    },
+    checkbox: {
+      width: 20,
+      height: 20,
+      borderRadius: 5,
+      borderWidth: 1.5,
+      borderColor: theme.inputBorder,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    checkboxOn: { backgroundColor: theme.primary, borderColor: theme.primary },
+    checkMark: { color: "#fff", fontSize: 13, fontWeight: "700" },
+    checkLabel: { color: theme.textSecondary, fontSize: 14 },
+    rangePreview: {
+      color: theme.primary,
+      fontSize: 13,
+      fontWeight: "600",
+      marginTop: 8,
+    },
+    emptyHint: { color: theme.textMuted, fontSize: 13, marginTop: 4 },
+    typeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+    typeChip: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: theme.radiusSm,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      backgroundColor: theme.glass,
+    },
+    typeChipText: {
+      fontSize: 13,
+      color: theme.textSecondary,
+      fontWeight: "600",
+    },
+    submit: {
+      backgroundColor: theme.primary,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 14,
+      alignItems: "center",
+      marginTop: 18,
+    },
+    submitDisabled: { opacity: 0.5 },
+    submitText: { color: "#fff", fontSize: 15, fontWeight: "600" },
 
-  // balance cards (horizontal row)
-  balanceRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  balanceCard: {
-    flexGrow: 1,
-    flexBasis: "47%",
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 12,
-    gap: 6,
-  },
-  balanceTop: { flexDirection: "row", alignItems: "center", gap: 8 },
-  balanceIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  balanceType: { fontSize: 13, color: theme.text, fontWeight: "600", flex: 1 },
-  balanceNums: { flexDirection: "row", alignItems: "baseline", gap: 6 },
-  balanceAvail: { fontSize: 22, fontWeight: "800" },
-  balanceOf: { fontSize: 12, color: theme.textMuted },
-  progressTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: theme.surface,
-    overflow: "hidden",
-  },
-  progressFill: { height: "100%", borderRadius: 3 },
-  balanceMeta: { fontSize: 11, color: theme.textMuted },
+    // balance cards (horizontal row)
+    balanceRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    balanceCard: {
+      flexGrow: 1,
+      flexBasis: "47%",
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 12,
+      gap: 6,
+    },
+    balanceTop: { flexDirection: "row", alignItems: "center", gap: 8 },
+    balanceIcon: {
+      width: 30,
+      height: 30,
+      borderRadius: 8,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    balanceType: {
+      fontSize: 13,
+      color: theme.text,
+      fontWeight: "600",
+      flex: 1,
+    },
+    balanceNums: { flexDirection: "row", alignItems: "baseline", gap: 6 },
+    balanceAvail: { fontSize: 22, fontWeight: "800" },
+    balanceOf: { fontSize: 12, color: theme.textMuted },
+    progressTrack: {
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: theme.surface,
+      overflow: "hidden",
+    },
+    progressFill: { height: "100%", borderRadius: 3 },
+    balanceMeta: { fontSize: 11, color: theme.textMuted },
 
-  // month filter
-  monthFilterRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 6,
-  },
-  sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.text },
-  monthInput: {
-    backgroundColor: theme.inputBg,
-    borderWidth: 1,
-    borderColor: theme.inputBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    color: theme.text,
-    fontSize: 14,
-    minWidth: 110,
-    textAlign: "center",
-  },
+    // month filter
+    monthFilterRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginTop: 6,
+    },
+    sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.text },
+    monthInput: {
+      backgroundColor: theme.inputBg,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      color: theme.text,
+      fontSize: 14,
+      minWidth: 110,
+      textAlign: "center",
+    },
 
-  // stats strip
-  statsStrip: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-  },
-  statItem: { flex: 1, alignItems: "center", gap: 2 },
-  statNum: { fontSize: 16, fontWeight: "800", color: theme.text },
-  statLabel: {
-    fontSize: 9,
-    color: theme.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
-  },
-  statDivider: { width: 1, height: 28, backgroundColor: theme.border },
+    // stats strip
+    statsStrip: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      paddingVertical: 12,
+      paddingHorizontal: 8,
+    },
+    statItem: { flex: 1, alignItems: "center", gap: 2 },
+    statNum: { fontSize: 16, fontWeight: "800", color: theme.text },
+    statLabel: {
+      fontSize: 9,
+      color: theme.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 0.3,
+    },
+    statDivider: { width: 1, height: 28, backgroundColor: theme.border },
 
-  // leave list
-  leaveList: { gap: 10 },
-  leaveItem: {
-    flexDirection: "row",
-    gap: 12,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 12,
-  },
-  leaveIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  leaveTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  leaveTypeName: { fontSize: 14, fontWeight: "700", color: theme.text, flex: 1 },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: theme.radiusFull,
-  },
-  statusText: { fontSize: 11, fontWeight: "700" },
-  leaveDate: { fontSize: 12, color: theme.textSecondary, marginTop: 3 },
-  leaveReason: {
-    fontSize: 12,
-    color: theme.textMuted,
-    fontStyle: "italic",
-    marginTop: 4,
-  },
-  withdrawBtn: {
-    alignSelf: "flex-start",
-    marginTop: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: theme.radiusSm,
-    borderWidth: 1,
-    borderColor: theme.danger,
-  },
-  withdrawText: { color: theme.danger, fontSize: 12, fontWeight: "600" },
-  emptyDetail: {
-    color: theme.textMuted,
-    fontSize: 13,
-    paddingVertical: 16,
-    textAlign: "center",
-  },
+    // leave list
+    leaveList: { gap: 10 },
+    leaveItem: {
+      flexDirection: "row",
+      gap: 12,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 12,
+    },
+    leaveIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 8,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    leaveTopRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 8,
+    },
+    leaveTypeName: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: theme.text,
+      flex: 1,
+    },
+    statusBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: theme.radiusFull,
+    },
+    statusText: { fontSize: 11, fontWeight: "700" },
+    leaveDate: { fontSize: 12, color: theme.textSecondary, marginTop: 3 },
+    leaveReason: {
+      fontSize: 12,
+      color: theme.textMuted,
+      fontStyle: "italic",
+      marginTop: 4,
+    },
+    withdrawBtn: {
+      alignSelf: "flex-start",
+      marginTop: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: theme.radiusSm,
+      borderWidth: 1,
+      borderColor: theme.danger,
+    },
+    withdrawText: { color: theme.danger, fontSize: 12, fontWeight: "600" },
+    emptyDetail: {
+      color: theme.textMuted,
+      fontSize: 13,
+      paddingVertical: 16,
+      textAlign: "center",
+    },
 
-  // balances tab
-  yearRow: { flexDirection: "row", gap: 8 },
-  yearChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: theme.radiusFull,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-  },
-  yearChipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  yearText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
-  yearTextActive: { color: "#fff" },
-  detailCard: {
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusLg,
-    padding: 16,
-    gap: 12,
-  },
-  detailTop: { flexDirection: "row", alignItems: "center", gap: 10 },
-  detailType: { fontSize: 15, fontWeight: "700", color: theme.text },
-  detailYear: { fontSize: 12, color: theme.textMuted },
-  detailNums: { flexDirection: "row", alignItems: "center" },
-  detailNum: { flex: 1, alignItems: "center", gap: 2 },
-  detailBig: { fontSize: 20, fontWeight: "800", color: theme.text },
-  detailSmall: {
-    fontSize: 10,
-    color: theme.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
-  },
-  detailNumDivider: { width: 1, height: 32, backgroundColor: theme.border },
+    // balances tab
+    yearRow: { flexDirection: "row", gap: 8 },
+    yearChip: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: theme.radiusFull,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    yearChipActive: {
+      backgroundColor: theme.primary,
+      borderColor: theme.primary,
+    },
+    yearText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
+    yearTextActive: { color: "#fff" },
+    detailCard: {
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusLg,
+      padding: 16,
+      gap: 12,
+    },
+    detailTop: { flexDirection: "row", alignItems: "center", gap: 10 },
+    detailType: { fontSize: 15, fontWeight: "700", color: theme.text },
+    detailYear: { fontSize: 12, color: theme.textMuted },
+    detailNums: { flexDirection: "row", alignItems: "center" },
+    detailNum: { flex: 1, alignItems: "center", gap: 2 },
+    detailBig: { fontSize: 20, fontWeight: "800", color: theme.text },
+    detailSmall: {
+      fontSize: 10,
+      color: theme.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 0.3,
+    },
+    detailNumDivider: { width: 1, height: 32, backgroundColor: theme.border },
 
-  // policies / all balances (HR)
-  policyItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 12,
-  },
-  policyName: { fontSize: 14, fontWeight: "700", color: theme.text },
-  policyMeta: { fontSize: 12, color: theme.textSecondary, marginTop: 2 },
-  policyHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  addPolicyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: theme.radiusSm,
-    backgroundColor: theme.primary,
-  },
-  addPolicyText: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  policyActions: { flexDirection: "row", alignItems: "center", gap: 4 },
-  policyActionBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: theme.radiusSm,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    backgroundColor: theme.glass,
-  },
-  policyModalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 4,
-  },
-  inputDisabled: { opacity: 0.6 },
-  swatchRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  swatch: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: "transparent",
-  },
-  swatchActive: { borderColor: theme.text },
-  toggleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 8,
-    marginTop: 8,
-  },
-  toggleLabel: { fontSize: 14, color: theme.text, flex: 1 },
-  allBalTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-  },
-  editBalBtn: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: theme.radiusSm,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    backgroundColor: theme.glass,
-  },
-  editBalText: { color: theme.primary, fontSize: 12, fontWeight: "700" },
+    // policies / all balances (HR)
+    policyItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 12,
+    },
+    policyName: { fontSize: 14, fontWeight: "700", color: theme.text },
+    policyMeta: { fontSize: 12, color: theme.textSecondary, marginTop: 2 },
+    policyHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 8,
+    },
+    addPolicyBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: theme.radiusSm,
+      backgroundColor: theme.primary,
+    },
+    addPolicyText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+    policyActions: { flexDirection: "row", alignItems: "center", gap: 4 },
+    policyActionBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: theme.radiusSm,
+      alignItems: "center",
+      justifyContent: "center",
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      backgroundColor: theme.glass,
+    },
+    policyModalHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 4,
+    },
+    inputDisabled: { opacity: 0.6 },
+    swatchRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+    swatch: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      borderWidth: 2,
+      borderColor: "transparent",
+    },
+    swatchActive: { borderColor: theme.text },
+    toggleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingVertical: 8,
+      marginTop: 8,
+    },
+    toggleLabel: { fontSize: 14, color: theme.text, flex: 1 },
+    allBalTop: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 8,
+    },
+    editBalBtn: {
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: theme.radiusSm,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      backgroundColor: theme.glass,
+    },
+    editBalText: { color: theme.primary, fontSize: 12, fontWeight: "700" },
 
-  // modal
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 24,
-  },
-  modalBox: {
-    width: "100%",
-    maxWidth: 360,
-    backgroundColor: theme.bgElevated,
-    borderRadius: theme.radiusLg,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    padding: 18,
-  },
-  modalTitle: { fontSize: 16, fontWeight: "800", color: theme.text },
-  modalFooter: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 8,
-    marginTop: 18,
-  },
-  modalCancel: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: theme.radiusSm,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-  },
-  modalCancelText: { color: theme.text, fontSize: 13, fontWeight: "600" },
-  modalSave: {
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: theme.radiusSm,
-    backgroundColor: theme.primary,
-  },
-  modalSaveText: { color: "#fff", fontSize: 13, fontWeight: "700" },
-});
+    // modal
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: "rgba(0,0,0,0.6)",
+      justifyContent: "center",
+      alignItems: "center",
+      padding: 24,
+    },
+    modalBox: {
+      width: "100%",
+      maxWidth: 360,
+      backgroundColor: theme.bgElevated,
+      borderRadius: theme.radiusLg,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      padding: 18,
+    },
+    modalTitle: { fontSize: 16, fontWeight: "800", color: theme.text },
+    modalFooter: {
+      flexDirection: "row",
+      justifyContent: "flex-end",
+      gap: 8,
+      marginTop: 18,
+    },
+    modalCancel: {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: theme.radiusSm,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    modalCancelText: { color: theme.text, fontSize: 13, fontWeight: "600" },
+    modalSave: {
+      paddingHorizontal: 18,
+      paddingVertical: 10,
+      borderRadius: theme.radiusSm,
+      backgroundColor: theme.primary,
+    },
+    modalSaveText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  });

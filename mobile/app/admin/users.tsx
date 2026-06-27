@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   FlatList,
@@ -17,6 +18,8 @@ import { uploadUrl } from "../../src/config";
 import { roleLabel } from "../../src/constants/roles";
 import { getAdminUsers, type AdminUser } from "../../src/admin";
 
+const EMPTY_USERS: AdminUser[] = [];
+
 function initials(name?: string) {
   if (!name) return "?";
   const p = name.trim().split(/\s+/);
@@ -34,8 +37,6 @@ export default function AdminUsersScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [filter, setFilter] = useState("all");
@@ -49,29 +50,23 @@ export default function AdminUsersScreen() {
     };
   }, [search]);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    const params: Record<string, string | number> = { per_page: 100 };
-    if (debounced) params.search = debounced;
-    if (filter === "active") params.is_active = "true";
-    if (filter === "inactive") params.is_active = "false";
-    getAdminUsers(params)
-      .then((r) => {
-        let rows = r.data.data || [];
-        if (filter === "admins") {
-          rows = rows.filter((u) =>
-            ["hr_admin", "super_admin", "platform_admin"].includes(u.role),
-          );
-        }
-        setUsers(rows);
-      })
-      .catch(() => setUsers([]))
-      .finally(() => setLoading(false));
-  }, [debounced, filter]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data: users = EMPTY_USERS, isLoading: loading } = useQuery({
+    queryKey: ["admin", "users", debounced, filter],
+    queryFn: async () => {
+      const params: Record<string, string | number> = { per_page: 100 };
+      if (debounced) params.search = debounced;
+      if (filter === "active") params.is_active = "true";
+      if (filter === "inactive") params.is_active = "false";
+      const r = await getAdminUsers(params);
+      let rows = r.data.data || [];
+      if (filter === "admins") {
+        rows = rows.filter((u) =>
+          ["hr_admin", "super_admin", "platform_admin"].includes(u.role),
+        );
+      }
+      return rows;
+    },
+  });
 
   return (
     <View style={styles.screen}>
@@ -131,7 +126,9 @@ export default function AdminUsersScreen() {
                 onPress={() => router.push(`/admin/user/${item.id}` as never)}
                 android_ripple={{ color: theme.surfaceHover }}
               >
-                <View style={[styles.avatar, !item.is_active && styles.avatarMuted]}>
+                <View
+                  style={[styles.avatar, !item.is_active && styles.avatarMuted]}
+                >
                   {avatar ? (
                     <Image source={{ uri: avatar }} style={styles.avatarImg} />
                   ) : (
@@ -165,9 +162,7 @@ export default function AdminUsersScreen() {
               </Pressable>
             );
           }}
-          ListEmptyComponent={
-            <Text style={styles.empty}>No users found.</Text>
-          }
+          ListEmptyComponent={<Text style={styles.empty}>No users found.</Text>}
         />
       )}
     </View>
@@ -176,79 +171,84 @@ export default function AdminUsersScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  searchBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: theme.inputBg,
-    borderWidth: 1,
-    borderColor: theme.inputBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 12,
-    margin: 16,
-    marginBottom: 8,
-  },
-  searchInput: { flex: 1, color: theme.text, fontSize: 15, paddingVertical: 11 },
-  filterRow: {
-    flexDirection: "row",
-    gap: 8,
-    paddingHorizontal: 16,
-    marginBottom: 8,
-  },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: theme.radiusFull,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-  },
-  chipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  chipText: { fontSize: 13, color: theme.textSecondary, fontWeight: "500" },
-  chipTextActive: { color: "#fff", fontWeight: "600" },
-  list: { padding: 16, paddingTop: 4, gap: 10, paddingBottom: 40 },
-  userCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 12,
-  },
-  avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarMuted: { opacity: 0.5 },
-  avatarImg: { width: 42, height: 42, borderRadius: 21 },
-  avatarText: { color: "#fff", fontSize: 14, fontWeight: "700" },
-  userBody: { flex: 1, gap: 2 },
-  userName: { fontSize: 15, fontWeight: "600", color: theme.text },
-  userMeta: { fontSize: 12, color: theme.textSecondary },
-  userRight: { alignItems: "flex-end", gap: 5 },
-  roleBadge: {
-    backgroundColor: theme.primaryGlow,
-    borderRadius: theme.radiusFull,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-  },
-  roleText: {
-    color: theme.primaryLight,
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  empty: {
-    color: theme.textMuted,
-    fontSize: 13,
-    textAlign: "center",
-    paddingTop: 32,
-  },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { flex: 1, alignItems: "center", justifyContent: "center" },
+    searchBar: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: theme.inputBg,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 12,
+      margin: 16,
+      marginBottom: 8,
+    },
+    searchInput: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 15,
+      paddingVertical: 11,
+    },
+    filterRow: {
+      flexDirection: "row",
+      gap: 8,
+      paddingHorizontal: 16,
+      marginBottom: 8,
+    },
+    chip: {
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: theme.radiusFull,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    chipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+    chipText: { fontSize: 13, color: theme.textSecondary, fontWeight: "500" },
+    chipTextActive: { color: "#fff", fontWeight: "600" },
+    list: { padding: 16, paddingTop: 4, gap: 10, paddingBottom: 40 },
+    userCard: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 12,
+    },
+    avatar: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    avatarMuted: { opacity: 0.5 },
+    avatarImg: { width: 42, height: 42, borderRadius: 21 },
+    avatarText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+    userBody: { flex: 1, gap: 2 },
+    userName: { fontSize: 15, fontWeight: "600", color: theme.text },
+    userMeta: { fontSize: 12, color: theme.textSecondary },
+    userRight: { alignItems: "flex-end", gap: 5 },
+    roleBadge: {
+      backgroundColor: theme.primaryGlow,
+      borderRadius: theme.radiusFull,
+      paddingHorizontal: 10,
+      paddingVertical: 3,
+    },
+    roleText: {
+      color: theme.primaryLight,
+      fontSize: 11,
+      fontWeight: "600",
+    },
+    empty: {
+      color: theme.textMuted,
+      fontSize: 13,
+      textAlign: "center",
+      paddingTop: 32,
+    },
+  });

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   FlatList,
@@ -28,21 +29,29 @@ import {
   type Team,
 } from "../../src/admin";
 
+type TeamsData = {
+  teams: Team[];
+  departments: DropdownOption[];
+  error: string | null;
+};
+const EMPTY_TEAMS_DATA: TeamsData = {
+  teams: [],
+  departments: [],
+  error: null,
+};
+
 export default function TeamsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { alert, confirm, dialog } = useDialog();
   const kbInset = useKeyboardInset();
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   // Platform admins are not scoped to a single org server-side, so the
   // teams/departments endpoints require an explicit org_id (read + write).
   const isPlatformAdmin = user?.role === "platform_admin";
   const orgId = (user as any)?.org_id as number | undefined;
-  const [items, setItems] = useState<Team[]>([]);
-  const [departments, setDepartments] = useState<DropdownOption[]>([]);
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Team | null>(null);
@@ -50,36 +59,40 @@ export default function TeamsScreen() {
   const [description, setDescription] = useState("");
   const [deptId, setDeptId] = useState<string | number | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    const params =
-      isPlatformAdmin && orgId != null ? { org_id: orgId } : undefined;
-    const [tRes, dRes] = await Promise.allSettled([
-      getTeams(params),
-      getDepartments(params),
-    ]);
-    if (tRes.status === "fulfilled") {
-      setItems(Array.isArray(tRes.value.data) ? tRes.value.data : []);
-    } else {
-      setItems([]);
-      const e = tRes.reason as any;
-      setError(e?.response?.data?.error || "Failed to load teams");
-    }
-    if (dRes.status === "fulfilled")
-      setDepartments([
-        { value: null, label: "— No department —" },
-        ...(Array.isArray(dRes.value.data) ? dRes.value.data : []).map((d) => ({
-          value: d.id,
-          label: d.name,
-        })),
+  const { data = EMPTY_TEAMS_DATA, isLoading: loading } = useQuery({
+    queryKey: ["admin", "teams", isPlatformAdmin ? orgId : null],
+    queryFn: async (): Promise<TeamsData> => {
+      const params =
+        isPlatformAdmin && orgId != null ? { org_id: orgId } : undefined;
+      const [tRes, dRes] = await Promise.allSettled([
+        getTeams(params),
+        getDepartments(params),
       ]);
-    setLoading(false);
-  }, [isPlatformAdmin, orgId]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+      let teams: Team[] = [];
+      let error: string | null = null;
+      if (tRes.status === "fulfilled") {
+        teams = Array.isArray(tRes.value.data) ? tRes.value.data : [];
+      } else {
+        const e = tRes.reason as any;
+        error = e?.response?.data?.error || "Failed to load teams";
+      }
+      let departments: DropdownOption[] = [];
+      if (dRes.status === "fulfilled")
+        departments = [
+          { value: null, label: "— No department —" },
+          ...(Array.isArray(dRes.value.data) ? dRes.value.data : []).map(
+            (d) => ({
+              value: d.id,
+              label: d.name,
+            }),
+          ),
+        ];
+      return { teams, departments, error };
+    },
+  });
+  const items = data.teams;
+  const departments = data.departments;
+  const error = data.error;
 
   function openCreate() {
     setEditing(null);
@@ -113,7 +126,7 @@ export default function TeamsScreen() {
       if (editing) await updateTeam(editing.id, payload);
       else await createTeam(payload);
       setModalOpen(false);
-      load();
+      queryClient.invalidateQueries({ queryKey: ["admin", "teams"] });
     } catch (e: any) {
       // A network/timeout error (no HTTP response) does NOT mean the write
       // failed — the server may have committed the row while the client gave
@@ -124,7 +137,7 @@ export default function TeamsScreen() {
         alert("Error", e.response.data?.error || "Failed to save");
       } else {
         setModalOpen(false);
-        load();
+        queryClient.invalidateQueries({ queryKey: ["admin", "teams"] });
       }
     } finally {
       setBusy(false);
@@ -140,7 +153,7 @@ export default function TeamsScreen() {
       onConfirm: async () => {
         try {
           await deleteTeam(t.id);
-          load();
+          queryClient.invalidateQueries({ queryKey: ["admin", "teams"] });
         } catch (e: any) {
           alert("Error", e?.response?.data?.error || "Failed to delete");
         }
@@ -264,94 +277,94 @@ export default function TeamsScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  list: { padding: 16, gap: 10, paddingBottom: 90 },
-  card: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 12,
-  },
-  iconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: theme.primaryGlow,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  body: { flex: 1, gap: 2 },
-  name: { fontSize: 15, fontWeight: "600", color: theme.text },
-  meta: { fontSize: 12, color: theme.textSecondary },
-  iconBtn: { padding: 6 },
-  empty: {
-    color: theme.textMuted,
-    fontSize: 13,
-    textAlign: "center",
-    paddingTop: 32,
-  },
-  fab: {
-    position: "absolute",
-    right: 20,
-    bottom: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 6,
-  },
-  modalOverlay: { flex: 1, justifyContent: "flex-end" },
-  modalScrim: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.6)",
-  },
-  sheet: {
-    backgroundColor: theme.bgElevated,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    gap: 10,
-  },
-  sheetHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  sheetTitle: { fontSize: 18, fontWeight: "700", color: theme.text },
-  fieldLabel: { fontSize: 12, color: theme.textSecondary, fontWeight: "500" },
-  input: {
-    backgroundColor: theme.inputBg,
-    borderWidth: 1,
-    borderColor: theme.inputBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: theme.text,
-    fontSize: 15,
-  },
-  inputMultiline: { minHeight: 70, textAlignVertical: "top" },
-  saveBtn: {
-    backgroundColor: theme.primary,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 13,
-    alignItems: "center",
-    marginTop: 6,
-  },
-  saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { flex: 1, alignItems: "center", justifyContent: "center" },
+    list: { padding: 16, gap: 10, paddingBottom: 90 },
+    card: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 12,
+    },
+    iconWrap: {
+      width: 38,
+      height: 38,
+      borderRadius: 10,
+      backgroundColor: theme.primaryGlow,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    body: { flex: 1, gap: 2 },
+    name: { fontSize: 15, fontWeight: "600", color: theme.text },
+    meta: { fontSize: 12, color: theme.textSecondary },
+    iconBtn: { padding: 6 },
+    empty: {
+      color: theme.textMuted,
+      fontSize: 13,
+      textAlign: "center",
+      paddingTop: 32,
+    },
+    fab: {
+      position: "absolute",
+      right: 20,
+      bottom: 24,
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+      shadowColor: "#000",
+      shadowOpacity: 0.3,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 6,
+    },
+    modalOverlay: { flex: 1, justifyContent: "flex-end" },
+    modalScrim: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: "rgba(0,0,0,0.6)",
+    },
+    sheet: {
+      backgroundColor: theme.bgElevated,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      padding: 20,
+      gap: 10,
+    },
+    sheetHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 4,
+    },
+    sheetTitle: { fontSize: 18, fontWeight: "700", color: theme.text },
+    fieldLabel: { fontSize: 12, color: theme.textSecondary, fontWeight: "500" },
+    input: {
+      backgroundColor: theme.inputBg,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      color: theme.text,
+      fontSize: 15,
+    },
+    inputMultiline: { minHeight: 70, textAlignVertical: "top" },
+    saveBtn: {
+      backgroundColor: theme.primary,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 13,
+      alignItems: "center",
+      marginTop: 6,
+    },
+    saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  });

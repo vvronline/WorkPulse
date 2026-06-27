@@ -1,9 +1,6 @@
+import { useEffect, useMemo, useState } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState } from "react";
-import { ActivityIndicator,
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Modal,
@@ -13,9 +10,10 @@ import { ActivityIndicator,
   Switch,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 import { Stack } from "expo-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
   Check,
@@ -64,13 +62,55 @@ type Component = {
 };
 
 const DEFAULT_COMPONENTS: Component[] = [
-  { key: "basic", label: "Basic Salary", type: "earning", calc_type: "fixed", taxable: true },
-  { key: "hra", label: "HRA", type: "earning", calc_type: "fixed", taxable: true },
-  { key: "conveyance", label: "Conveyance Allowance", type: "earning", calc_type: "fixed", taxable: false },
-  { key: "special_allowance", label: "Special Allowance", type: "earning", calc_type: "fixed", taxable: true },
-  { key: "_ded_pf", label: "Provident Fund", type: "deduction", calc_type: "fixed", taxable: false },
-  { key: "_ded_professional_tax", label: "Professional Tax", type: "deduction", calc_type: "fixed", taxable: false },
-  { key: "_ded_tds", label: "Income Tax (TDS)", type: "deduction", calc_type: "fixed", taxable: false },
+  {
+    key: "basic",
+    label: "Basic Salary",
+    type: "earning",
+    calc_type: "fixed",
+    taxable: true,
+  },
+  {
+    key: "hra",
+    label: "HRA",
+    type: "earning",
+    calc_type: "fixed",
+    taxable: true,
+  },
+  {
+    key: "conveyance",
+    label: "Conveyance Allowance",
+    type: "earning",
+    calc_type: "fixed",
+    taxable: false,
+  },
+  {
+    key: "special_allowance",
+    label: "Special Allowance",
+    type: "earning",
+    calc_type: "fixed",
+    taxable: true,
+  },
+  {
+    key: "_ded_pf",
+    label: "Provident Fund",
+    type: "deduction",
+    calc_type: "fixed",
+    taxable: false,
+  },
+  {
+    key: "_ded_professional_tax",
+    label: "Professional Tax",
+    type: "deduction",
+    calc_type: "fixed",
+    taxable: false,
+  },
+  {
+    key: "_ded_tds",
+    label: "Income Tax (TDS)",
+    type: "deduction",
+    calc_type: "fixed",
+    taxable: false,
+  },
 ];
 
 const CTC_DEFAULTS: CtcConfig = {
@@ -81,6 +121,12 @@ const CTC_DEFAULTS: CtcConfig = {
   pf_max: 1800,
   pt_fixed: 200,
 };
+
+/* ── Stable empty references for query-derived data ── */
+const EMPTY_TEMPLATES: CompensationTemplate[] = [];
+const EMPTY_EMPLOYEES: EmployeeCompensation[] = [];
+const EMPTY_MEMBERS: OrgMember[] = [];
+const EMPTY_BANK: BankVerification[] = [];
 
 function calcFromCtc(
   ctcAnnual: number,
@@ -93,7 +139,10 @@ function calcFromCtc(
   const hra = Math.round((basic * Number(cfg.hra_pct)) / 100);
   const conveyance = Math.round((monthly * Number(cfg.conveyance_pct)) / 100);
   const specialAllowance = Math.max(0, monthly - basic - hra - conveyance);
-  const pf = Math.min(Number(cfg.pf_max), Math.round((basic * Number(cfg.pf_pct)) / 100));
+  const pf = Math.min(
+    Number(cfg.pf_max),
+    Math.round((basic * Number(cfg.pf_pct)) / 100),
+  );
   const ctcMap: Record<string, number> = {
     basic,
     hra,
@@ -117,9 +166,7 @@ function fmtMoney(v?: number | string | null): string {
   return "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
-function parseComponents(
-  raw: CompensationTemplate["components"],
-): Component[] {
+function parseComponents(raw: CompensationTemplate["components"]): Component[] {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw as unknown as Component[];
   try {
@@ -143,17 +190,9 @@ export default function CompensationScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<TabKey>("templates");
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-
-  const [templates, setTemplates] = useState<CompensationTemplate[]>([]);
-  const [employees, setEmployees] = useState<EmployeeCompensation[]>([]);
-  const [members, setMembers] = useState<OrgMember[]>([]);
-  const [bankVerifications, setBankVerifications] = useState<BankVerification[]>(
-    [],
-  );
-  const [ctcConfig, setCtcConfig] = useState<CtcConfig>(CTC_DEFAULTS);
 
   /* ── Template modal ── */
   const [tmplModal, setTmplModal] = useState(false);
@@ -169,7 +208,9 @@ export default function CompensationScreen() {
   /* ── Assign modal ── */
   const [assignModal, setAssignModal] = useState(false);
   const [assignEmp, setAssignEmp] = useState<EmployeeCompensation | null>(null);
-  const [assignUserId, setAssignUserId] = useState<string | number | null>(null);
+  const [assignUserId, setAssignUserId] = useState<string | number | null>(
+    null,
+  );
   const [assignCtc, setAssignCtc] = useState("");
   const [assignBase, setAssignBase] = useState("");
   const [assignEffective, setAssignEffective] = useState(
@@ -178,42 +219,57 @@ export default function CompensationScreen() {
   const [assignTemplateId, setAssignTemplateId] = useState<
     string | number | null
   >(null);
-  const [assignComponents, setAssignComponents] = useState<
-    Record<string, any>
-  >({});
+  const [assignComponents, setAssignComponents] = useState<Record<string, any>>(
+    {},
+  );
 
   /* ── CTC config form ── */
   const [ctcForm, setCtcForm] = useState<CtcConfig>(CTC_DEFAULTS);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const [tmplR, empR, memR, bankR, ctcR] = await Promise.allSettled([
-      getCompensationTemplates(),
-      getEmployeeCompensations(),
-      getOrgMembers({ perPage: 500 }),
-      getBankVerifications(),
-      getCtcConfig(),
-    ]);
-    if (tmplR.status === "fulfilled")
-      setTemplates(Array.isArray(tmplR.value.data) ? tmplR.value.data : []);
-    if (empR.status === "fulfilled")
-      setEmployees(Array.isArray(empR.value.data) ? empR.value.data : []);
-    if (memR.status === "fulfilled")
-      setMembers(memR.value.data?.data ?? []);
-    if (bankR.status === "fulfilled")
-      setBankVerifications(
-        Array.isArray(bankR.value.data) ? bankR.value.data : [],
-      );
-    if (ctcR.status === "fulfilled" && ctcR.value.data) {
-      setCtcConfig(ctcR.value.data);
-      setCtcForm(ctcR.value.data);
-    }
-    setLoading(false);
-  }, []);
+  const { data: compData, isLoading: loading } = useQuery({
+    queryKey: ["admin", "compensation"],
+    queryFn: async () => {
+      const [tmplR, empR, memR, bankR, ctcR] = await Promise.allSettled([
+        getCompensationTemplates(),
+        getEmployeeCompensations(),
+        getOrgMembers({ perPage: 500 }),
+        getBankVerifications(),
+        getCtcConfig(),
+      ]);
+      return {
+        templates:
+          tmplR.status === "fulfilled" && Array.isArray(tmplR.value.data)
+            ? tmplR.value.data
+            : EMPTY_TEMPLATES,
+        employees:
+          empR.status === "fulfilled" && Array.isArray(empR.value.data)
+            ? empR.value.data
+            : EMPTY_EMPLOYEES,
+        members:
+          memR.status === "fulfilled"
+            ? (memR.value.data?.data ?? EMPTY_MEMBERS)
+            : EMPTY_MEMBERS,
+        bankVerifications:
+          bankR.status === "fulfilled" && Array.isArray(bankR.value.data)
+            ? bankR.value.data
+            : EMPTY_BANK,
+        ctc:
+          ctcR.status === "fulfilled" && ctcR.value.data
+            ? (ctcR.value.data as CtcConfig)
+            : null,
+      };
+    },
+  });
+
+  const templates = compData?.templates ?? EMPTY_TEMPLATES;
+  const employees = compData?.employees ?? EMPTY_EMPLOYEES;
+  const members = compData?.members ?? EMPTY_MEMBERS;
+  const bankVerifications = compData?.bankVerifications ?? EMPTY_BANK;
+  const ctcConfig = compData?.ctc ?? CTC_DEFAULTS;
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (compData?.ctc) setCtcForm(compData.ctc);
+  }, [compData?.ctc]);
 
   /* ── Templates ── */
 
@@ -238,11 +294,21 @@ export default function CompensationScreen() {
   function addTmplComponent() {
     setTmplComponents((c) => [
       ...c,
-      { key: "", label: "", type: "earning", calc_type: "fixed", taxable: false },
+      {
+        key: "",
+        label: "",
+        type: "earning",
+        calc_type: "fixed",
+        taxable: false,
+      },
     ]);
   }
 
-  function updateTmplComponent(idx: number, field: keyof Component, value: any) {
+  function updateTmplComponent(
+    idx: number,
+    field: keyof Component,
+    value: any,
+  ) {
     setTmplComponents((c) =>
       c.map((comp, i) => (i === idx ? { ...comp, [field]: value } : comp)),
     );
@@ -280,9 +346,14 @@ export default function CompensationScreen() {
         });
       }
       setTmplModal(false);
-      load();
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "compensation"],
+      });
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to save template");
+      Alert.alert(
+        "Error",
+        e?.response?.data?.error || "Failed to save template",
+      );
     } finally {
       setBusy(false);
     }
@@ -296,7 +367,11 @@ export default function CompensationScreen() {
         style: "destructive",
         onPress: () =>
           deleteCompensationTemplate(t.id)
-            .then(() => load())
+            .then(() =>
+              queryClient.invalidateQueries({
+                queryKey: ["admin", "compensation"],
+              }),
+            )
             .catch((e: any) =>
               Alert.alert(
                 "Error",
@@ -362,7 +437,11 @@ export default function CompensationScreen() {
         });
         const ctc = parseFloat(assignCtc) || 0;
         if (ctc > 0) {
-          const { base_salary, components } = calcFromCtc(ctc, ctcConfig, comps);
+          const { base_salary, components } = calcFromCtc(
+            ctc,
+            ctcConfig,
+            comps,
+          );
           setAssignBase(String(base_salary));
           setAssignComponents(components);
         } else {
@@ -397,7 +476,9 @@ export default function CompensationScreen() {
         components: assignComponents,
       });
       setAssignModal(false);
-      load();
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "compensation"],
+      });
     } catch (e: any) {
       Alert.alert(
         "Error",
@@ -415,12 +496,17 @@ export default function CompensationScreen() {
     try {
       const r = await saveCtcConfig(ctcForm);
       if (r.data) {
-        setCtcConfig(r.data);
         setCtcForm(r.data);
       }
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "compensation"],
+      });
       Alert.alert("Saved", "CTC settings updated");
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to save CTC config");
+      Alert.alert(
+        "Error",
+        e?.response?.data?.error || "Failed to save CTC config",
+      );
     } finally {
       setBusy(false);
     }
@@ -430,7 +516,11 @@ export default function CompensationScreen() {
 
   function approveBank(b: BankVerification) {
     approveBankDetails(b.user_id)
-      .then(() => load())
+      .then(() =>
+        queryClient.invalidateQueries({
+          queryKey: ["admin", "compensation"],
+        }),
+      )
       .catch((e: any) =>
         Alert.alert("Error", e?.response?.data?.error || "Failed to approve"),
       );
@@ -444,9 +534,16 @@ export default function CompensationScreen() {
         style: "destructive",
         onPress: () =>
           rejectBankDetails(b.user_id)
-            .then(() => load())
+            .then(() =>
+              queryClient.invalidateQueries({
+                queryKey: ["admin", "compensation"],
+              }),
+            )
             .catch((e: any) =>
-              Alert.alert("Error", e?.response?.data?.error || "Failed to reject"),
+              Alert.alert(
+                "Error",
+                e?.response?.data?.error || "Failed to reject",
+              ),
             ),
       },
     ]);
@@ -464,8 +561,7 @@ export default function CompensationScreen() {
     ...members
       .filter(
         (m) =>
-          m.is_active !== false &&
-          !employees.some((e) => e.user_id === m.id),
+          m.is_active !== false && !employees.some((e) => e.user_id === m.id),
       )
       .map((m) => ({
         value: m.id,
@@ -520,7 +616,10 @@ export default function CompensationScreen() {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={[styles.content, { paddingBottom: 40 + kbInset }]}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: 40 + kbInset },
+        ]}
       >
         {/* ── Templates ── */}
         {tab === "templates" ? (

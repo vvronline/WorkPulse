@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
+import { useQuery } from "@tanstack/react-query";
 import { UserPlus } from "lucide-react-native";
 import { useAuth } from "../../src/auth/AuthContext";
 import type { Theme } from "../../src/theme";
@@ -21,11 +22,9 @@ import {
   useKeyboardInset,
   scrollFocusedIntoView,
 } from "../../src/hooks/useKeyboardInset";
-import {
-  createAdminUser,
-  getDepartments,
-  getTeams,
-} from "../../src/admin";
+import { createAdminUser, getDepartments, getTeams } from "../../src/admin";
+
+const EMPTY_OPTIONS: DropdownOption[] = [];
 
 export default function AddPeopleScreen() {
   const theme = useTheme();
@@ -43,26 +42,38 @@ export default function AddPeopleScreen() {
   const [deptId, setDeptId] = useState<string | number | null>(null);
   const [teamId, setTeamId] = useState<string | number | null>(null);
 
-  const [departments, setDepartments] = useState<DropdownOption[]>([]);
-  const [teams, setTeams] = useState<DropdownOption[]>([]);
-
-  const load = useCallback(async () => {
-    const [dRes, tRes] = await Promise.allSettled([getDepartments(), getTeams()]);
-    if (dRes.status === "fulfilled")
-      setDepartments([
-        { value: null, label: "— No department —" },
-        ...(dRes.value.data || []).map((d) => ({ value: d.id, label: d.name })),
+  const { data: refData } = useQuery({
+    queryKey: ["admin", "addPeopleRefData"],
+    queryFn: async () => {
+      const [dRes, tRes] = await Promise.allSettled([
+        getDepartments(),
+        getTeams(),
       ]);
-    if (tRes.status === "fulfilled")
-      setTeams([
-        { value: null, label: "— No team —" },
-        ...(tRes.value.data || []).map((t) => ({ value: t.id, label: t.name })),
-      ]);
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+      const departments: DropdownOption[] =
+        dRes.status === "fulfilled"
+          ? [
+              { value: null, label: "— No department —" },
+              ...(dRes.value.data || []).map((d) => ({
+                value: d.id,
+                label: d.name,
+              })),
+            ]
+          : EMPTY_OPTIONS;
+      const teams: DropdownOption[] =
+        tRes.status === "fulfilled"
+          ? [
+              { value: null, label: "— No team —" },
+              ...(tRes.value.data || []).map((t) => ({
+                value: t.id,
+                label: t.name,
+              })),
+            ]
+          : EMPTY_OPTIONS;
+      return { departments, teams };
+    },
+  });
+  const departments = refData?.departments ?? EMPTY_OPTIONS;
+  const teams = refData?.teams ?? EMPTY_OPTIONS;
 
   const roleOptions: DropdownOption[] = ROLES.filter((r) =>
     me?.role === "platform_admin" ? true : canManageRole(me?.role ?? "", r),
@@ -101,7 +112,10 @@ export default function AddPeopleScreen() {
     >
       <Stack.Screen options={{ title: "Add People" }} />
       <ScrollView
-        contentContainerStyle={[styles.container, { paddingBottom: 48 + kbInset }]}
+        contentContainerStyle={[
+          styles.container,
+          { paddingBottom: 48 + kbInset },
+        ]}
       >
         <View style={styles.headerRow}>
           <UserPlus size={18} color={theme.primary} />
@@ -143,7 +157,9 @@ export default function AddPeopleScreen() {
           keyboardType="email-address"
         />
 
-        <Text style={styles.fieldLabel}>Password (optional — auto-generated if blank)</Text>
+        <Text style={styles.fieldLabel}>
+          Password (optional — auto-generated if blank)
+        </Text>
         <TextInput
           style={styles.input}
           value={password}
@@ -191,37 +207,37 @@ export default function AddPeopleScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  container: { padding: 16, gap: 8, paddingBottom: 48 },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 8,
-  },
-  heading: { fontSize: 18, fontWeight: "700", color: theme.text },
-  fieldLabel: {
-    fontSize: 12,
-    color: theme.textSecondary,
-    fontWeight: "500",
-    marginTop: 6,
-  },
-  input: {
-    backgroundColor: theme.inputBg,
-    borderWidth: 1,
-    borderColor: theme.inputBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: theme.text,
-    fontSize: 15,
-  },
-  submitBtn: {
-    backgroundColor: theme.primary,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 14,
-    alignItems: "center",
-    marginTop: 18,
-  },
-  submitBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    container: { padding: 16, gap: 8, paddingBottom: 48 },
+    headerRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      marginBottom: 8,
+    },
+    heading: { fontSize: 18, fontWeight: "700", color: theme.text },
+    fieldLabel: {
+      fontSize: 12,
+      color: theme.textSecondary,
+      fontWeight: "500",
+      marginTop: 6,
+    },
+    input: {
+      backgroundColor: theme.inputBg,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      color: theme.text,
+      fontSize: 15,
+    },
+    submitBtn: {
+      backgroundColor: theme.primary,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 14,
+      alignItems: "center",
+      marginTop: 18,
+    },
+    submitBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  });

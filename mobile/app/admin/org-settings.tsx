@@ -1,9 +1,7 @@
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState } from "react";
-import { ActivityIndicator,
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Linking,
@@ -14,7 +12,7 @@ import { ActivityIndicator,
   Switch,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 import { Stack } from "expo-router";
 import { WebView } from "react-native-webview";
@@ -154,7 +152,8 @@ function buildMapHtml(
   lng: number | null,
   radius: number,
 ): string {
-  const hasLoc = lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng);
+  const hasLoc =
+    lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng);
   const centreLat = hasLoc ? lat : 19.076;
   const centreLng = hasLoc ? lng : 72.8777;
   const zoom = hasLoc ? 16 : 12;
@@ -229,16 +228,21 @@ function workDaysToCsv(set: Set<number>): string {
     .join(",");
 }
 
+// Stable empty references for read-only, query-derived lists.
+const EMPTY_CODES: InviteCode[] = [];
+const EMPTY_ROLES: OrgRole[] = [];
+const EMPTY_TEMPLATES: EmailTemplate[] = [];
+
 export default function OrgSettingsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
   const { user } = useAuth();
   const { refreshBranding } = useBranding();
+  const queryClient = useQueryClient();
   const isSuper =
     user?.role === "super_admin" || user?.role === "platform_admin";
 
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
   const canEditAttendance = isSuper || user?.role === "hr_admin";
@@ -276,17 +280,16 @@ export default function OrgSettingsScreen() {
   // Branding
   const [accent, setAccent] = useState("#2383e2");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
-  const [brandingMsg, setBrandingMsg] = useState<
-    { type: "success" | "error"; text: string } | null
-  >(null);
+  const [brandingMsg, setBrandingMsg] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
   const [brandingSaving, setBrandingSaving] = useState(false);
 
   // Registration
   const [regMode, setRegMode] = useState("open");
-  const [inviteCodes, setInviteCodes] = useState<InviteCode[]>([]);
 
   // Roles
-  const [roles, setRoles] = useState<OrgRole[]>([]);
   const [roleModal, setRoleModal] = useState(false);
   const [editingRole, setEditingRole] = useState<OrgRole | null>(null);
   const [roleKey, setRoleKey] = useState("");
@@ -295,25 +298,65 @@ export default function OrgSettingsScreen() {
   const [roleLevel, setRoleLevel] = useState<string | number | null>(1);
 
   // Email templates
-  const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [tmplModal, setTmplModal] = useState(false);
   const [editingTmpl, setEditingTmpl] = useState<EmailTemplate | null>(null);
   const [tmplSubject, setTmplSubject] = useState("");
   const [tmplBody, setTmplBody] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const [orgR, brandR, regR, codesR, rolesR, tmplR] =
-      await Promise.allSettled([
-        getCurrentOrg(),
-        getBranding(),
-        getRegistrationSettings(),
-        getInviteCodes(),
-        getOrgRoles(),
-        getEmailTemplates(),
-      ]);
-    if (orgR.status === "fulfilled" && orgR.value.data) {
-      const o = orgR.value.data;
+  const { data: orgData, isLoading: loading } = useQuery({
+    queryKey: ["admin", "orgSettings"],
+    queryFn: async () => {
+      const [orgR, brandR, regR, codesR, rolesR, tmplR] =
+        await Promise.allSettled([
+          getCurrentOrg(),
+          getBranding(),
+          getRegistrationSettings(),
+          getInviteCodes(),
+          getOrgRoles(),
+          getEmailTemplates(),
+        ]);
+      const org =
+        orgR.status === "fulfilled" && orgR.value.data ? orgR.value.data : null;
+      const branding =
+        brandR.status === "fulfilled" && brandR.value.data
+          ? brandR.value.data
+          : null;
+      const registration =
+        regR.status === "fulfilled" ? (regR.value.data?.mode ?? null) : null;
+      const inviteCodes =
+        codesR.status === "fulfilled" && Array.isArray(codesR.value.data)
+          ? codesR.value.data
+          : EMPTY_CODES;
+      const roles =
+        rolesR.status === "fulfilled"
+          ? (rolesR.value.data?.roles ?? EMPTY_ROLES)
+          : EMPTY_ROLES;
+      const emailTemplates =
+        tmplR.status === "fulfilled"
+          ? (tmplR.value.data?.templates ?? EMPTY_TEMPLATES)
+          : EMPTY_TEMPLATES;
+      return {
+        org,
+        branding,
+        registration,
+        inviteCodes,
+        roles,
+        emailTemplates,
+      };
+    },
+  });
+
+  // Read-only, query-derived lists.
+  const inviteCodes = orgData?.inviteCodes ?? EMPTY_CODES;
+  const roles = orgData?.roles ?? EMPTY_ROLES;
+  const templates = orgData?.emailTemplates ?? EMPTY_TEMPLATES;
+
+  // Populate editable form fields when fresh server data arrives. Mirrors the
+  // exact fields/fallbacks the previous `load` set.
+  useEffect(() => {
+    if (!orgData) return;
+    const o = orgData.org;
+    if (o) {
       setName(o.name ?? "");
       setTimezone(o.timezone ?? "");
       setWorkHours(o.work_hours_per_day ? String(o.work_hours_per_day) : "");
@@ -341,27 +384,13 @@ export default function OrgSettingsScreen() {
           : [],
       );
     }
-    if (brandR.status === "fulfilled" && brandR.value.data) {
-      if (brandR.value.data.accent_color)
-        setAccent(brandR.value.data.accent_color);
-      setLogoUrl(brandR.value.data.logo_url ?? null);
+    const b = orgData.branding;
+    if (b) {
+      if (b.accent_color) setAccent(b.accent_color);
+      setLogoUrl(b.logo_url ?? null);
     }
-    if (regR.status === "fulfilled" && regR.value.data?.mode)
-      setRegMode(regR.value.data.mode);
-    if (codesR.status === "fulfilled")
-      setInviteCodes(
-        Array.isArray(codesR.value.data) ? codesR.value.data : [],
-      );
-    if (rolesR.status === "fulfilled")
-      setRoles(rolesR.value.data?.roles ?? []);
-    if (tmplR.status === "fulfilled")
-      setTemplates(tmplR.value.data?.templates ?? []);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+    if (orgData.registration) setRegMode(orgData.registration);
+  }, [orgData]);
 
   /* ── General ── */
 
@@ -398,10 +427,13 @@ export default function OrgSettingsScreen() {
         work_days: workDaysToCsv(workDays),
         fiscal_year_start: fiscalStart ? Number(fiscalStart) : undefined,
         min_hours_present: minHours === "" ? null : Number(minHours),
-        office_start_time: officeStart.trim() === "" ? null : officeStart.trim(),
+        office_start_time:
+          officeStart.trim() === "" ? null : officeStart.trim(),
       });
       Alert.alert("Saved", "Organization settings updated");
-      load();
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "orgSettings"],
+      });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to save");
     } finally {
@@ -468,7 +500,9 @@ export default function OrgSettingsScreen() {
         })),
       });
       Alert.alert("Saved", "Attendance verification updated");
-      load();
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "orgSettings"],
+      });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to save");
     } finally {
@@ -482,7 +516,9 @@ export default function OrgSettingsScreen() {
     setWifiErr(null);
     const cleaned = manualBssid.replace(/[^0-9a-fA-F]/g, "").toUpperCase();
     if (cleaned.length !== 12) {
-      setWifiErr("Invalid MAC. Expected 12 hex digits (e.g. AA:BB:CC:DD:EE:FF).");
+      setWifiErr(
+        "Invalid MAC. Expected 12 hex digits (e.g. AA:BB:CC:DD:EE:FF).",
+      );
       return;
     }
     const mac = cleaned.match(/.{2}/g)!.join(":");
@@ -556,7 +592,11 @@ export default function OrgSettingsScreen() {
         ssid?: string | null;
       };
       const rawBssid = details?.bssid;
-      if (state?.type !== "wifi" || !rawBssid || rawBssid === "02:00:00:00:00:00") {
+      if (
+        state?.type !== "wifi" ||
+        !rawBssid ||
+        rawBssid === "02:00:00:00:00:00"
+      ) {
         setWifiErr(
           state?.type !== "wifi"
             ? "You're not connected to Wi-Fi. Connect to the office network first."
@@ -569,9 +609,10 @@ export default function OrgSettingsScreen() {
         setWifiErr("This access point is already registered.");
         return;
       }
-      const ssid = details?.ssid && details.ssid !== "<unknown ssid>"
-        ? details.ssid
-        : null;
+      const ssid =
+        details?.ssid && details.ssid !== "<unknown ssid>"
+          ? details.ssid
+          : null;
       const defaultLabel = (
         ssid ? `${ssid} (${mac.slice(-5)})` : `Office AP (${mac.slice(-5)})`
       ).slice(0, 100);
@@ -697,8 +738,9 @@ export default function OrgSettingsScreen() {
     setBusy(true);
     try {
       await createInviteCode({ expires_in_days: 7 });
-      const r = await getInviteCodes();
-      setInviteCodes(Array.isArray(r.data) ? r.data : []);
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "orgSettings"],
+      });
     } catch (e: any) {
       Alert.alert(
         "Error",
@@ -717,8 +759,11 @@ export default function OrgSettingsScreen() {
         style: "destructive",
         onPress: () =>
           deactivateInviteCode(c.id)
-            .then(() => getInviteCodes())
-            .then((r) => setInviteCodes(Array.isArray(r.data) ? r.data : []))
+            .then(() =>
+              queryClient.invalidateQueries({
+                queryKey: ["admin", "orgSettings"],
+              }),
+            )
             .catch((e: any) =>
               Alert.alert("Error", e?.response?.data?.error || "Failed"),
             ),
@@ -754,12 +799,14 @@ export default function OrgSettingsScreen() {
     setBusy(true);
     try {
       if (editingRole) {
-        const r = await updateOrgRole(editingRole.role_key, {
+        await updateOrgRole(editingRole.role_key, {
           label: roleLabel.trim(),
           color: roleColor,
           permission_level: Number(roleLevel) || 1,
         });
-        setRoles(r.data?.roles ?? []);
+        await queryClient.invalidateQueries({
+          queryKey: ["admin", "orgSettings"],
+        });
       } else {
         const key = roleKey.trim().toLowerCase();
         if (!/^[a-z][a-z0-9_]{0,39}$/.test(key)) {
@@ -770,13 +817,15 @@ export default function OrgSettingsScreen() {
           setBusy(false);
           return;
         }
-        const r = await createOrgRole({
+        await createOrgRole({
           role_key: key,
           label: roleLabel.trim(),
           color: roleColor,
           permission_level: Number(roleLevel) || 1,
         });
-        setRoles(r.data?.roles ?? []);
+        await queryClient.invalidateQueries({
+          queryKey: ["admin", "orgSettings"],
+        });
       }
       setRoleModal(false);
     } catch (e: any) {
@@ -801,7 +850,11 @@ export default function OrgSettingsScreen() {
         style: "destructive",
         onPress: () =>
           deleteOrgRole(r.role_key)
-            .then((res) => setRoles(res.data?.roles ?? []))
+            .then(() =>
+              queryClient.invalidateQueries({
+                queryKey: ["admin", "orgSettings"],
+              }),
+            )
             .catch((e: any) =>
               Alert.alert(
                 "Error",
@@ -830,8 +883,9 @@ export default function OrgSettingsScreen() {
         body_html: tmplBody,
       });
       setTmplModal(false);
-      const r = await getEmailTemplates();
-      setTemplates(r.data?.templates ?? []);
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "orgSettings"],
+      });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to save");
     } finally {
@@ -840,18 +894,25 @@ export default function OrgSettingsScreen() {
   }
 
   async function toggleTemplate(t: EmailTemplate, enabled: boolean) {
-    // Optimistic toggle.
-    setTemplates((list) =>
-      list.map((x) =>
-        x.template_key === t.template_key ? { ...x, enabled } : x,
-      ),
+    // Optimistic toggle against the cached query data.
+    queryClient.setQueryData(["admin", "orgSettings"], (old: any) =>
+      old
+        ? {
+            ...old,
+            emailTemplates: (old.emailTemplates ?? []).map(
+              (x: EmailTemplate) =>
+                x.template_key === t.template_key ? { ...x, enabled } : x,
+            ),
+          }
+        : old,
     );
     try {
       await updateEmailTemplate(t.template_key, { enabled });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to update");
-      const r = await getEmailTemplates().catch(() => null);
-      if (r) setTemplates(r.data?.templates ?? []);
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "orgSettings"],
+      });
     }
   }
 
@@ -866,8 +927,11 @@ export default function OrgSettingsScreen() {
           style: "destructive",
           onPress: () =>
             revertEmailTemplate(t.template_key)
-              .then(() => getEmailTemplates())
-              .then((r) => setTemplates(r.data?.templates ?? []))
+              .then(() =>
+                queryClient.invalidateQueries({
+                  queryKey: ["admin", "orgSettings"],
+                }),
+              )
               .catch((e: any) =>
                 Alert.alert("Error", e?.response?.data?.error || "Failed"),
               ),
@@ -891,7 +955,10 @@ export default function OrgSettingsScreen() {
   return (
     <ScrollView
       style={styles.screen}
-      contentContainerStyle={[styles.container, { paddingBottom: 48 + kbInset }]}
+      contentContainerStyle={[
+        styles.container,
+        { paddingBottom: 48 + kbInset },
+      ]}
     >
       <Stack.Screen options={{ title: "Org Settings" }} />
 
@@ -971,12 +1038,16 @@ export default function OrgSettingsScreen() {
           onChangeText={setMinHours}
           onFocus={scrollFocusedIntoView}
           placeholder={
-            workHours ? `Default: ${Number(workHours) / 2}h` : "Default: half day"
+            workHours
+              ? `Default: ${Number(workHours) / 2}h`
+              : "Default: half day"
           }
           placeholderTextColor={theme.textMuted}
           keyboardType="numeric"
         />
-        <Text style={styles.fieldLabel}>Office start time (HH:MM, optional)</Text>
+        <Text style={styles.fieldLabel}>
+          Office start time (HH:MM, optional)
+        </Text>
         <TextInput
           style={styles.input}
           value={officeStart}
@@ -1005,7 +1076,9 @@ export default function OrgSettingsScreen() {
             be within the geofence to clock in.
           </Text>
           <View style={styles.toggleRow}>
-            <Text style={styles.toggleLabel}>Require face + location check</Text>
+            <Text style={styles.toggleLabel}>
+              Require face + location check
+            </Text>
             <Switch
               value={attEnabled}
               onValueChange={setAttEnabled}
@@ -1073,7 +1146,9 @@ export default function OrgSettingsScreen() {
           {/* Interactive map — tap to set the office location. */}
           <View style={styles.mapHintRow}>
             <MapPin size={13} color={theme.textMuted} />
-            <Text style={styles.hint}>Tap the map to set the office location</Text>
+            <Text style={styles.hint}>
+              Tap the map to set the office location
+            </Text>
           </View>
           {(() => {
             const lat = Number(officeLat);
@@ -1174,9 +1249,9 @@ export default function OrgSettingsScreen() {
               />
             </View>
             <Text style={styles.hint}>
-              When an employee is connected to one of these access points, they're
-              treated as at the office regardless of GPS accuracy. The geofence
-              above acts as a fallback.
+              When an employee is connected to one of these access points,
+              they're treated as at the office regardless of GPS accuracy. The
+              geofence above acts as a fallback.
             </Text>
 
             {wifiBssids.length === 0 ? (
@@ -1420,9 +1495,7 @@ export default function OrgSettingsScreen() {
         {/* System roles — read-only context (mirrors web). */}
         {SYSTEM_ROLES.map((sr) => (
           <View key={sr.role_key} style={styles.systemRoleRow}>
-            <View
-              style={[styles.colorDot, { backgroundColor: sr.color }]}
-            />
+            <View style={[styles.colorDot, { backgroundColor: sr.color }]} />
             <View style={{ flex: 1 }}>
               <View style={styles.systemRoleHeader}>
                 <Text style={styles.itemName}>{sr.role_key}</Text>
@@ -1658,9 +1731,17 @@ export default function OrgSettingsScreen() {
                 />
               ))}
             </View>
-            <Pressable style={styles.saveBtn} onPress={saveRole} disabled={busy}>
+            <Pressable
+              style={styles.saveBtn}
+              onPress={saveRole}
+              disabled={busy}
+            >
               <Text style={styles.saveBtnText}>
-                {busy ? "Saving…" : editingRole ? "Save changes" : "Create role"}
+                {busy
+                  ? "Saving…"
+                  : editingRole
+                    ? "Save changes"
+                    : "Create role"}
               </Text>
             </Pressable>
           </View>

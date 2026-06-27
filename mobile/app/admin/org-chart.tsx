@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   FlatList,
@@ -29,6 +30,10 @@ import {
   type OrgChartNode,
   type OrgChartTeam,
 } from "../../src/admin";
+
+const EMPTY_DEPARTMENTS: OrgChartDepartment[] = [];
+const EMPTY_TEAMS: OrgChartTeam[] = [];
+const EMPTY_MEMBERS: OrgChartNode[] = [];
 
 function initials(name?: string) {
   if (!name) return "?";
@@ -232,51 +237,50 @@ function TreeRow({
 export default function OrgChartScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [departments, setDepartments] = useState<OrgChartDepartment[]>([]);
-  const [teams, setTeams] = useState<OrgChartTeam[]>([]);
-  const [members, setMembers] = useState<OrgChartNode[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"dept" | "tree">("dept");
   const [search, setSearch] = useState("");
 
-  const load = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    getOrgChart()
-      .then((r) => {
-        const d = r.data as unknown;
-        if (Array.isArray(d)) {
-          // Legacy shape — bare array of members.
-          setMembers(d as OrgChartNode[]);
-          setDepartments([]);
-          setTeams([]);
-        } else {
-          const obj = (d ?? {}) as {
-            departments?: OrgChartDepartment[];
-            teams?: OrgChartTeam[];
-            members?: OrgChartNode[];
-            nodes?: OrgChartNode[];
-          };
-          setDepartments(
-            Array.isArray(obj.departments) ? obj.departments : [],
-          );
-          setTeams(Array.isArray(obj.teams) ? obj.teams : []);
-          setMembers(obj.members ?? obj.nodes ?? []);
-        }
-      })
-      .catch((e: any) => {
-        setDepartments([]);
-        setTeams([]);
-        setMembers([]);
-        setError(e?.response?.data?.error || "Failed to load org chart");
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  const {
+    data,
+    isLoading: loading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ["admin", "orgChart"],
+    queryFn: async () => {
+      const r = await getOrgChart();
+      const d = r.data as unknown;
+      if (Array.isArray(d)) {
+        // Legacy shape — bare array of members.
+        return {
+          departments: EMPTY_DEPARTMENTS,
+          teams: EMPTY_TEAMS,
+          members: d as OrgChartNode[],
+        };
+      }
+      const obj = (d ?? {}) as {
+        departments?: OrgChartDepartment[];
+        teams?: OrgChartTeam[];
+        members?: OrgChartNode[];
+        nodes?: OrgChartNode[];
+      };
+      return {
+        departments: Array.isArray(obj.departments)
+          ? obj.departments
+          : EMPTY_DEPARTMENTS,
+        teams: Array.isArray(obj.teams) ? obj.teams : EMPTY_TEAMS,
+        members: obj.members ?? obj.nodes ?? EMPTY_MEMBERS,
+      };
+    },
+  });
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const departments = data?.departments ?? EMPTY_DEPARTMENTS;
+  const teams = data?.teams ?? EMPTY_TEAMS;
+  const members = data?.members ?? EMPTY_MEMBERS;
+  const errorMessage = isError
+    ? (error as any)?.response?.data?.error || "Failed to load org chart"
+    : null;
 
   const q = search.trim().toLowerCase();
 
@@ -323,12 +327,12 @@ export default function OrgChartScreen() {
     );
   }
 
-  if (error) {
+  if (errorMessage) {
     return (
       <View style={[styles.screen, styles.center]}>
         <Stack.Screen options={{ title: "Org Chart" }} />
-        <Text style={styles.empty}>{error}</Text>
-        <Pressable style={styles.retryBtn} onPress={load}>
+        <Text style={styles.empty}>{errorMessage}</Text>
+        <Pressable style={styles.retryBtn} onPress={() => refetch()}>
           <Text style={styles.retryText}>Retry</Text>
         </Pressable>
       </View>
@@ -339,10 +343,7 @@ export default function OrgChartScreen() {
     <View style={styles.controls}>
       <View style={styles.viewToggle}>
         <Pressable
-          style={[
-            styles.viewBtn,
-            viewMode === "dept" && styles.viewBtnActive,
-          ]}
+          style={[styles.viewBtn, viewMode === "dept" && styles.viewBtnActive]}
           onPress={() => setViewMode("dept")}
         >
           <Building2
@@ -359,10 +360,7 @@ export default function OrgChartScreen() {
           </Text>
         </Pressable>
         <Pressable
-          style={[
-            styles.viewBtn,
-            viewMode === "tree" && styles.viewBtnActive,
-          ]}
+          style={[styles.viewBtn, viewMode === "tree" && styles.viewBtnActive]}
           onPress={() => setViewMode("tree")}
         >
           <Users
@@ -481,170 +479,190 @@ export default function OrgChartScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
-  list: { padding: 16, gap: 12, paddingBottom: 40 },
-  controls: { gap: 10 },
-  viewToggle: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  viewBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 9,
-    borderRadius: theme.radiusSm,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-  },
-  viewBtnActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  viewBtnText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
-  viewBtnTextActive: { color: "#fff" },
-  searchBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: theme.inputBg,
-    borderWidth: 1,
-    borderColor: theme.inputBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 12,
-  },
-  searchInput: {
-    flex: 1,
-    paddingVertical: 10,
-    color: theme.text,
-    fontSize: 14,
-  },
-  panel: {
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusLg,
-    overflow: "hidden",
-  },
-  deptHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    padding: 14,
-  },
-  deptIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: theme.primaryGlow,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  deptName: { fontSize: 15, fontWeight: "700", color: theme.text },
-  deptSub: { fontSize: 11, color: theme.textMuted, marginTop: 1 },
-  deptBody: {
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-    gap: 10,
-  },
-  countBadge: {
-    backgroundColor: theme.primaryGlow,
-    borderRadius: theme.radiusFull,
-    minWidth: 26,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    alignItems: "center",
-  },
-  countText: { color: theme.primaryLight, fontSize: 12, fontWeight: "700" },
-  countBadgeSm: {
-    backgroundColor: theme.surface,
-    borderRadius: theme.radiusFull,
-    minWidth: 22,
-    paddingHorizontal: 7,
-    paddingVertical: 1,
-    alignItems: "center",
-  },
-  countTextSm: { color: theme.textSecondary, fontSize: 11, fontWeight: "700" },
-  teamCard: {
-    backgroundColor: theme.surface,
-    borderRadius: theme.radius,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    padding: 10,
-    gap: 8,
-  },
-  teamTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  teamTitle: { fontSize: 13, fontWeight: "600", color: theme.text },
-  teamLead: { fontSize: 11, color: theme.textMuted, flexShrink: 1 },
-  chipWrap: { gap: 8 },
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: theme.bgElevated,
-    borderRadius: theme.radiusSm,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    padding: 8,
-  },
-  chipAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  chipAvatarImg: { width: 30, height: 30, borderRadius: 15 },
-  chipAvatarText: { color: "#fff", fontSize: 11, fontWeight: "700" },
-  chipName: { fontSize: 13, fontWeight: "600", color: theme.text },
-  chipRole: { fontSize: 11, color: theme.textSecondary },
-  unassignedSection: { gap: 8 },
-  unassignedLabel: { fontSize: 12, color: theme.textMuted, fontWeight: "500" },
-  emptySmall: { fontSize: 12, color: theme.textMuted },
-  treeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 12,
-    marginBottom: 8,
-  },
-  treeLeafDot: {
-    width: 16,
-    height: 16,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  treeAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  treeAvatarImg: { width: 36, height: 36, borderRadius: 18 },
-  treeAvatarText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  treeName: { fontSize: 14, fontWeight: "600", color: theme.text },
-  treeMeta: { fontSize: 11, color: theme.textSecondary, marginTop: 1 },
-  empty: {
-    color: theme.textMuted,
-    fontSize: 13,
-    textAlign: "center",
-    paddingTop: 32,
-  },
-  retryBtn: {
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  retryText: { color: theme.text, fontSize: 14, fontWeight: "600" },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 12,
+    },
+    list: { padding: 16, gap: 12, paddingBottom: 40 },
+    controls: { gap: 10 },
+    viewToggle: {
+      flexDirection: "row",
+      gap: 8,
+    },
+    viewBtn: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      paddingVertical: 9,
+      borderRadius: theme.radiusSm,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    viewBtnActive: {
+      backgroundColor: theme.primary,
+      borderColor: theme.primary,
+    },
+    viewBtnText: {
+      fontSize: 13,
+      color: theme.textSecondary,
+      fontWeight: "600",
+    },
+    viewBtnTextActive: { color: "#fff" },
+    searchBox: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: theme.inputBg,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 12,
+    },
+    searchInput: {
+      flex: 1,
+      paddingVertical: 10,
+      color: theme.text,
+      fontSize: 14,
+    },
+    panel: {
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusLg,
+      overflow: "hidden",
+    },
+    deptHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      padding: 14,
+    },
+    deptIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      backgroundColor: theme.primaryGlow,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    deptName: { fontSize: 15, fontWeight: "700", color: theme.text },
+    deptSub: { fontSize: 11, color: theme.textMuted, marginTop: 1 },
+    deptBody: {
+      paddingHorizontal: 14,
+      paddingBottom: 14,
+      gap: 10,
+    },
+    countBadge: {
+      backgroundColor: theme.primaryGlow,
+      borderRadius: theme.radiusFull,
+      minWidth: 26,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      alignItems: "center",
+    },
+    countText: { color: theme.primaryLight, fontSize: 12, fontWeight: "700" },
+    countBadgeSm: {
+      backgroundColor: theme.surface,
+      borderRadius: theme.radiusFull,
+      minWidth: 22,
+      paddingHorizontal: 7,
+      paddingVertical: 1,
+      alignItems: "center",
+    },
+    countTextSm: {
+      color: theme.textSecondary,
+      fontSize: 11,
+      fontWeight: "700",
+    },
+    teamCard: {
+      backgroundColor: theme.surface,
+      borderRadius: theme.radius,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      padding: 10,
+      gap: 8,
+    },
+    teamTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+    teamTitle: { fontSize: 13, fontWeight: "600", color: theme.text },
+    teamLead: { fontSize: 11, color: theme.textMuted, flexShrink: 1 },
+    chipWrap: { gap: 8 },
+    chip: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: theme.bgElevated,
+      borderRadius: theme.radiusSm,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      padding: 8,
+    },
+    chipAvatar: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    chipAvatarImg: { width: 30, height: 30, borderRadius: 15 },
+    chipAvatarText: { color: "#fff", fontSize: 11, fontWeight: "700" },
+    chipName: { fontSize: 13, fontWeight: "600", color: theme.text },
+    chipRole: { fontSize: 11, color: theme.textSecondary },
+    unassignedSection: { gap: 8 },
+    unassignedLabel: {
+      fontSize: 12,
+      color: theme.textMuted,
+      fontWeight: "500",
+    },
+    emptySmall: { fontSize: 12, color: theme.textMuted },
+    treeRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 12,
+      marginBottom: 8,
+    },
+    treeLeafDot: {
+      width: 16,
+      height: 16,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    treeAvatar: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    treeAvatarImg: { width: 36, height: 36, borderRadius: 18 },
+    treeAvatarText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+    treeName: { fontSize: 14, fontWeight: "600", color: theme.text },
+    treeMeta: { fontSize: 11, color: theme.textSecondary, marginTop: 1 },
+    empty: {
+      color: theme.textMuted,
+      fontSize: 13,
+      textAlign: "center",
+      paddingTop: 32,
+    },
+    retryBtn: {
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 20,
+      paddingVertical: 10,
+    },
+    retryText: { color: theme.text, fontSize: 14, fontWeight: "600" },
+  });

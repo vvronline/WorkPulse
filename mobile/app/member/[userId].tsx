@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Image,
@@ -25,11 +26,7 @@ import { useTheme } from "../../src/theme/ThemeProvider";
 import { uploadUrl } from "../../src/config";
 import { formatTime } from "../../src/utils/time";
 import { getLeaveType } from "../../src/constants/leaves";
-import {
-  getMemberOverview,
-  type Approval,
-  type MemberOverview,
-} from "../../src/features";
+import { getMemberOverview, type Approval } from "../../src/features";
 
 type Tab = "overview" | "leaves" | "requests";
 
@@ -65,7 +62,11 @@ function statusMeta(status?: string) {
   if (status === "rejected")
     return { label: "Rejected", color: "#e03e3e", bg: "rgba(224,62,62,0.12)" };
   if (status === "withdraw_pending" || status === "withdrawn")
-    return { label: "Withdrawn", color: "#0ea5e9", bg: "rgba(14,165,233,0.12)" };
+    return {
+      label: "Withdrawn",
+      color: "#0ea5e9",
+      bg: "rgba(14,165,233,0.12)",
+    };
   return { label: "Pending", color: "#cb912f", bg: "rgba(203,145,47,0.12)" };
 }
 
@@ -118,29 +119,18 @@ export default function MemberDetailScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { userId } = useLocalSearchParams<{ userId: string }>();
-  const [data, setData] = useState<MemberOverview | null>(null);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState(false);
   const [tab, setTab] = useState<Tab>("overview");
-
-  const load = useCallback(async () => {
-    if (!userId) return;
-    try {
-      const { data } = await getMemberOverview(userId);
-      setData(data);
-      setError(false);
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [userId]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const queryClient = useQueryClient();
+  const {
+    data = null,
+    isLoading: loading,
+    isError: error,
+  } = useQuery({
+    queryKey: ["member", userId],
+    queryFn: async () => (await getMemberOverview(userId)).data,
+    enabled: !!userId,
+  });
 
   const maxTrend = useMemo(() => {
     const vals = (data?.weeklyTrend || []).map((d) => d.floorMinutes || 0);
@@ -177,9 +167,12 @@ export default function MemberDetailScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => {
+            onRefresh={async () => {
               setRefreshing(true);
-              load();
+              await queryClient.invalidateQueries({
+                queryKey: ["member", userId],
+              });
+              setRefreshing(false);
             }}
             tintColor={theme.primary}
           />
@@ -208,7 +201,9 @@ export default function MemberDetailScreen() {
             ) : null}
             {(user.department_name || user.team_name) && (
               <Text style={styles.profileMeta} numberOfLines={1}>
-                {[user.department_name, user.team_name].filter(Boolean).join(" · ")}
+                {[user.department_name, user.team_name]
+                  .filter(Boolean)
+                  .join(" · ")}
               </Text>
             )}
           </View>
@@ -271,7 +266,9 @@ export default function MemberDetailScreen() {
             {/* Weekly trend */}
             {data.weeklyTrend && data.weeklyTrend.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Weekly Trend (Last 7 Days)</Text>
+                <Text style={styles.sectionTitle}>
+                  Weekly Trend (Last 7 Days)
+                </Text>
                 <View style={styles.trendRow}>
                   {data.weeklyTrend.map((day, i) => {
                     const barH = Math.round(
@@ -289,7 +286,10 @@ export default function MemberDetailScreen() {
                           <View
                             style={[
                               styles.trendBar,
-                              { height: Math.max(barH, 2), backgroundColor: color },
+                              {
+                                height: Math.max(barH, 2),
+                                backgroundColor: color,
+                              },
                             ]}
                           />
                         </View>
@@ -315,12 +315,36 @@ export default function MemberDetailScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>30-Day Performance</Text>
               <View style={styles.perfGrid}>
-                <PerfItem theme={theme} value={String(stats30d.daysWorked)} label="Days Worked" />
-                <PerfItem theme={theme} value={formatTime(stats30d.totalFloorMinutes)} label="Total Work" />
-                <PerfItem theme={theme} value={formatTime(stats30d.avgFloorMinutes)} label="Avg Work/Day" />
-                <PerfItem theme={theme} value={formatTime(stats30d.avgBreakMinutes)} label="Avg Break/Day" />
-                <PerfItem theme={theme} value={`${stats30d.targetMetPercent}%`} label="Target Met" />
-                <PerfItem theme={theme} value={`${stats30d.punctualityPercent}%`} label="Punctuality" />
+                <PerfItem
+                  theme={theme}
+                  value={String(stats30d.daysWorked)}
+                  label="Days Worked"
+                />
+                <PerfItem
+                  theme={theme}
+                  value={formatTime(stats30d.totalFloorMinutes)}
+                  label="Total Work"
+                />
+                <PerfItem
+                  theme={theme}
+                  value={formatTime(stats30d.avgFloorMinutes)}
+                  label="Avg Work/Day"
+                />
+                <PerfItem
+                  theme={theme}
+                  value={formatTime(stats30d.avgBreakMinutes)}
+                  label="Avg Break/Day"
+                />
+                <PerfItem
+                  theme={theme}
+                  value={`${stats30d.targetMetPercent}%`}
+                  label="Target Met"
+                />
+                <PerfItem
+                  theme={theme}
+                  value={`${stats30d.punctualityPercent}%`}
+                  label="Punctuality"
+                />
               </View>
             </View>
 
@@ -328,10 +352,28 @@ export default function MemberDetailScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Planner This Month</Text>
               <View style={styles.perfGrid}>
-                <PerfItem theme={theme} value={String(monthTaskStats.total)} label="Total" />
-                <PerfItem theme={theme} value={String(monthTaskStats.done)} label="Done" valueColor={theme.success} />
-                <PerfItem theme={theme} value={String(monthTaskStats.inProgress)} label="In Progress" valueColor={theme.warning} />
-                <PerfItem theme={theme} value={`${monthTaskStats.completionRate}%`} label="Completion" />
+                <PerfItem
+                  theme={theme}
+                  value={String(monthTaskStats.total)}
+                  label="Total"
+                />
+                <PerfItem
+                  theme={theme}
+                  value={String(monthTaskStats.done)}
+                  label="Done"
+                  valueColor={theme.success}
+                />
+                <PerfItem
+                  theme={theme}
+                  value={String(monthTaskStats.inProgress)}
+                  label="In Progress"
+                  valueColor={theme.warning}
+                />
+                <PerfItem
+                  theme={theme}
+                  value={`${monthTaskStats.completionRate}%`}
+                  label="Completion"
+                />
               </View>
             </View>
 
@@ -372,9 +414,14 @@ export default function MemberDetailScreen() {
                     const type = getLeaveType(lb.leave_type);
                     const total = lb.total_days || 0;
                     const used = lb.used || 0;
-                    const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+                    const pct =
+                      total > 0 ? Math.round((used / total) * 100) : 0;
                     const barColor =
-                      pct >= 90 ? theme.danger : pct >= 60 ? theme.warning : theme.success;
+                      pct >= 90
+                        ? theme.danger
+                        : pct >= 60
+                          ? theme.warning
+                          : theme.success;
                     return (
                       <View key={i} style={styles.balanceRow}>
                         <View style={styles.balanceHead}>
@@ -392,7 +439,10 @@ export default function MemberDetailScreen() {
                           <View
                             style={[
                               styles.balanceFill,
-                              { width: `${Math.min(pct, 100)}%`, backgroundColor: barColor },
+                              {
+                                width: `${Math.min(pct, 100)}%`,
+                                backgroundColor: barColor,
+                              },
                             ]}
                           />
                         </View>
@@ -425,7 +475,9 @@ export default function MemberDetailScreen() {
                             {l.reason ? ` · ${l.reason}` : ""}
                           </Text>
                         </View>
-                        <View style={[styles.badge, { backgroundColor: sm.bg }]}>
+                        <View
+                          style={[styles.badge, { backgroundColor: sm.bg }]}
+                        >
                           <Text style={[styles.badgeText, { color: sm.color }]}>
                             {sm.label}
                           </Text>
@@ -451,7 +503,9 @@ export default function MemberDetailScreen() {
                   return (
                     <View key={r.id} style={styles.itemRow}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.itemTitle}>{typeLabel(r.type)}</Text>
+                        <Text style={styles.itemTitle}>
+                          {typeLabel(r.type)}
+                        </Text>
                         <Text style={styles.itemSub}>
                           {requestDetail(r)}
                           {r.created_at
@@ -493,7 +547,12 @@ function QuickStat({
   return (
     <View style={styles.quickStat}>
       <View style={styles.quickStatIcon}>{icon}</View>
-      <Text style={[styles.quickStatValue, valueColor ? { color: valueColor } : null]}>
+      <Text
+        style={[
+          styles.quickStatValue,
+          valueColor ? { color: valueColor } : null,
+        ]}
+      >
         {value}
       </Text>
       <Text style={styles.quickStatLabel}>{label}</Text>
@@ -515,7 +574,9 @@ function PerfItem({
   const styles = makeStyles(theme);
   return (
     <View style={styles.perfItem}>
-      <Text style={[styles.perfValue, valueColor ? { color: valueColor } : null]}>
+      <Text
+        style={[styles.perfValue, valueColor ? { color: valueColor } : null]}
+      >
         {value}
       </Text>
       <Text style={styles.perfLabel}>{label}</Text>

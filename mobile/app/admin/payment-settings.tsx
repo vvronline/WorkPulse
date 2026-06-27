@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Alert,
@@ -36,7 +37,7 @@ export default function PaymentSettingsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
 
@@ -50,25 +51,22 @@ export default function PaymentSettingsScreen() {
   const [isActive, setIsActive] = useState(false);
   const [configured, setConfigured] = useState(false);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    getPaymentConfig()
-      .then((r) => {
-        const c = r.data || {};
-        setApiKeyId((c.api_key_id as string) || "");
-        // Secrets come back masked/empty — keep field blank, only send when set.
-        setAccountNumber((c.account_number as string) || "");
-        setTransferMode((c.default_transfer_mode as string) || "IMPS");
-        setIsActive(!!c.is_active);
-        setConfigured(!!c.id || !!c.api_key_id);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+  const { data: record, isLoading: loading } = useQuery({
+    queryKey: ["admin", "paymentSettings"],
+    queryFn: async () => (await getPaymentConfig()).data,
+    enabled: true,
+  });
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!record) return;
+    const c = record;
+    setApiKeyId((c.api_key_id as string) || "");
+    // Secrets come back masked/empty — keep field blank, only send when set.
+    setAccountNumber((c.account_number as string) || "");
+    setTransferMode((c.default_transfer_mode as string) || "IMPS");
+    setIsActive(!!c.is_active);
+    setConfigured(!!c.id || !!c.api_key_id);
+  }, [record]);
 
   async function save() {
     if (!apiKeyId.trim() || !accountNumber.trim()) {
@@ -81,14 +79,18 @@ export default function PaymentSettingsScreen() {
         api_key_id: apiKeyId.trim(),
         ...(apiKeySecret.trim() ? { api_key_secret: apiKeySecret.trim() } : {}),
         account_number: accountNumber.trim(),
-        ...(webhookSecret.trim() ? { webhook_secret: webhookSecret.trim() } : {}),
+        ...(webhookSecret.trim()
+          ? { webhook_secret: webhookSecret.trim() }
+          : {}),
         default_transfer_mode: String(transferMode || "IMPS"),
         is_active: isActive,
       });
       Alert.alert("Saved", "Payment configuration saved");
       setApiKeySecret("");
       setWebhookSecret("");
-      load();
+      queryClient.invalidateQueries({
+        queryKey: ["admin", "paymentSettings"],
+      });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to save");
     } finally {
@@ -126,7 +128,10 @@ export default function PaymentSettingsScreen() {
   return (
     <ScrollView
       style={styles.screen}
-      contentContainerStyle={[styles.container, { paddingBottom: 48 + kbInset }]}
+      contentContainerStyle={[
+        styles.container,
+        { paddingBottom: 48 + kbInset },
+      ]}
     >
       <Stack.Screen options={{ title: "Payment Settings" }} />
 
@@ -137,7 +142,9 @@ export default function PaymentSettingsScreen() {
         </View>
         <Text style={styles.hint}>
           Configure the payout gateway used for salary disbursement.
-          {configured ? " A configuration already exists — secrets are hidden; leave secret fields blank to keep current values." : ""}
+          {configured
+            ? " A configuration already exists — secrets are hidden; leave secret fields blank to keep current values."
+            : ""}
         </Text>
 
         <Text style={styles.fieldLabel}>API Key ID</Text>
@@ -229,55 +236,55 @@ export default function PaymentSettingsScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { alignItems: "center", justifyContent: "center" },
-  container: { padding: 16, gap: 16 },
-  section: {
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusLg,
-    padding: 16,
-    gap: 10,
-  },
-  sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.text },
-  hint: { fontSize: 12, color: theme.textMuted, lineHeight: 17 },
-  fieldLabel: { fontSize: 12, color: theme.textSecondary, fontWeight: "500" },
-  input: {
-    backgroundColor: theme.inputBg,
-    borderWidth: 1,
-    borderColor: theme.inputBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: theme.text,
-    fontSize: 15,
-  },
-  toggleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 4,
-  },
-  toggleLabel: { fontSize: 14, color: theme.text },
-  saveBtn: {
-    backgroundColor: theme.primary,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 13,
-    alignItems: "center",
-    marginTop: 4,
-  },
-  saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  testBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    borderWidth: 1,
-    borderColor: theme.primary,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 11,
-  },
-  testBtnText: { color: theme.primary, fontSize: 13, fontWeight: "600" },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { alignItems: "center", justifyContent: "center" },
+    container: { padding: 16, gap: 16 },
+    section: {
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusLg,
+      padding: 16,
+      gap: 10,
+    },
+    sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+    sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.text },
+    hint: { fontSize: 12, color: theme.textMuted, lineHeight: 17 },
+    fieldLabel: { fontSize: 12, color: theme.textSecondary, fontWeight: "500" },
+    input: {
+      backgroundColor: theme.inputBg,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      color: theme.text,
+      fontSize: 15,
+    },
+    toggleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingVertical: 4,
+    },
+    toggleLabel: { fontSize: 14, color: theme.text },
+    saveBtn: {
+      backgroundColor: theme.primary,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 13,
+      alignItems: "center",
+      marginTop: 4,
+    },
+    saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+    testBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      borderWidth: 1,
+      borderColor: theme.primary,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 11,
+    },
+    testBtnText: { color: theme.primary, fontSize: 13, fontWeight: "600" },
+  });

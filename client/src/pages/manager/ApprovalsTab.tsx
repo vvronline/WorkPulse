@@ -1,5 +1,11 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { getApprovals, approveRequest, rejectRequest, bulkApproval } from "../../api";
+import React, { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  getApprovals,
+  approveRequest,
+  rejectRequest,
+  bulkApproval,
+} from "../../api";
 import ApprovalBadge from "./ApprovalBadge";
 import RequestDetails from "./RequestDetails";
 import s from "../Admin.module.css";
@@ -7,259 +13,258 @@ import sf from "../admin/AdminForms.module.css";
 import m from "../ManagerDashboard.module.css";
 
 interface ApprovalRow {
-    id: number | string;
-    type?: string;
-    status?: string;
-    created_at: string;
-    requester_avatar?: string;
-    requester_name?: string;
-    metadata?: Record<string, any> | null;
-    [key: string]: any;
+  id: number | string;
+  type?: string;
+  status?: string;
+  created_at: string;
+  requester_avatar?: string;
+  requester_name?: string;
+  metadata?: Record<string, any> | null;
+  [key: string]: any;
 }
 
+const EMPTY: ApprovalRow[] = [];
+
 export default function ApprovalsTab() {
-    const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
-    const [filter, setFilter] = useState("pending");
-    const [selected, setSelected] = useState<Set<number | string>>(new Set());
-    const [rejectId, setRejectId] = useState<number | string | null>(null);
-    const [rejectReason, setRejectReason] = useState("");
-    const [loading, setLoading] = useState(true);
-    const [processing, setProcessing] = useState<number | string | null>(null);
+  const queryClient = useQueryClient();
+  const [filter, setFilter] = useState("pending");
+  const [selected, setSelected] = useState<Set<number | string>>(new Set());
+  const [rejectId, setRejectId] = useState<number | string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [processing, setProcessing] = useState<number | string | null>(null);
 
-    const fetchApprovals = useCallback(() => {
-        setLoading(true);
-        getApprovals({ status: filter || undefined })
-            .then((r) => {
-                setApprovals(r.data as ApprovalRow[]);
-                setLoading(false);
-                setSelected(new Set());
-            })
-            .catch(() => setLoading(false));
-    }, [filter]);
+  const { data: approvals = EMPTY, isLoading: loading } = useQuery({
+    queryKey: ["manager", "approvals", filter],
+    queryFn: async () =>
+      (await getApprovals({ status: filter || undefined }))
+        .data as ApprovalRow[],
+  });
 
-    useEffect(() => {
-        fetchApprovals();
-    }, [fetchApprovals]);
+  const refreshApprovals = () => {
+    queryClient.invalidateQueries({ queryKey: ["manager", "approvals"] });
+    setSelected(new Set());
+  };
 
-    const handleApprove = async (id: number | string) => {
-        if (processing) return;
-        setProcessing(id);
-        try {
-            await approveRequest(id as any);
-            fetchApprovals();
-        } catch (err) {
-            console.error("Approve failed:", err);
-        } finally {
-            setProcessing(null);
-        }
-    };
+  const handleApprove = async (id: number | string) => {
+    if (processing) return;
+    setProcessing(id);
+    try {
+      await approveRequest(id as any);
+      refreshApprovals();
+    } catch (err) {
+      console.error("Approve failed:", err);
+    } finally {
+      setProcessing(null);
+    }
+  };
 
-    const handleReject = async () => {
-        if (!rejectId || processing) return;
-        setProcessing(rejectId);
-        try {
-            await rejectRequest(rejectId as any, rejectReason);
-            setRejectId(null);
-            setRejectReason("");
-            fetchApprovals();
-        } catch (err) {
-            console.error("Reject failed:", err);
-        } finally {
-            setProcessing(null);
-        }
-    };
+  const handleReject = async () => {
+    if (!rejectId || processing) return;
+    setProcessing(rejectId);
+    try {
+      await rejectRequest(rejectId as any, rejectReason);
+      setRejectId(null);
+      setRejectReason("");
+      refreshApprovals();
+    } catch (err) {
+      console.error("Reject failed:", err);
+    } finally {
+      setProcessing(null);
+    }
+  };
 
-    const handleBulk = async (action: string) => {
-        if (selected.size === 0 || processing) return;
-        setProcessing("bulk");
-        try {
-            await bulkApproval(Array.from(selected) as any, action);
-            fetchApprovals();
-        } catch (err) {
-            console.error("Bulk action failed:", err);
-        } finally {
-            setProcessing(null);
-        }
-    };
+  const handleBulk = async (action: string) => {
+    if (selected.size === 0 || processing) return;
+    setProcessing("bulk");
+    try {
+      await bulkApproval(Array.from(selected) as any, action);
+      refreshApprovals();
+    } catch (err) {
+      console.error("Bulk action failed:", err);
+    } finally {
+      setProcessing(null);
+    }
+  };
 
-    const toggleSelect = (id: number | string) => {
-        const next = new Set(selected);
-        next.has(id) ? next.delete(id) : next.add(id);
-        setSelected(next);
-    };
+  const toggleSelect = (id: number | string) => {
+    const next = new Set(selected);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setSelected(next);
+  };
 
-    const toggleAll = () => {
-        if (selected.size === approvals.length) setSelected(new Set());
-        else setSelected(new Set(approvals.map((a) => a.id)));
-    };
+  const toggleAll = () => {
+    if (selected.size === approvals.length) setSelected(new Set());
+    else setSelected(new Set(approvals.map((a) => a.id)));
+  };
 
-    return (
-        <>
-            <div className={s.toolbar}>
-                <select
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                    className={m["inline-input"]}
-                >
-                    <option value="pending">Pending</option>
-                    <option value="approved">Approved</option>
-                    <option value="rejected">Rejected</option>
-                    <option value="">All</option>
-                </select>
-                {filter === "pending" && selected.size > 0 && (
-                    <div className={m["btn-row"]}>
-                        <button
-                            className={s.btnPrimary}
-                            onClick={() => handleBulk("approve")}
-                            disabled={!!processing}
-                        >
-                            Approve ({selected.size})
-                        </button>
-                        <button
-                            className={s.btnDanger}
-                            onClick={() => handleBulk("reject")}
-                            disabled={!!processing}
-                        >
-                            Reject ({selected.size})
-                        </button>
-                    </div>
+  return (
+    <>
+      <div className={s.toolbar}>
+        <select
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className={m["inline-input"]}
+        >
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+          <option value="">All</option>
+        </select>
+        {filter === "pending" && selected.size > 0 && (
+          <div className={m["btn-row"]}>
+            <button
+              className={s.btnPrimary}
+              onClick={() => handleBulk("approve")}
+              disabled={!!processing}
+            >
+              Approve ({selected.size})
+            </button>
+            <button
+              className={s.btnDanger}
+              onClick={() => handleBulk("reject")}
+              disabled={!!processing}
+            >
+              Reject ({selected.size})
+            </button>
+          </div>
+        )}
+      </div>
+
+      {loading ? (
+        <p>Loading...</p>
+      ) : (
+        <table className={s.table}>
+          <thead>
+            <tr>
+              {filter === "pending" && (
+                <th>
+                  <input
+                    type="checkbox"
+                    checked={
+                      selected.size === approvals.length && approvals.length > 0
+                    }
+                    onChange={toggleAll}
+                  />
+                </th>
+              )}
+              <th>Type</th>
+              <th>Requester</th>
+              <th>Details</th>
+              <th>Date</th>
+              <th>Status</th>
+              {filter === "pending" && <th>Actions</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {approvals.map((a) => (
+              <tr key={a.id}>
+                {filter === "pending" && (
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(a.id)}
+                      onChange={() => toggleSelect(a.id)}
+                    />
+                  </td>
                 )}
-            </div>
-
-            {loading ? (
-                <p>Loading...</p>
-            ) : (
-                <table className={s.table}>
-                    <thead>
-                        <tr>
-                            {filter === "pending" && (
-                                <th>
-                                    <input
-                                        type="checkbox"
-                                        checked={
-                                            selected.size === approvals.length &&
-                                            approvals.length > 0
-                                        }
-                                        onChange={toggleAll}
-                                    />
-                                </th>
-                            )}
-                            <th>Type</th>
-                            <th>Requester</th>
-                            <th>Details</th>
-                            <th>Date</th>
-                            <th>Status</th>
-                            {filter === "pending" && <th>Actions</th>}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {approvals.map((a) => (
-                            <tr key={a.id}>
-                                {filter === "pending" && (
-                                    <td>
-                                        <input
-                                            type="checkbox"
-                                            checked={selected.has(a.id)}
-                                            onChange={() => toggleSelect(a.id)}
-                                        />
-                                    </td>
-                                )}
-                                <td>
-                                    <span className={s.badgeRole}>{a.type?.replace("_", " ")}</span>
-                                </td>
-                                <td>
-                                    <div className={s.userCell}>
-                                        {a.requester_avatar ? (
-                                            <img
-                                                src={a.requester_avatar}
-                                                className={m["avatar-sm-round"]}
-                                                alt=""
-                                            />
-                                        ) : (
-                                            <span className={s.initials}>
-                                                {a.requester_name?.charAt(0)}
-                                            </span>
-                                        )}
-                                        <div>
-                                            <div className={s.userName}>{a.requester_name}</div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td className={m["cell-details"]}>
-                                    <RequestDetails request={a} />
-                                </td>
-                                <td className={m["cell-sm"]}>
-                                    {new Date(a.created_at).toLocaleDateString()}
-                                </td>
-                                <td>
-                                    <ApprovalBadge status={a.status} />
-                                </td>
-                                {filter === "pending" && (
-                                    <td>
-                                        <div className={s.actions}>
-                                            <button
-                                                className={`${s.btnSmall} ${s.btnSuccess}`}
-                                                onClick={() => handleApprove(a.id)}
-                                                disabled={!!processing}
-                                            >
-                                                {processing === a.id ? "…" : "✓"}
-                                            </button>
-                                            <button
-                                                className={`${s.btnSmall} ${s.btnDanger}`}
-                                                onClick={() => setRejectId(a.id)}
-                                                disabled={!!processing}
-                                            >
-                                                ✗
-                                            </button>
-                                        </div>
-                                    </td>
-                                )}
-                            </tr>
-                        ))}
-                        {approvals.length === 0 && (
-                            <tr>
-                                <td colSpan={7} className={m["empty-cell"]}>
-                                    No {filter || ""} requests
-                                </td>
-                            </tr>
-                        )}
-                    </tbody>
-                </table>
-            )}
-
-            {rejectId && (
-                <div className={sf.modalOverlay} onClick={() => setRejectId(null)}>
-                    <div className={sf.modal} onClick={(e) => e.stopPropagation()}>
-                        <h3>Reject Request</h3>
-                        <div className={sf.formGroup}>
-                            <label>Reason (optional)</label>
-                            <textarea
-                                value={rejectReason}
-                                onChange={(e) => setRejectReason(e.target.value)}
-                                rows={3}
-                                className={m["textarea-input"]}
-                                placeholder="Provide a reason..."
-                            />
-                        </div>
-                        <div className={sf.formActions}>
-                            <button
-                                className={sf.btnCancel}
-                                onClick={() => setRejectId(null)}
-                                disabled={!!processing}
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                className={s.btnDanger}
-                                onClick={handleReject}
-                                disabled={!!processing}
-                            >
-                                {processing ? "Rejecting…" : "Reject"}
-                            </button>
-                        </div>
+                <td>
+                  <span className={s.badgeRole}>
+                    {a.type?.replace("_", " ")}
+                  </span>
+                </td>
+                <td>
+                  <div className={s.userCell}>
+                    {a.requester_avatar ? (
+                      <img
+                        src={a.requester_avatar}
+                        className={m["avatar-sm-round"]}
+                        alt=""
+                      />
+                    ) : (
+                      <span className={s.initials}>
+                        {a.requester_name?.charAt(0)}
+                      </span>
+                    )}
+                    <div>
+                      <div className={s.userName}>{a.requester_name}</div>
                     </div>
-                </div>
+                  </div>
+                </td>
+                <td className={m["cell-details"]}>
+                  <RequestDetails request={a} />
+                </td>
+                <td className={m["cell-sm"]}>
+                  {new Date(a.created_at).toLocaleDateString()}
+                </td>
+                <td>
+                  <ApprovalBadge status={a.status} />
+                </td>
+                {filter === "pending" && (
+                  <td>
+                    <div className={s.actions}>
+                      <button
+                        className={`${s.btnSmall} ${s.btnSuccess}`}
+                        onClick={() => handleApprove(a.id)}
+                        disabled={!!processing}
+                      >
+                        {processing === a.id ? "…" : "✓"}
+                      </button>
+                      <button
+                        className={`${s.btnSmall} ${s.btnDanger}`}
+                        onClick={() => setRejectId(a.id)}
+                        disabled={!!processing}
+                      >
+                        ✗
+                      </button>
+                    </div>
+                  </td>
+                )}
+              </tr>
+            ))}
+            {approvals.length === 0 && (
+              <tr>
+                <td colSpan={7} className={m["empty-cell"]}>
+                  No {filter || ""} requests
+                </td>
+              </tr>
             )}
-        </>
-    );
+          </tbody>
+        </table>
+      )}
+
+      {rejectId && (
+        <div className={sf.modalOverlay} onClick={() => setRejectId(null)}>
+          <div className={sf.modal} onClick={(e) => e.stopPropagation()}>
+            <h3>Reject Request</h3>
+            <div className={sf.formGroup}>
+              <label>Reason (optional)</label>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                rows={3}
+                className={m["textarea-input"]}
+                placeholder="Provide a reason..."
+              />
+            </div>
+            <div className={sf.formActions}>
+              <button
+                className={sf.btnCancel}
+                onClick={() => setRejectId(null)}
+                disabled={!!processing}
+              >
+                Cancel
+              </button>
+              <button
+                className={s.btnDanger}
+                onClick={handleReject}
+                disabled={!!processing}
+              >
+                {processing ? "Rejecting…" : "Reject"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }

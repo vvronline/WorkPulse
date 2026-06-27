@@ -1,9 +1,7 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState } from "react";
-import { ActivityIndicator,
+  ActivityIndicator,
   Image,
   Modal,
   Pressable,
@@ -11,7 +9,7 @@ import { ActivityIndicator,
   Text,
   TextInput,
   TouchableOpacity,
-  View
+  View,
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
@@ -74,12 +72,21 @@ import { makeStyles } from "./profile.styles";
 function initials(name?: string) {
   if (!name) return "?";
   const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase().slice(0, 2);
+  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || ""))
+    .toUpperCase()
+    .slice(0, 2);
 }
 
 /* ─── Status metadata (mirrors client/src/status/constants.ts) ─── */
 
-type StatusGlyph = "check" | "dot" | "minus" | "clock" | "phone" | "video" | "ring";
+type StatusGlyph =
+  | "check"
+  | "dot"
+  | "minus"
+  | "clock"
+  | "phone"
+  | "video"
+  | "ring";
 
 type StatusMetaEntry = {
   label: string;
@@ -90,28 +97,80 @@ type StatusMetaEntry = {
 };
 
 const STATUS_META: Record<string, StatusMetaEntry> = {
-  available: { label: "Available", color: "#22c55e", glyph: "check", pickable: true },
+  available: {
+    label: "Available",
+    color: "#22c55e",
+    glyph: "check",
+    pickable: true,
+  },
   busy: { label: "Busy", color: "#ef4444", glyph: "dot", pickable: true },
-  dnd: { label: "Do Not Disturb", color: "#ef4444", glyph: "minus", pickable: true },
+  dnd: {
+    label: "Do Not Disturb",
+    color: "#ef4444",
+    glyph: "minus",
+    pickable: true,
+  },
   brb: { label: "Away", color: "#f59e0b", glyph: "clock", pickable: true },
-  away: { label: "Away (idle)", color: "#f59e0b", glyph: "clock", pickable: false, auto: true },
-  in_call: { label: "In a Call", color: "#ef4444", glyph: "phone", pickable: false, auto: true },
-  in_meeting: { label: "In a Meeting", color: "#0ea5e9", glyph: "video", pickable: false, auto: true },
-  offline: { label: "Offline", color: "#64748b", glyph: "ring", pickable: false },
+  away: {
+    label: "Away (idle)",
+    color: "#f59e0b",
+    glyph: "clock",
+    pickable: false,
+    auto: true,
+  },
+  in_call: {
+    label: "In a Call",
+    color: "#ef4444",
+    glyph: "phone",
+    pickable: false,
+    auto: true,
+  },
+  in_meeting: {
+    label: "In a Meeting",
+    color: "#0ea5e9",
+    glyph: "video",
+    pickable: false,
+    auto: true,
+  },
+  offline: {
+    label: "Offline",
+    color: "#64748b",
+    glyph: "ring",
+    pickable: false,
+  },
 };
 
 const PICKABLE: ManualStatus[] = ["available", "busy", "dnd", "brb"];
 
-function StatusGlyphIcon({ glyph, size = 9, color = "#fff" }: { glyph: StatusGlyph; size?: number; color?: string }) {
-  if (glyph === "check") return <Check size={size} color={color} strokeWidth={3} />;
-  if (glyph === "minus") return <Minus size={size} color={color} strokeWidth={3} />;
-  if (glyph === "clock") return <Clock3 size={size} color={color} strokeWidth={2.6} />;
-  if (glyph === "phone") return <Phone size={size} color={color} strokeWidth={2.6} />;
-  if (glyph === "video") return <Video size={size} color={color} strokeWidth={2.6} />;
+function StatusGlyphIcon({
+  glyph,
+  size = 9,
+  color = "#fff",
+}: {
+  glyph: StatusGlyph;
+  size?: number;
+  color?: string;
+}) {
+  if (glyph === "check")
+    return <Check size={size} color={color} strokeWidth={3} />;
+  if (glyph === "minus")
+    return <Minus size={size} color={color} strokeWidth={3} />;
+  if (glyph === "clock")
+    return <Clock3 size={size} color={color} strokeWidth={2.6} />;
+  if (glyph === "phone")
+    return <Phone size={size} color={color} strokeWidth={2.6} />;
+  if (glyph === "video")
+    return <Video size={size} color={color} strokeWidth={2.6} />;
   return null;
 }
 
-function StatusDot({ meta, size = 14 }: { meta: StatusMetaEntry; size?: number }) {
+function StatusDot({
+  meta,
+  size = 14,
+}: {
+  meta: StatusMetaEntry;
+  size?: number;
+}) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const isRing = meta.glyph === "ring";
@@ -129,7 +188,9 @@ function StatusDot({ meta, size = 14 }: { meta: StatusMetaEntry; size?: number }
         },
       ]}
     >
-      {!isRing && <StatusGlyphIcon glyph={meta.glyph} size={Math.round(size * 0.55)} />}
+      {!isRing && (
+        <StatusGlyphIcon glyph={meta.glyph} size={Math.round(size * 0.55)} />
+      )}
     </View>
   );
 }
@@ -158,8 +219,16 @@ export default function Profile() {
   const [uploading, setUploading] = useState(false);
 
   const [status, setStatus] = useState<StatusPayload | null>(null);
-  const [tracker, setTracker] = useState<TrackerStatus | null>(null);
-  const [face, setFace] = useState<FaceStatus | null>(null);
+
+  const { data: tracker = null } = useQuery({
+    queryKey: ["profile", "tracker"],
+    queryFn: async (): Promise<TrackerStatus> =>
+      (await getTrackerStatus()).data,
+  });
+  const { data: face = null } = useQuery({
+    queryKey: ["profile", "face"],
+    queryFn: async (): Promise<FaceStatus> => (await getFaceStatus()).data,
+  });
 
   const loadStatus = useCallback(async () => {
     try {
@@ -172,12 +241,6 @@ export default function Profile() {
 
   useEffect(() => {
     loadStatus();
-    getTrackerStatus()
-      .then((r) => setTracker(r.data))
-      .catch(() => {});
-    getFaceStatus()
-      .then((r) => setFace(r.data))
-      .catch(() => {});
   }, [loadStatus]);
 
   // Keep status live: subscribe to the unified `user_status` WS event so the
@@ -227,13 +290,22 @@ export default function Profile() {
     try {
       if (biometricEnrolled) {
         await disableBiometric();
-        alert(`${biometricLabel} disabled`, "You'll sign in with your password next time.");
+        alert(
+          `${biometricLabel} disabled`,
+          "You'll sign in with your password next time.",
+        );
       } else {
         await enableBiometric();
-        alert(`${biometricLabel} enabled`, `You can now sign in with ${biometricLabel} on this device.`);
+        alert(
+          `${biometricLabel} enabled`,
+          `You can now sign in with ${biometricLabel} on this device.`,
+        );
       }
     } catch (e: any) {
-      alert("Error", e?.response?.data?.error || `Couldn't update ${biometricLabel} login.`);
+      alert(
+        "Error",
+        e?.response?.data?.error || `Couldn't update ${biometricLabel} login.`,
+      );
     } finally {
       setBiometricBusy(false);
     }
@@ -324,7 +396,8 @@ export default function Profile() {
 
   async function toggleInvisible() {
     setStatusOpen(false);
-    const next = status?.presencePreference === "invisible" ? "auto" : "invisible";
+    const next =
+      status?.presencePreference === "invisible" ? "auto" : "invisible";
     try {
       const { data } = await setPresencePreference(next);
       setStatus(data);
@@ -372,7 +445,11 @@ export default function Profile() {
           <View style={styles.avatarStatus}>
             <StatusDot meta={headerMeta} size={20} />
           </View>
-          <Pressable style={styles.avatarEdit} onPress={pickAvatar} disabled={uploading}>
+          <Pressable
+            style={styles.avatarEdit}
+            onPress={pickAvatar}
+            disabled={uploading}
+          >
             {uploading ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
@@ -387,7 +464,12 @@ export default function Profile() {
 
         {/* Status + work-mode badges */}
         <View style={styles.badges}>
-          <View style={[styles.statusBadge, { borderColor: headerMeta.color + "55" }]}>
+          <View
+            style={[
+              styles.statusBadge,
+              { borderColor: headerMeta.color + "55" },
+            ]}
+          >
             <StatusDot meta={headerMeta} size={12} />
             <Text style={styles.statusBadgeText}>
               {isInvisible ? "Appearing Offline" : headerMeta.label}
@@ -409,7 +491,10 @@ export default function Profile() {
       </View>
 
       {/* Status Picker */}
-      <Pressable style={styles.statusTrigger} onPress={() => setStatusOpen(true)}>
+      <Pressable
+        style={styles.statusTrigger}
+        onPress={() => setStatusOpen(true)}
+      >
         <StatusDot meta={baseMeta} size={16} />
         <Text style={styles.statusTriggerLabel}>
           {isInvisible ? "Appear Offline" : baseMeta.label}
@@ -476,7 +561,11 @@ export default function Profile() {
         <Text style={styles.versionText}>v{getCurrentVersion()}</Text>
       </Pressable>
 
-      <TouchableOpacity style={styles.logout} onPress={onLogout} activeOpacity={0.85}>
+      <TouchableOpacity
+        style={styles.logout}
+        onPress={onLogout}
+        activeOpacity={0.85}
+      >
         <LogOut size={16} color={theme.danger} />
         <Text style={styles.logoutText}>Sign Out</Text>
       </TouchableOpacity>
@@ -605,7 +694,10 @@ function EditProfileModal({
   async function save() {
     setBusy(true);
     try {
-      await updateProfile({ full_name: name.trim(), username: username.trim() });
+      await updateProfile({
+        full_name: name.trim(),
+        username: username.trim(),
+      });
       if (email.trim() && email.trim() !== initialEmail) {
         await updateEmail(email.trim());
       }
@@ -651,7 +743,11 @@ function EditProfileModal({
         onPress={save}
         disabled={busy}
       >
-        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>Save</Text>}
+        {busy ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.submitText}>Save</Text>
+        )}
       </Pressable>
       {dialog}
     </ModalShell>
@@ -722,7 +818,11 @@ function ChangePasswordModal({
         onPress={save}
         disabled={busy}
       >
-        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>Update</Text>}
+        {busy ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.submitText}>Update</Text>
+        )}
       </Pressable>
       {dialog}
     </ModalShell>
@@ -789,19 +889,19 @@ function NotificationSoundsModal({
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_NOTIFICATION_PREFS);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [saving, setSaving] = useState(false);
   const previewPlayer = useAudioPlayer();
 
-  useEffect(() => {
-    if (!visible) return;
-    setLoading(true);
-    getNotificationPrefs()
-      .then((r) => setPrefs({ ...DEFAULT_NOTIFICATION_PREFS, ...(r.data || {}) }))
-      .catch(() => setPrefs(DEFAULT_NOTIFICATION_PREFS))
-      .finally(() => setLoading(false));
-  }, [visible]);
+  const { data, isLoading: loading } = useQuery({
+    queryKey: ["profile", "notificationPrefs"],
+    queryFn: async (): Promise<NotificationPrefs> => ({
+      ...DEFAULT_NOTIFICATION_PREFS,
+      ...((await getNotificationPrefs()).data || {}),
+    }),
+    enabled: visible,
+  });
+  const prefs = data ?? DEFAULT_NOTIFICATION_PREFS;
 
   useEffect(() => {
     if (visible) return;
@@ -825,11 +925,14 @@ function NotificationSoundsModal({
 
   async function update(patch: NotificationPrefs) {
     const merged = { ...prefs, ...patch };
-    setPrefs(merged);
+    queryClient.setQueryData(["profile", "notificationPrefs"], merged);
     setSaving(true);
     try {
       const { data } = await saveNotificationPrefs(patch);
-      setPrefs(data || merged);
+      queryClient.setQueryData(
+        ["profile", "notificationPrefs"],
+        data || merged,
+      );
     } catch {
       /* ignore */
     } finally {
@@ -859,9 +962,15 @@ function NotificationSoundsModal({
   return (
     <ModalShell title="Notification Sounds" visible={visible} onClose={onClose}>
       {loading ? (
-        <ActivityIndicator color={theme.primary} style={{ marginVertical: 24 }} />
+        <ActivityIndicator
+          color={theme.primary}
+          style={{ marginVertical: 24 }}
+        />
       ) : (
-        <ScrollView style={styles.soundScroll} contentContainerStyle={styles.soundContent}>
+        <ScrollView
+          style={styles.soundScroll}
+          contentContainerStyle={styles.soundContent}
+        >
           <Pressable
             style={styles.toggleRow}
             onPress={() => update({ muteAll: !prefs.muteAll })}
@@ -877,28 +986,50 @@ function NotificationSoundsModal({
             <TonePickerRow
               label="Incoming call ringtone"
               presets={RINGTONES}
-              value={prefs.ringtone || DEFAULT_NOTIFICATION_PREFS.ringtone || "classic"}
+              value={
+                prefs.ringtone ||
+                DEFAULT_NOTIFICATION_PREFS.ringtone ||
+                "classic"
+              }
               onChange={(id) => {
                 update({ ringtone: id });
                 preview("ringtone", id);
               }}
               onPreview={() =>
-                preview("ringtone", prefs.ringtone || DEFAULT_NOTIFICATION_PREFS.ringtone || "classic")
+                preview(
+                  "ringtone",
+                  prefs.ringtone ||
+                    DEFAULT_NOTIFICATION_PREFS.ringtone ||
+                    "classic",
+                )
               }
-              previewDisabled={!!prefs.muteAll || (prefs.ringtone || "classic") === "none"}
+              previewDisabled={
+                !!prefs.muteAll || (prefs.ringtone || "classic") === "none"
+              }
             />
             <TonePickerRow
               label="Outgoing call tone"
               presets={OUTGOING_TONES}
-              value={prefs.outgoingTone || DEFAULT_NOTIFICATION_PREFS.outgoingTone || "ringback"}
+              value={
+                prefs.outgoingTone ||
+                DEFAULT_NOTIFICATION_PREFS.outgoingTone ||
+                "ringback"
+              }
               onChange={(id) => {
                 update({ outgoingTone: id });
                 preview("outgoing", id);
               }}
               onPreview={() =>
-                preview("outgoing", prefs.outgoingTone || DEFAULT_NOTIFICATION_PREFS.outgoingTone || "ringback")
+                preview(
+                  "outgoing",
+                  prefs.outgoingTone ||
+                    DEFAULT_NOTIFICATION_PREFS.outgoingTone ||
+                    "ringback",
+                )
               }
-              previewDisabled={!!prefs.muteAll || (prefs.outgoingTone || "ringback") === "none"}
+              previewDisabled={
+                !!prefs.muteAll || (prefs.outgoingTone || "ringback") === "none"
+              }
             />
           </View>
 
@@ -907,41 +1038,74 @@ function NotificationSoundsModal({
             <TonePickerRow
               label="New message"
               presets={MESSAGE_TONES}
-              value={prefs.messageTone || DEFAULT_NOTIFICATION_PREFS.messageTone || "ding"}
+              value={
+                prefs.messageTone ||
+                DEFAULT_NOTIFICATION_PREFS.messageTone ||
+                "ding"
+              }
               onChange={(id) => {
                 update({ messageTone: id });
                 preview("message", id);
               }}
               onPreview={() =>
-                preview("message", prefs.messageTone || DEFAULT_NOTIFICATION_PREFS.messageTone || "ding")
+                preview(
+                  "message",
+                  prefs.messageTone ||
+                    DEFAULT_NOTIFICATION_PREFS.messageTone ||
+                    "ding",
+                )
               }
-              previewDisabled={!!prefs.muteAll || (prefs.messageTone || "ding") === "none"}
+              previewDisabled={
+                !!prefs.muteAll || (prefs.messageTone || "ding") === "none"
+              }
             />
             <TonePickerRow
               label="Mention / @-tag"
               presets={MENTION_TONES}
-              value={prefs.mentionTone || DEFAULT_NOTIFICATION_PREFS.mentionTone || "mention"}
+              value={
+                prefs.mentionTone ||
+                DEFAULT_NOTIFICATION_PREFS.mentionTone ||
+                "mention"
+              }
               onChange={(id) => {
                 update({ mentionTone: id });
                 preview("mention", id);
               }}
               onPreview={() =>
-                preview("mention", prefs.mentionTone || DEFAULT_NOTIFICATION_PREFS.mentionTone || "mention")
+                preview(
+                  "mention",
+                  prefs.mentionTone ||
+                    DEFAULT_NOTIFICATION_PREFS.mentionTone ||
+                    "mention",
+                )
               }
-              previewDisabled={!!prefs.muteAll || (prefs.mentionTone || "mention") === "none"}
+              previewDisabled={
+                !!prefs.muteAll || (prefs.mentionTone || "mention") === "none"
+              }
             />
             <TonePickerRow
               label="Reaction"
               presets={REACTION_TONES}
-              value={prefs.reactionTone || DEFAULT_NOTIFICATION_PREFS.reactionTone || "subtle"}
+              value={
+                prefs.reactionTone ||
+                DEFAULT_NOTIFICATION_PREFS.reactionTone ||
+                "subtle"
+              }
               onChange={(id) => {
                 update({ reactionTone: id });
                 preview("reaction", id);
               }}
               onPreview={() =>
-                preview("reaction", prefs.reactionTone || DEFAULT_NOTIFICATION_PREFS.reactionTone || "subtle")
+                preview(
+                  "reaction",
+                  prefs.reactionTone ||
+                    DEFAULT_NOTIFICATION_PREFS.reactionTone ||
+                    "subtle",
+                )
               }
-              previewDisabled={!!prefs.muteAll || (prefs.reactionTone || "subtle") === "none"}
+              previewDisabled={
+                !!prefs.muteAll || (prefs.reactionTone || "subtle") === "none"
+              }
             />
           </View>
 
@@ -949,20 +1113,37 @@ function NotificationSoundsModal({
             <Text style={styles.sectionTitle}>Behavior</Text>
             <Pressable
               style={styles.toggleRow}
-              onPress={() => update({ playWhenFocused: !prefs.playWhenFocused })}
+              onPress={() =>
+                update({ playWhenFocused: !prefs.playWhenFocused })
+              }
             >
-              <Text style={styles.actionText}>Play sounds when app is focused</Text>
-              <View style={[styles.switch, prefs.playWhenFocused && styles.switchOn]}>
-                <View style={[styles.knob, prefs.playWhenFocused && styles.knobOn]} />
+              <Text style={styles.actionText}>
+                Play sounds when app is focused
+              </Text>
+              <View
+                style={[
+                  styles.switch,
+                  prefs.playWhenFocused && styles.switchOn,
+                ]}
+              >
+                <View
+                  style={[styles.knob, prefs.playWhenFocused && styles.knobOn]}
+                />
               </View>
             </Pressable>
             <Pressable
               style={styles.toggleRow}
               onPress={() => update({ playOnSend: !prefs.playOnSend })}
             >
-              <Text style={styles.actionText}>Play sound when sending messages</Text>
-              <View style={[styles.switch, prefs.playOnSend && styles.switchOn]}>
-                <View style={[styles.knob, prefs.playOnSend && styles.knobOn]} />
+              <Text style={styles.actionText}>
+                Play sound when sending messages
+              </Text>
+              <View
+                style={[styles.switch, prefs.playOnSend && styles.switchOn]}
+              >
+                <View
+                  style={[styles.knob, prefs.playOnSend && styles.knobOn]}
+                />
               </View>
             </Pressable>
           </View>
@@ -1004,13 +1185,22 @@ function TonePickerRow({
         <Text style={styles.toneLabel}>{label}</Text>
         {onPreview ? (
           <Pressable
-            style={[styles.previewBtn, previewDisabled && styles.previewBtnDisabled]}
+            style={[
+              styles.previewBtn,
+              previewDisabled && styles.previewBtnDisabled,
+            ]}
             onPress={onPreview}
             disabled={previewDisabled}
           >
-            <Play size={14} color={previewDisabled ? theme.textMuted : theme.primaryLight} />
+            <Play
+              size={14}
+              color={previewDisabled ? theme.textMuted : theme.primaryLight}
+            />
             <Text
-              style={[styles.previewBtnText, previewDisabled && styles.previewBtnTextDisabled]}
+              style={[
+                styles.previewBtnText,
+                previewDisabled && styles.previewBtnTextDisabled,
+              ]}
             >
               Preview
             </Text>
@@ -1052,7 +1242,12 @@ function ModalShell({
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
       <View style={styles.modalOverlay}>
         <View style={styles.modalCard}>
           <View style={styles.modalHeader}>

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Alert,
@@ -40,6 +41,10 @@ import {
 import { API_BASE_URL } from "../../src/config";
 import { getToken } from "../../src/auth/tokenStore";
 
+const EMPTY_PERIODS: DropdownOption[] = [];
+const EMPTY_SLIPS: SalarySlip[] = [];
+const EMPTY_DISBURSEMENTS: Disbursement[] = [];
+
 const STATUS_COLORS: Record<string, string> = {
   draft: "#f59e0b",
   published: "#10b981",
@@ -60,78 +65,92 @@ function fmtMoney(v?: number | string | null): string {
 export default function SalarySlipsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [periods, setPeriods] = useState<DropdownOption[]>([]);
+  const queryClient = useQueryClient();
   const [periodId, setPeriodId] = useState<string | number | null>(null);
-  const [slips, setSlips] = useState<SalarySlip[]>([]);
-  const [disbursements, setDisbursements] = useState<Disbursement[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [slipsLoading, setSlipsLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    getPayPeriods()
-      .then((r) => {
-        const arr = Array.isArray(r.data) ? r.data : [];
-        // Payroll can only run against a LOCKED period — the server returns a
-        // 400 otherwise, which surfaced as a confusing failure. Only show
-        // locked periods so generation always has a valid target.
-        const locked = arr.filter((p) => p.is_locked || (p as any).locked_by);
-        setPeriods(locked.map((p) => ({ value: p.id, label: p.label })));
-        if (locked[0]) setPeriodId(locked[0].id);
-      })
-      .catch((e: any) =>
-        setError(e?.response?.data?.error || "Failed to load pay periods"),
-      )
-      .finally(() => setLoading(false));
-  }, []);
+  const {
+    data: periodsData,
+    isLoading: loading,
+    isError: periodsIsError,
+    error: periodsErr,
+  } = useQuery({
+    queryKey: ["admin", "salarySlipPeriods"],
+    queryFn: async () => {
+      const r = await getPayPeriods();
+      const arr = Array.isArray(r.data) ? r.data : [];
+      // Payroll can only run against a LOCKED period — the server returns a
+      // 400 otherwise, which surfaced as a confusing failure. Only show
+      // locked periods so generation always has a valid target.
+      const locked = arr.filter((p) => p.is_locked || (p as any).locked_by);
+      return {
+        periods: locked.map((p) => ({ value: p.id, label: p.label })),
+        firstId: locked[0]?.id ?? null,
+      };
+    },
+  });
+  const periods = periodsData?.periods ?? EMPTY_PERIODS;
 
-  const loadSlips = useCallback(() => {
-    if (!periodId) {
-      setSlips([]);
-      setDisbursements([]);
-      return;
+  // Auto-select the first locked period once, matching the old load() behavior.
+  useEffect(() => {
+    if (periodId == null && periodsData?.firstId != null) {
+      setPeriodId(periodsData.firstId);
     }
-    setSlipsLoading(true);
-    setError(null);
-    Promise.allSettled([
-      getSalarySlips({ pay_period_id: String(periodId) }),
-      getDisbursements({ pay_period_id: String(periodId) }),
-    ])
-      .then(([slipR, disbR]) => {
-        if (slipR.status === "fulfilled")
-          setSlips(Array.isArray(slipR.value.data) ? slipR.value.data : []);
-        else {
-          setSlips([]);
-          setError(
-            (slipR.reason as any)?.response?.data?.error ||
-              "Failed to load slips",
-          );
-        }
-        if (disbR.status === "fulfilled")
-          setDisbursements(
-            Array.isArray(disbR.value.data) ? disbR.value.data : [],
-          );
-        else setDisbursements([]);
-      })
-      .finally(() => setSlipsLoading(false));
-  }, [periodId]);
+  }, [periodId, periodsData?.firstId]);
 
-  useEffect(() => {
-    loadSlips();
-  }, [loadSlips]);
+  const { data: slipsData, isLoading: slipsQueryLoading } = useQuery({
+    queryKey: ["admin", "salarySlips", periodId],
+    enabled: !!periodId,
+    queryFn: async () => {
+      const [slipR, disbR] = await Promise.allSettled([
+        getSalarySlips({ pay_period_id: String(periodId) }),
+        getDisbursements({ pay_period_id: String(periodId) }),
+      ]);
+      let slips: SalarySlip[] = EMPTY_SLIPS;
+      let loadError: string | null = null;
+      if (slipR.status === "fulfilled")
+        slips = Array.isArray(slipR.value.data)
+          ? slipR.value.data
+          : EMPTY_SLIPS;
+      else
+        loadError =
+          (slipR.reason as any)?.response?.data?.error ||
+          "Failed to load slips";
+      const disbursements =
+        disbR.status === "fulfilled" && Array.isArray(disbR.value.data)
+          ? disbR.value.data
+          : EMPTY_DISBURSEMENTS;
+      return { slips, disbursements, loadError };
+    },
+  });
+  const slips = slipsData?.slips ?? EMPTY_SLIPS;
+  const disbursements = slipsData?.disbursements ?? EMPTY_DISBURSEMENTS;
+  const slipsLoading = !!periodId && slipsQueryLoading;
+
+  const periodsError = periodsIsError
+    ? (periodsErr as any)?.response?.data?.error || "Failed to load pay periods"
+    : null;
+  const error = mutationError ?? slipsData?.loadError ?? periodsError ?? null;
+
+  function refreshSlips() {
+    if (periodId)
+      queryClient.invalidateQueries({
+        queryKey: ["admin", "salarySlips", periodId],
+      });
+  }
 
   async function generate() {
     if (!periodId) return;
     setBusy(true);
-    setError(null);
+    setMutationError(null);
     setMessage(null);
     try {
       const r = await runPayroll({ pay_period_id: Number(periodId) });
       setMessage(r.data?.message || "Payroll generated");
-      loadSlips();
+      refreshSlips();
     } catch (e: any) {
       // A slow cold-start write may time out client-side even though slips were
       // generated. Re-fetch and, if slips now exist, treat it as success.
@@ -139,7 +158,14 @@ export default function SalarySlipsScreen() {
         const r = await getSalarySlips({ pay_period_id: String(periodId) });
         const list = Array.isArray(r.data) ? r.data : [];
         if (list.length > 0) {
-          setSlips(list);
+          queryClient.setQueryData(
+            ["admin", "salarySlips", periodId],
+            (prev: any) => ({
+              slips: list,
+              disbursements: prev?.disbursements ?? EMPTY_DISBURSEMENTS,
+              loadError: null,
+            }),
+          );
           setMessage("Payroll generated");
           setBusy(false);
           return;
@@ -147,7 +173,7 @@ export default function SalarySlipsScreen() {
       } catch {
         /* fall through */
       }
-      setError(e?.response?.data?.error || "Payroll run failed");
+      setMutationError(e?.response?.data?.error || "Payroll run failed");
     } finally {
       setBusy(false);
     }
@@ -164,14 +190,14 @@ export default function SalarySlipsScreen() {
           text: "Publish",
           onPress: async () => {
             setBusy(true);
-            setError(null);
+            setMutationError(null);
             setMessage(null);
             try {
               const r = await bulkPublishSlips({
                 pay_period_id: Number(periodId),
               });
               setMessage(r.data?.message || "Slips published");
-              loadSlips();
+              refreshSlips();
             } catch (e: any) {
               // Verify-after-write: if no drafts remain, the publish succeeded.
               try {
@@ -180,7 +206,14 @@ export default function SalarySlipsScreen() {
                 });
                 const list = Array.isArray(r.data) ? r.data : [];
                 if (!list.some((s) => s.status === "draft")) {
-                  setSlips(list);
+                  queryClient.setQueryData(
+                    ["admin", "salarySlips", periodId],
+                    (prev: any) => ({
+                      slips: list,
+                      disbursements: prev?.disbursements ?? EMPTY_DISBURSEMENTS,
+                      loadError: null,
+                    }),
+                  );
                   setMessage("Slips published");
                   setBusy(false);
                   return;
@@ -188,7 +221,9 @@ export default function SalarySlipsScreen() {
               } catch {
                 /* fall through */
               }
-              setError(e?.response?.data?.error || "Bulk publish failed");
+              setMutationError(
+                e?.response?.data?.error || "Bulk publish failed",
+              );
             } finally {
               setBusy(false);
             }
@@ -199,10 +234,10 @@ export default function SalarySlipsScreen() {
   }
 
   async function publishOne(slip: SalarySlip) {
-    setError(null);
+    setMutationError(null);
     try {
       await publishSalarySlip(slip.id);
-      loadSlips();
+      refreshSlips();
     } catch (e: any) {
       // Verify-after-write: re-fetch and check if this slip is now published.
       try {
@@ -210,7 +245,14 @@ export default function SalarySlipsScreen() {
         const list = Array.isArray(r.data) ? r.data : [];
         const updated = list.find((s) => s.id === slip.id);
         if (updated && updated.status !== "draft") {
-          setSlips(list);
+          queryClient.setQueryData(
+            ["admin", "salarySlips", periodId],
+            (prev: any) => ({
+              slips: list,
+              disbursements: prev?.disbursements ?? EMPTY_DISBURSEMENTS,
+              loadError: null,
+            }),
+          );
           return;
         }
       } catch {
@@ -231,7 +273,7 @@ export default function SalarySlipsScreen() {
           text: "Disburse",
           onPress: async () => {
             setBusy(true);
-            setError(null);
+            setMutationError(null);
             setMessage(null);
             try {
               const r = await disburseSalaries({
@@ -241,9 +283,11 @@ export default function SalarySlipsScreen() {
               setMessage(
                 `${d?.message || "Disbursement initiated"} (${d?.disbursed ?? 0} sent, ${d?.failed ?? 0} failed)`,
               );
-              loadSlips();
+              refreshSlips();
             } catch (e: any) {
-              setError(e?.response?.data?.error || "Disbursement failed");
+              setMutationError(
+                e?.response?.data?.error || "Disbursement failed",
+              );
             } finally {
               setBusy(false);
             }
@@ -255,7 +299,7 @@ export default function SalarySlipsScreen() {
 
   function retry(d: Disbursement) {
     retryDisbursement(d.id)
-      .then(() => loadSlips())
+      .then(() => refreshSlips())
       .catch((e: any) =>
         Alert.alert("Error", e?.response?.data?.error || "Retry failed"),
       );
@@ -323,7 +367,7 @@ export default function SalarySlipsScreen() {
             onChange={(v) => {
               setPeriodId(v);
               setMessage(null);
-              setError(null);
+              setMutationError(null);
             }}
           />
         )}
@@ -357,9 +401,7 @@ export default function SalarySlipsScreen() {
               disabled={busy}
             >
               <Send size={14} color="#fff" />
-              <Text style={styles.actionText}>
-                Disburse ({publishedCount})
-              </Text>
+              <Text style={styles.actionText}>Disburse ({publishedCount})</Text>
             </Pressable>
           ) : null}
         </View>
@@ -420,7 +462,10 @@ export default function SalarySlipsScreen() {
                     {disb ? (
                       <View style={styles.payRow}>
                         {disb.status === "processed" ? (
-                          <CheckCircle2 size={12} color={STATUS_COLORS.processed} />
+                          <CheckCircle2
+                            size={12}
+                            color={STATUS_COLORS.processed}
+                          />
                         ) : disb.status === "processing" ? (
                           <Clock size={12} color={STATUS_COLORS.processing} />
                         ) : disb.status === "failed" ? (
@@ -492,72 +537,77 @@ export default function SalarySlipsScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { alignItems: "center", justifyContent: "center", flex: 1 },
-  toolbar: { padding: 16, gap: 10 },
-  hint: { fontSize: 13, color: theme.textSecondary, lineHeight: 18 },
-  actionsRow: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
-  actionBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: theme.primary,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  actionText: { color: "#fff", fontSize: 13, fontWeight: "600" },
-  actionBtnGhost: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderWidth: 1,
-    borderColor: theme.primary,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  actionTextGhost: { color: theme.primary, fontSize: 13, fontWeight: "600" },
-  disabled: { opacity: 0.5 },
-  success: { color: theme.success, fontSize: 12 },
-  errorText: { color: theme.danger, fontSize: 12 },
-  list: { padding: 16, paddingTop: 4, gap: 10, paddingBottom: 40 },
-  card: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 12,
-  },
-  iconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: theme.primaryGlow,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  body: { flex: 1, gap: 4 },
-  name: { fontSize: 14, fontWeight: "600", color: theme.text },
-  meta: { fontSize: 12, color: theme.textSecondary },
-  badgeRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
-  statusPill: {
-    borderRadius: theme.radiusFull,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  statusText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
-  payRow: { flexDirection: "row", alignItems: "center", gap: 3 },
-  payText: { fontSize: 10, fontWeight: "600" },
-  actionsCol: { flexDirection: "row", alignItems: "center", gap: 2 },
-  iconBtn: { padding: 6 },
-  empty: {
-    color: theme.textMuted,
-    fontSize: 13,
-    textAlign: "center",
-    paddingTop: 32,
-  },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { alignItems: "center", justifyContent: "center", flex: 1 },
+    toolbar: { padding: 16, gap: 10 },
+    hint: { fontSize: 13, color: theme.textSecondary, lineHeight: 18 },
+    actionsRow: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
+    actionBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      backgroundColor: theme.primary,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    actionText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+    actionBtnGhost: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      borderWidth: 1,
+      borderColor: theme.primary,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    actionTextGhost: { color: theme.primary, fontSize: 13, fontWeight: "600" },
+    disabled: { opacity: 0.5 },
+    success: { color: theme.success, fontSize: 12 },
+    errorText: { color: theme.danger, fontSize: 12 },
+    list: { padding: 16, paddingTop: 4, gap: 10, paddingBottom: 40 },
+    card: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 12,
+    },
+    iconWrap: {
+      width: 38,
+      height: 38,
+      borderRadius: 10,
+      backgroundColor: theme.primaryGlow,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    body: { flex: 1, gap: 4 },
+    name: { fontSize: 14, fontWeight: "600", color: theme.text },
+    meta: { fontSize: 12, color: theme.textSecondary },
+    badgeRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      flexWrap: "wrap",
+    },
+    statusPill: {
+      borderRadius: theme.radiusFull,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    statusText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
+    payRow: { flexDirection: "row", alignItems: "center", gap: 3 },
+    payText: { fontSize: 10, fontWeight: "600" },
+    actionsCol: { flexDirection: "row", alignItems: "center", gap: 2 },
+    iconBtn: { padding: 6 },
+    empty: {
+      color: theme.textMuted,
+      fontSize: 13,
+      textAlign: "center",
+      paddingTop: 32,
+    },
+  });

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Alert,
@@ -24,12 +25,11 @@ import { useAuth } from "../../../src/auth/AuthContext";
 import type { Theme } from "../../../src/theme";
 import { useTheme } from "../../../src/theme/ThemeProvider";
 import { uploadUrl } from "../../../src/config";
-import { Dropdown, type DropdownOption } from "../../../src/components/Dropdown";
 import {
-  ROLES,
-  roleLabel,
-  canManageRole,
-} from "../../../src/constants/roles";
+  Dropdown,
+  type DropdownOption,
+} from "../../../src/components/Dropdown";
+import { ROLES, roleLabel, canManageRole } from "../../../src/constants/roles";
 import {
   adminResetPassword,
   cancelRoleChange,
@@ -39,8 +39,6 @@ import {
   toggleUserActive,
   updateUserAssignment,
   updateUserRole,
-  type AdminUser,
-  type RoleChangeRequest,
 } from "../../../src/admin";
 import {
   getOrgDepartments,
@@ -55,19 +53,16 @@ function initials(name?: string) {
   return ((p[0]?.[0] ?? "") + (p[1]?.[0] ?? "")).toUpperCase() || "?";
 }
 
+const EMPTY_OPTIONS: DropdownOption[] = [];
+
 export default function AdminUserDetail() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user: me } = useAuth();
-  const [u, setU] = useState<AdminUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
-
-  const [departments, setDepartments] = useState<DropdownOption[]>([]);
-  const [teams, setTeams] = useState<DropdownOption[]>([]);
-  const [managers, setManagers] = useState<DropdownOption[]>([]);
 
   // Editable assignment + role state
   const [role, setRole] = useState<string>("");
@@ -75,11 +70,6 @@ export default function AdminUserDetail() {
   const [deptId, setDeptId] = useState<string | number | null>(null);
   const [teamId, setTeamId] = useState<string | number | null>(null);
   const [managerId, setManagerId] = useState<string | number | null>(null);
-
-  // Pending role-change request for this user (if any).
-  const [pendingRequest, setPendingRequest] = useState<RoleChangeRequest | null>(
-    null,
-  );
 
   const [pwOpen, setPwOpen] = useState(false);
   const [newPw, setNewPw] = useState("");
@@ -89,66 +79,72 @@ export default function AdminUserDetail() {
   const isDirectRoleEditor =
     me?.role === "super_admin" || me?.role === "platform_admin";
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data } = await getAdminUser(id);
-      setU(data);
-      setRole(data.role);
-      setRoleReason("");
-      setDeptId(data.department_id ?? null);
-      setTeamId(data.team_id ?? null);
-      setManagerId(data.manager_id ?? null);
-    } catch {
-      Alert.alert("Error", "Failed to load user");
-    } finally {
-      setLoading(false);
-    }
-    // Look up any pending role-change request targeting this user.
-    try {
+  const { data: record, isLoading: loading } = useQuery({
+    queryKey: ["admin", "user", id],
+    queryFn: async () => (await getAdminUser(id)).data,
+    enabled: !!id,
+  });
+  const u = record ?? null;
+
+  // Pending role-change request for this user (if any). Keyed under the user so
+  // invalidating ["admin","user", id] also refetches this after mutations.
+  const { data: pendingRequest = null } = useQuery({
+    queryKey: ["admin", "user", id, "pendingRoleRequest"],
+    queryFn: async () => {
       const { data: reqs } = await getRoleChangeRequests({ status: "pending" });
-      const match =
-        (reqs || []).find(
-          (r) => String(r.target_user_id) === String(id),
-        ) || null;
-      setPendingRequest(match);
-    } catch {
-      setPendingRequest(null);
-    }
-    const [dRes, tRes, mRes] = await Promise.allSettled([
-      getOrgDepartments(),
-      getOrgTeams(),
-      getAssignableUsers(),
-    ]);
-    if (dRes.status === "fulfilled")
-      setDepartments([
+      return (
+        (reqs || []).find((r) => String(r.target_user_id) === String(id)) ||
+        null
+      );
+    },
+    enabled: !!id,
+  });
+
+  // Reference data for the assignment dropdowns.
+  const { data: departments = EMPTY_OPTIONS } = useQuery({
+    queryKey: ["admin", "orgDepartments"],
+    queryFn: async () => {
+      const { data } = await getOrgDepartments();
+      return [
         { value: null, label: "— None —" },
-        ...(dRes.value.data || []).map((d) => ({
-          value: d.id,
-          label: d.name,
-        })),
-      ]);
-    if (tRes.status === "fulfilled")
-      setTeams([
+        ...(data || []).map((d) => ({ value: d.id, label: d.name })),
+      ] as DropdownOption[];
+    },
+  });
+  const { data: teams = EMPTY_OPTIONS } = useQuery({
+    queryKey: ["admin", "orgTeams"],
+    queryFn: async () => {
+      const { data } = await getOrgTeams();
+      return [
         { value: null, label: "— None —" },
-        ...(tRes.value.data || []).map((t) => ({
-          value: t.id,
-          label: t.name,
-        })),
-      ]);
-    if (mRes.status === "fulfilled")
-      setManagers([
+        ...(data || []).map((t) => ({ value: t.id, label: t.name })),
+      ] as DropdownOption[];
+    },
+  });
+  const { data: managers = EMPTY_OPTIONS } = useQuery({
+    queryKey: ["admin", "assignableUsers"],
+    queryFn: async () => {
+      const { data } = await getAssignableUsers();
+      return [
         { value: null, label: "— None —" },
-        ...(mRes.value.data as AssignableUser[]).map((m) => ({
+        ...(data as AssignableUser[]).map((m) => ({
           value: m.id,
           label: m.full_name,
         })),
-      ]);
-  }, [id]);
+      ] as DropdownOption[];
+    },
+  });
 
+  // Populate the editable form fields whenever the user record arrives
+  // (cold load or after a mutation invalidation), mirroring the old load().
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!record) return;
+    setRole(record.role);
+    setRoleReason("");
+    setDeptId(record.department_id ?? null);
+    setTeamId(record.team_id ?? null);
+    setManagerId(record.manager_id ?? null);
+  }, [record]);
 
   if (loading || !u) {
     return (
@@ -172,7 +168,11 @@ export default function AdminUserDetail() {
     if (!u || role === u.role) return;
     setBusy(true);
     try {
-      const { data } = await updateUserRole(u.id, role, roleReason || undefined);
+      const { data } = await updateUserRole(
+        u.id,
+        role,
+        roleReason || undefined,
+      );
       Alert.alert(
         "Role",
         data.message ||
@@ -181,7 +181,7 @@ export default function AdminUserDetail() {
             : "Role change request submitted"),
       );
       setRoleReason("");
-      await load();
+      queryClient.invalidateQueries({ queryKey: ["admin", "user", id] });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to update role");
       setRole(u.role);
@@ -196,7 +196,7 @@ export default function AdminUserDetail() {
     try {
       await cancelRoleChange(pendingRequest.id);
       Alert.alert("Cancelled", "Role change request cancelled");
-      await load();
+      queryClient.invalidateQueries({ queryKey: ["admin", "user", id] });
     } catch (e: any) {
       Alert.alert(
         "Error",
@@ -217,7 +217,7 @@ export default function AdminUserDetail() {
         manager_id: managerId ? Number(managerId) : null,
       });
       Alert.alert("Saved", "Assignment updated");
-      await load();
+      queryClient.invalidateQueries({ queryKey: ["admin", "user", id] });
     } catch (e: any) {
       Alert.alert(
         "Error",
@@ -239,8 +239,8 @@ export default function AdminUserDetail() {
         onPress: async () => {
           setBusy(true);
           try {
-            const { data } = await toggleUserActive(u.id);
-            setU({ ...u, is_active: data.is_active });
+            await toggleUserActive(u.id);
+            queryClient.invalidateQueries({ queryKey: ["admin", "user", id] });
           } catch (e: any) {
             Alert.alert("Error", e?.response?.data?.error || "Failed");
           } finally {
@@ -264,7 +264,10 @@ export default function AdminUserDetail() {
       setPwOpen(false);
       setNewPw("");
     } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to reset password");
+      Alert.alert(
+        "Error",
+        e?.response?.data?.error || "Failed to reset password",
+      );
     } finally {
       setBusy(false);
     }
@@ -286,7 +289,10 @@ export default function AdminUserDetail() {
               await deleteAdminUser(u.id);
               router.back();
             } catch (e: any) {
-              Alert.alert("Error", e?.response?.data?.error || "Failed to delete");
+              Alert.alert(
+                "Error",
+                e?.response?.data?.error || "Failed to delete",
+              );
             } finally {
               setBusy(false);
             }
@@ -316,14 +322,28 @@ export default function AdminUserDetail() {
             <Text style={styles.roleText}>{roleLabel(u.role)}</Text>
           </View>
           {u.is_active ? (
-            <View style={[styles.statusPill, { backgroundColor: theme.success + "22" }]}>
+            <View
+              style={[
+                styles.statusPill,
+                { backgroundColor: theme.success + "22" },
+              ]}
+            >
               <CheckCircle2 size={13} color={theme.success} />
-              <Text style={[styles.statusText, { color: theme.success }]}>Active</Text>
+              <Text style={[styles.statusText, { color: theme.success }]}>
+                Active
+              </Text>
             </View>
           ) : (
-            <View style={[styles.statusPill, { backgroundColor: theme.danger + "22" }]}>
+            <View
+              style={[
+                styles.statusPill,
+                { backgroundColor: theme.danger + "22" },
+              ]}
+            >
               <Ban size={13} color={theme.danger} />
-              <Text style={[styles.statusText, { color: theme.danger }]}>Inactive</Text>
+              <Text style={[styles.statusText, { color: theme.danger }]}>
+                Inactive
+              </Text>
             </View>
           )}
         </View>
@@ -549,151 +569,169 @@ export default function AdminUserDetail() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { alignItems: "center", justifyContent: "center" },
-  container: { padding: 16, gap: 16, paddingBottom: 48 },
-  header: {
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusLg,
-    padding: 20,
-  },
-  avatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
-  },
-  avatarImg: { width: 72, height: 72, borderRadius: 36 },
-  avatarText: { color: "#fff", fontSize: 24, fontWeight: "700" },
-  name: { fontSize: 20, fontWeight: "800", color: theme.text },
-  username: { fontSize: 13, color: theme.textMuted },
-  statusRow: { flexDirection: "row", gap: 8, marginTop: 6, alignItems: "center" },
-  roleBadge: {
-    backgroundColor: theme.primaryGlow,
-    borderRadius: theme.radiusFull,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  roleText: { color: theme.primaryLight, fontSize: 12, fontWeight: "600" },
-  statusPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    borderRadius: theme.radiusFull,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  statusText: { fontSize: 12, fontWeight: "600" },
-  emailRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6 },
-  emailText: { fontSize: 13, color: theme.textSecondary },
-  noManage: {
-    color: theme.textMuted,
-    fontSize: 13,
-    textAlign: "center",
-    paddingVertical: 20,
-  },
-  section: {
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusLg,
-    padding: 16,
-    gap: 10,
-  },
-  sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.text },
-  fieldLabel: {
-    fontSize: 12,
-    color: theme.textSecondary,
-    fontWeight: "500",
-    marginTop: 2,
-  },
-  input: {
-    backgroundColor: theme.inputBg,
-    borderWidth: 1,
-    borderColor: theme.inputBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: theme.text,
-    fontSize: 15,
-  },
-  saveBtn: {
-    backgroundColor: theme.primary,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 12,
-    alignItems: "center",
-    marginTop: 4,
-  },
-  saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-  cancelBtn: {
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 12,
-    alignItems: "center",
-    marginTop: 4,
-  },
-  cancelBtnText: { color: theme.textSecondary, fontSize: 15, fontWeight: "600" },
-  btnRow: { flexDirection: "row", gap: 10 },
-  flex1: { flex: 1 },
-  outlineBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 12,
-  },
-  outlineBtnText: { color: theme.text, fontSize: 15, fontWeight: "600" },
-  dangerTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: theme.danger,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  dangerBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  dangerBtnText: { fontSize: 14, fontWeight: "600" },
-  pendingBanner: {
-    backgroundColor: theme.warning + "1F",
-    borderWidth: 1,
-    borderColor: theme.warning + "44",
-    borderRadius: theme.radiusLg,
-    padding: 14,
-    gap: 10,
-  },
-  pendingText: { color: theme.text, fontSize: 13 },
-  pendingStrong: { fontWeight: "700", color: theme.text },
-  cancelReqBtn: {
-    alignSelf: "flex-start",
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-  },
-  cancelReqText: { color: theme.textSecondary, fontSize: 13, fontWeight: "600" },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { alignItems: "center", justifyContent: "center" },
+    container: { padding: 16, gap: 16, paddingBottom: 48 },
+    header: {
+      alignItems: "center",
+      gap: 6,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusLg,
+      padding: 20,
+    },
+    avatar: {
+      width: 72,
+      height: 72,
+      borderRadius: 36,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+      marginBottom: 4,
+    },
+    avatarImg: { width: 72, height: 72, borderRadius: 36 },
+    avatarText: { color: "#fff", fontSize: 24, fontWeight: "700" },
+    name: { fontSize: 20, fontWeight: "800", color: theme.text },
+    username: { fontSize: 13, color: theme.textMuted },
+    statusRow: {
+      flexDirection: "row",
+      gap: 8,
+      marginTop: 6,
+      alignItems: "center",
+    },
+    roleBadge: {
+      backgroundColor: theme.primaryGlow,
+      borderRadius: theme.radiusFull,
+      paddingHorizontal: 12,
+      paddingVertical: 4,
+    },
+    roleText: { color: theme.primaryLight, fontSize: 12, fontWeight: "600" },
+    statusPill: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      borderRadius: theme.radiusFull,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
+    statusText: { fontSize: 12, fontWeight: "600" },
+    emailRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      marginTop: 6,
+    },
+    emailText: { fontSize: 13, color: theme.textSecondary },
+    noManage: {
+      color: theme.textMuted,
+      fontSize: 13,
+      textAlign: "center",
+      paddingVertical: 20,
+    },
+    section: {
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusLg,
+      padding: 16,
+      gap: 10,
+    },
+    sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+    sectionTitle: { fontSize: 15, fontWeight: "700", color: theme.text },
+    fieldLabel: {
+      fontSize: 12,
+      color: theme.textSecondary,
+      fontWeight: "500",
+      marginTop: 2,
+    },
+    input: {
+      backgroundColor: theme.inputBg,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      color: theme.text,
+      fontSize: 15,
+    },
+    saveBtn: {
+      backgroundColor: theme.primary,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 12,
+      alignItems: "center",
+      marginTop: 4,
+    },
+    saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+    cancelBtn: {
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 12,
+      alignItems: "center",
+      marginTop: 4,
+    },
+    cancelBtnText: {
+      color: theme.textSecondary,
+      fontSize: 15,
+      fontWeight: "600",
+    },
+    btnRow: { flexDirection: "row", gap: 10 },
+    flex1: { flex: 1 },
+    outlineBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 12,
+    },
+    outlineBtnText: { color: theme.text, fontSize: 15, fontWeight: "600" },
+    dangerTitle: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: theme.danger,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+    },
+    dangerBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+    },
+    dangerBtnText: { fontSize: 14, fontWeight: "600" },
+    pendingBanner: {
+      backgroundColor: theme.warning + "1F",
+      borderWidth: 1,
+      borderColor: theme.warning + "44",
+      borderRadius: theme.radiusLg,
+      padding: 14,
+      gap: 10,
+    },
+    pendingText: { color: theme.text, fontSize: 13 },
+    pendingStrong: { fontWeight: "700", color: theme.text },
+    cancelReqBtn: {
+      alignSelf: "flex-start",
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+    },
+    cancelReqText: {
+      color: theme.textSecondary,
+      fontSize: 13,
+      fontWeight: "600",
+    },
+  });

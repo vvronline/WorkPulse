@@ -77,6 +77,8 @@ const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 const EMPTY_ENTRIES: Record<string, HistoryEntry> = {};
 const EMPTY_LEAVES: Leave[] = [];
 const EMPTY_HOLIDAYS: Holiday[] = [];
+const EMPTY_ANALYTICS: AnalyticsPoint[] = [];
+const EMPTY_HISTORY: HistoryEntry[] = [];
 
 type OverviewData = {
   entries: Record<string, HistoryEntry>;
@@ -1190,20 +1192,16 @@ function AnalyticsTab() {
   const [range, setRange] = useState<number | "custom">(7);
   const [customFrom, setCustomFrom] = useState(localDateNDaysAgo(7));
   const [customTo, setCustomTo] = useState(ymd(new Date()));
-  const [data, setData] = useState<AnalyticsPoint[]>([]);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [widgets, setWidgets] = useState<WidgetsData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState<"csv" | "pdf" | null>(null);
 
   const isCustom = range === "custom";
   const fromDate = isCustom ? customFrom : localDateNDaysAgo(range as number);
   const toDate = isCustom ? customTo : ymd(new Date());
 
-  const load = useCallback(async () => {
-    if (isCustom && (!customFrom || !customTo)) return;
-    setLoading(true);
-    try {
+  const { data: analytics, isLoading } = useQuery({
+    queryKey: ["attendance", "analytics", range, fromDate, toDate],
+    enabled: !isCustom || (!!customFrom && !!customTo),
+    queryFn: async () => {
       const [aRes, hRes, wRes] = await Promise.allSettled([
         isCustom
           ? getTrackerHistory(fromDate, toDate)
@@ -1211,38 +1209,31 @@ function AnalyticsTab() {
         getTrackerHistory(fromDate, toDate),
         getTrackerWidgets(),
       ]);
-      if (aRes.status === "fulfilled") {
-        // history endpoint returns HistoryEntry[]; analytics returns AnalyticsPoint[]
-        const arr = (aRes.value.data || []) as any[];
-        setData(
-          arr.map((d) => ({
-            date: d.date.slice(0, 10),
-            floorMinutes: d.floorMinutes || 0,
-            breakMinutes: d.breakMinutes || 0,
-            workMode: d.work_mode || d.workMode,
-          })),
-        );
-      } else {
-        setData([]);
-      }
-      setHistory(hRes.status === "fulfilled" ? hRes.value.data || [] : []);
-      setWidgets(
-        wRes.status === "fulfilled"
-          ? ((wRes.value.data || null) as WidgetsData | null)
-          : null,
-      );
-    } catch {
-      setData([]);
-      setHistory([]);
-      setWidgets(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [range, isCustom, customFrom, customTo, fromDate, toDate]);
+      // history endpoint returns HistoryEntry[]; analytics returns AnalyticsPoint[]
+      const arr =
+        aRes.status === "fulfilled" ? ((aRes.value.data || []) as any[]) : [];
+      return {
+        data: arr.map((d) => ({
+          date: d.date.slice(0, 10),
+          floorMinutes: d.floorMinutes || 0,
+          breakMinutes: d.breakMinutes || 0,
+          workMode: d.work_mode || d.workMode,
+        })) as AnalyticsPoint[],
+        history: (hRes.status === "fulfilled"
+          ? hRes.value.data || []
+          : []) as HistoryEntry[],
+        widgets: (wRes.status === "fulfilled"
+          ? wRes.value.data || null
+          : null) as WidgetsData | null,
+      };
+    },
+  });
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const data = analytics?.data ?? EMPTY_ANALYTICS;
+  const history = analytics?.history ?? EMPTY_HISTORY;
+  const widgets = analytics?.widgets ?? null;
+  // Only block on a true cold cache; cached data renders instantly on revisit.
+  const loading = isLoading;
 
   const onExport = useCallback(
     async (format: "csv" | "pdf") => {

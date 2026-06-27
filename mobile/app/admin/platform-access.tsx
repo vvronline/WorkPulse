@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Pressable,
@@ -61,13 +62,12 @@ type RevealedCode = {
   inspector?: string | null;
 };
 
+const EMPTY_REQUESTS: IncomingAccessRequest[] = [];
+
 export default function PlatformAccessScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [requests, setRequests] = useState<IncomingAccessRequest[]>([]);
-  const [activeSession, setActiveSession] =
-    useState<IncomingAccessRequest | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,27 +83,30 @@ export default function PlatformAccessScreen() {
   );
   const [denyBusy, setDenyBusy] = useState(false);
 
-  const load = useCallback(() => {
-    listIncomingAccessRequests({ limit: 50 })
-      .then((r) => {
-        setRequests(r.data.requests || []);
-        setActiveSession(r.data.active_session || null);
-      })
-      .catch((e: any) =>
-        setError(e?.response?.data?.error || "Failed to load requests"),
-      )
-      .finally(() => {
-        setLoading(false);
-        setRefreshing(false);
-      });
-  }, []);
-
-  useEffect(() => {
-    load();
+  const {
+    data,
+    isLoading: loading,
+    isError,
+    error: queryError,
+  } = useQuery({
+    queryKey: ["admin", "platformAccess"],
+    queryFn: async () => {
+      const r = await listIncomingAccessRequests({ limit: 50 });
+      return {
+        requests: r.data.requests || EMPTY_REQUESTS,
+        activeSession: r.data.active_session || null,
+      };
+    },
     // Cheap polling so new requests appear without manual refresh.
-    const id = setInterval(load, 15_000);
-    return () => clearInterval(id);
-  }, [load]);
+    refetchInterval: 15_000,
+  });
+  const requests = data?.requests ?? EMPTY_REQUESTS;
+  const activeSession = data?.activeSession ?? null;
+  const bannerError =
+    error ??
+    (isError
+      ? (queryError as any)?.response?.data?.error || "Failed to load requests"
+      : null);
 
   async function approve(req: IncomingAccessRequest) {
     setBusyId(req.id);
@@ -117,7 +120,7 @@ export default function PlatformAccessScreen() {
         inspector: req.requested_by_name,
       });
       setCopied(false);
-      load();
+      queryClient.invalidateQueries({ queryKey: ["admin", "platformAccess"] });
     } catch (e: any) {
       setError(e?.response?.data?.error || "Failed to approve");
     } finally {
@@ -129,9 +132,12 @@ export default function PlatformAccessScreen() {
     if (!denyTarget) return;
     setDenyBusy(true);
     try {
-      await denyAccessRequest(denyTarget.id, values.reason?.trim() || undefined);
+      await denyAccessRequest(
+        denyTarget.id,
+        values.reason?.trim() || undefined,
+      );
       setDenyTarget(null);
-      load();
+      queryClient.invalidateQueries({ queryKey: ["admin", "platformAccess"] });
     } catch (e: any) {
       setError(e?.response?.data?.error || "Failed to deny");
       setDenyTarget(null);
@@ -145,7 +151,7 @@ export default function PlatformAccessScreen() {
     setError(null);
     try {
       await revokeAccessSession(req.id, "Revoked from mobile admin");
-      load();
+      queryClient.invalidateQueries({ queryKey: ["admin", "platformAccess"] });
     } catch (e: any) {
       setError(e?.response?.data?.error || "Failed to revoke");
     } finally {
@@ -178,9 +184,12 @@ export default function PlatformAccessScreen() {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={() => {
+          onRefresh={async () => {
             setRefreshing(true);
-            load();
+            await queryClient.invalidateQueries({
+              queryKey: ["admin", "platformAccess"],
+            });
+            setRefreshing(false);
           }}
           tintColor={theme.primary}
         />
@@ -194,9 +203,9 @@ export default function PlatformAccessScreen() {
         trusted channel.
       </Text>
 
-      {error ? (
+      {bannerError ? (
         <View style={styles.errorBanner}>
-          <Text style={styles.errorText}>{error}</Text>
+          <Text style={styles.errorText}>{bannerError}</Text>
           <Pressable onPress={() => setError(null)} hitSlop={8}>
             <X size={16} color={theme.danger} />
           </Pressable>
@@ -251,8 +260,8 @@ export default function PlatformAccessScreen() {
             </Pressable>
           </View>
           <Text style={styles.codeNote}>
-            Share this code with{" "}
-            {revealedCode.inspector || "the inspector"} over a trusted channel.
+            Share this code with {revealedCode.inspector || "the inspector"}{" "}
+            over a trusted channel.
             {revealedCode.expires_at
               ? ` It expires at ${fmt(revealedCode.expires_at)}`
               : ""}{" "}
@@ -414,109 +423,118 @@ export default function PlatformAccessScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  container: { padding: 16, gap: 12, paddingBottom: 40 },
-  intro: { fontSize: 13, color: theme.textSecondary, lineHeight: 18 },
-  errorBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: theme.danger + "1A",
-    borderWidth: 1,
-    borderColor: theme.danger + "55",
-    borderRadius: theme.radius,
-    padding: 12,
-  },
-  errorText: { flex: 1, fontSize: 13, color: theme.danger },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: theme.textSecondary,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginTop: 6,
-  },
-  card: {
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusLg,
-    padding: 16,
-    gap: 8,
-  },
-  activeCard: { borderColor: theme.warning + "88" },
-  activeTitle: { flex: 1, fontSize: 14, fontWeight: "700", color: theme.text },
-  codeCard: { borderColor: theme.success + "88" },
-  codeTitle: { flex: 1, fontSize: 14, fontWeight: "700", color: theme.text },
-  codeNote: { fontSize: 12, color: theme.textSecondary, lineHeight: 17 },
-  codeRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  codeBox: {
-    flex: 1,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: theme.success,
-    borderRadius: theme.radius,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  codeText: {
-    fontSize: 26,
-    fontWeight: "800",
-    letterSpacing: 8,
-    color: theme.success,
-    fontVariant: ["tabular-nums"],
-  },
-  copyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  copyText: { color: theme.text, fontSize: 13, fontWeight: "600" },
-  cardHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
-  name: { flex: 1, fontSize: 15, fontWeight: "700", color: theme.text },
-  statusPill: {
-    borderRadius: theme.radiusFull,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-  },
-  statusText: { fontSize: 11, fontWeight: "600", textTransform: "capitalize" },
-  reason: { fontSize: 13, color: theme.textSecondary, fontStyle: "italic" },
-  meta: { fontSize: 11, color: theme.textMuted },
-  actionRow: { flexDirection: "row", gap: 10, marginTop: 4 },
-  actionBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 11,
-  },
-  approveBtn: { backgroundColor: theme.success },
-  denyBtn: {
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-  },
-  revokeBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 11,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    marginTop: 4,
-  },
-  actionBtnText: { color: "#fff", fontSize: 14, fontWeight: "600" },
-  empty: { color: theme.textMuted, fontSize: 13, paddingVertical: 4 },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { flex: 1, alignItems: "center", justifyContent: "center" },
+    container: { padding: 16, gap: 12, paddingBottom: 40 },
+    intro: { fontSize: 13, color: theme.textSecondary, lineHeight: 18 },
+    errorBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: theme.danger + "1A",
+      borderWidth: 1,
+      borderColor: theme.danger + "55",
+      borderRadius: theme.radius,
+      padding: 12,
+    },
+    errorText: { flex: 1, fontSize: 13, color: theme.danger },
+    sectionTitle: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: theme.textSecondary,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+      marginTop: 6,
+    },
+    card: {
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusLg,
+      padding: 16,
+      gap: 8,
+    },
+    activeCard: { borderColor: theme.warning + "88" },
+    activeTitle: {
+      flex: 1,
+      fontSize: 14,
+      fontWeight: "700",
+      color: theme.text,
+    },
+    codeCard: { borderColor: theme.success + "88" },
+    codeTitle: { flex: 1, fontSize: 14, fontWeight: "700", color: theme.text },
+    codeNote: { fontSize: 12, color: theme.textSecondary, lineHeight: 17 },
+    codeRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+    codeBox: {
+      flex: 1,
+      borderWidth: 1,
+      borderStyle: "dashed",
+      borderColor: theme.success,
+      borderRadius: theme.radius,
+      paddingVertical: 12,
+      alignItems: "center",
+    },
+    codeText: {
+      fontSize: 26,
+      fontWeight: "800",
+      letterSpacing: 8,
+      color: theme.success,
+      fontVariant: ["tabular-nums"],
+    },
+    copyBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+    },
+    copyText: { color: theme.text, fontSize: 13, fontWeight: "600" },
+    cardHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+    name: { flex: 1, fontSize: 15, fontWeight: "700", color: theme.text },
+    statusPill: {
+      borderRadius: theme.radiusFull,
+      paddingHorizontal: 10,
+      paddingVertical: 3,
+    },
+    statusText: {
+      fontSize: 11,
+      fontWeight: "600",
+      textTransform: "capitalize",
+    },
+    reason: { fontSize: 13, color: theme.textSecondary, fontStyle: "italic" },
+    meta: { fontSize: 11, color: theme.textMuted },
+    actionRow: { flexDirection: "row", gap: 10, marginTop: 4 },
+    actionBtn: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 11,
+    },
+    approveBtn: { backgroundColor: theme.success },
+    denyBtn: {
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    revokeBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 11,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      marginTop: 4,
+    },
+    actionBtnText: { color: "#fff", fontSize: 14, fontWeight: "600" },
+    empty: { color: theme.textMuted, fontSize: 13, paddingVertical: 4 },
+  });

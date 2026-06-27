@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Alert,
@@ -26,32 +27,33 @@ const TABS = [
   { key: "rejected", label: "Rejected" },
 ];
 
+const EMPTY_REQUESTS: RoleChangeRequest[] = [];
+
 export default function RoleRequestsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [requests, setRequests] = useState<RoleChangeRequest[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState("pending");
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    getRoleChangeRequests({ status: tab })
-      .then((r) => setRequests(r.data || []))
-      .catch(() => setRequests([]))
-      .finally(() => setLoading(false));
-  }, [tab]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data: requests = EMPTY_REQUESTS, isLoading: loading } = useQuery({
+    queryKey: ["admin", "roleRequests", tab],
+    queryFn: async () => {
+      try {
+        const r = await getRoleChangeRequests({ status: tab });
+        return r.data || EMPTY_REQUESTS;
+      } catch {
+        return EMPTY_REQUESTS;
+      }
+    },
+  });
 
   function approve(req: RoleChangeRequest) {
     setBusyId(req.id);
     approveRoleChange(req.id)
       .then((r) => {
         Alert.alert("Approved", r.data.message || "Approved");
-        load();
+        queryClient.invalidateQueries({ queryKey: ["admin", "roleRequests"] });
       })
       .catch((e: any) =>
         Alert.alert("Error", e?.response?.data?.error || "Failed to approve"),
@@ -60,28 +62,34 @@ export default function RoleRequestsScreen() {
   }
 
   function reject(req: RoleChangeRequest) {
-    Alert.alert("Reject request", `Reject role change for ${req.target_name}?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Reject",
-        style: "destructive",
-        onPress: () => {
-          setBusyId(req.id);
-          rejectRoleChange(req.id)
-            .then((r) => {
-              Alert.alert("Rejected", r.data.message || "Rejected");
-              load();
-            })
-            .catch((e: any) =>
-              Alert.alert(
-                "Error",
-                e?.response?.data?.error || "Failed to reject",
-              ),
-            )
-            .finally(() => setBusyId(null));
+    Alert.alert(
+      "Reject request",
+      `Reject role change for ${req.target_name}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reject",
+          style: "destructive",
+          onPress: () => {
+            setBusyId(req.id);
+            rejectRoleChange(req.id)
+              .then((r) => {
+                Alert.alert("Rejected", r.data.message || "Rejected");
+                queryClient.invalidateQueries({
+                  queryKey: ["admin", "roleRequests"],
+                });
+              })
+              .catch((e: any) =>
+                Alert.alert(
+                  "Error",
+                  e?.response?.data?.error || "Failed to reject",
+                ),
+              )
+              .finally(() => setBusyId(null));
+          },
         },
-      },
-    ]);
+      ],
+    );
   }
 
   return (
@@ -95,7 +103,9 @@ export default function RoleRequestsScreen() {
             style={[styles.tab, tab === t.key && styles.tabActive]}
             onPress={() => setTab(t.key)}
           >
-            <Text style={[styles.tabText, tab === t.key && styles.tabTextActive]}>
+            <Text
+              style={[styles.tabText, tab === t.key && styles.tabTextActive]}
+            >
               {t.label}
             </Text>
           </Pressable>
@@ -127,7 +137,9 @@ export default function RoleRequestsScreen() {
                 </View>
                 <ArrowRight size={14} color={theme.textMuted} />
                 <View style={[styles.roleChip, styles.roleChipTarget]}>
-                  <Text style={[styles.roleChipText, styles.roleChipTextTarget]}>
+                  <Text
+                    style={[styles.roleChipText, styles.roleChipTextTarget]}
+                  >
                     {roleLabel(item.to_role)}
                   </Text>
                 </View>
@@ -168,7 +180,9 @@ export default function RoleRequestsScreen() {
                     disabled={busyId === item.id}
                   >
                     <X size={15} color={theme.danger} />
-                    <Text style={[styles.actionBtnText, { color: theme.danger }]}>
+                    <Text
+                      style={[styles.actionBtnText, { color: theme.danger }]}
+                    >
                       Reject
                     </Text>
                   </Pressable>
@@ -187,65 +201,69 @@ export default function RoleRequestsScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  tabRow: { flexDirection: "row", gap: 8, padding: 16, paddingBottom: 8 },
-  tab: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: theme.radiusFull,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-  },
-  tabActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  tabText: { fontSize: 13, color: theme.textSecondary, fontWeight: "500" },
-  tabTextActive: { color: "#fff", fontWeight: "600" },
-  list: { padding: 16, paddingTop: 4, gap: 12, paddingBottom: 40 },
-  card: {
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusLg,
-    padding: 16,
-    gap: 10,
-  },
-  cardHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
-  targetName: { flex: 1, fontSize: 16, fontWeight: "700", color: theme.text },
-  roleFlow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  roleChip: {
-    backgroundColor: theme.surface,
-    borderRadius: theme.radiusFull,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-  },
-  roleChipTarget: { backgroundColor: theme.primaryGlow },
-  roleChipText: { fontSize: 12, color: theme.textSecondary, fontWeight: "600" },
-  roleChipTextTarget: { color: theme.primaryLight },
-  meta: { fontSize: 12, color: theme.textMuted },
-  reason: { fontSize: 13, color: theme.textSecondary, fontStyle: "italic" },
-  rejectReason: { fontSize: 12, color: theme.danger },
-  actionRow: { flexDirection: "row", gap: 10, marginTop: 4 },
-  actionBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 11,
-  },
-  approveBtn: { backgroundColor: theme.success },
-  rejectBtn: {
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-  },
-  actionBtnText: { color: "#fff", fontSize: 14, fontWeight: "600" },
-  empty: {
-    color: theme.textMuted,
-    fontSize: 13,
-    textAlign: "center",
-    paddingTop: 32,
-  },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { flex: 1, alignItems: "center", justifyContent: "center" },
+    tabRow: { flexDirection: "row", gap: 8, padding: 16, paddingBottom: 8 },
+    tab: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: theme.radiusFull,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    tabActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+    tabText: { fontSize: 13, color: theme.textSecondary, fontWeight: "500" },
+    tabTextActive: { color: "#fff", fontWeight: "600" },
+    list: { padding: 16, paddingTop: 4, gap: 12, paddingBottom: 40 },
+    card: {
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusLg,
+      padding: 16,
+      gap: 10,
+    },
+    cardHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+    targetName: { flex: 1, fontSize: 16, fontWeight: "700", color: theme.text },
+    roleFlow: { flexDirection: "row", alignItems: "center", gap: 8 },
+    roleChip: {
+      backgroundColor: theme.surface,
+      borderRadius: theme.radiusFull,
+      paddingHorizontal: 12,
+      paddingVertical: 5,
+    },
+    roleChipTarget: { backgroundColor: theme.primaryGlow },
+    roleChipText: {
+      fontSize: 12,
+      color: theme.textSecondary,
+      fontWeight: "600",
+    },
+    roleChipTextTarget: { color: theme.primaryLight },
+    meta: { fontSize: 12, color: theme.textMuted },
+    reason: { fontSize: 13, color: theme.textSecondary, fontStyle: "italic" },
+    rejectReason: { fontSize: 12, color: theme.danger },
+    actionRow: { flexDirection: "row", gap: 10, marginTop: 4 },
+    actionBtn: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 11,
+    },
+    approveBtn: { backgroundColor: theme.success },
+    rejectBtn: {
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    actionBtnText: { color: "#fff", fontSize: 14, fontWeight: "600" },
+    empty: {
+      color: theme.textMuted,
+      fontSize: 13,
+      textAlign: "center",
+      paddingTop: 32,
+    },
+  });

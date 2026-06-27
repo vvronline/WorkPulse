@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Alert,
@@ -21,39 +22,40 @@ import {
   type Integration,
 } from "../../src/admin";
 
+const EMPTY_INTEGRATIONS: Integration[] = [];
+
 export default function IntegrationsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [items, setItems] = useState<Integration[]>([]);
-  const [github, setGithub] = useState<GithubStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    const [listR, ghR] = await Promise.allSettled([
-      getIntegrations(),
-      getGithubStatus(),
-    ]);
-    if (listR.status === "fulfilled") {
-      const d = listR.value.data as unknown;
-      const arr = Array.isArray(d)
-        ? (d as Integration[])
-        : ((d as { integrations?: Integration[] })?.integrations ?? []);
-      setItems(arr);
-    } else {
-      const e = listR.reason as any;
-      setItems([]);
-      setError(e?.response?.data?.error || "Failed to load integrations");
-    }
-    if (ghR.status === "fulfilled") setGithub(ghR.value.data);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data, isLoading: loading } = useQuery({
+    queryKey: ["admin", "integrations"],
+    queryFn: async () => {
+      const [listR, ghR] = await Promise.allSettled([
+        getIntegrations(),
+        getGithubStatus(),
+      ]);
+      let items: Integration[] = EMPTY_INTEGRATIONS;
+      let error: string | null = null;
+      if (listR.status === "fulfilled") {
+        const d = listR.value.data as unknown;
+        items = Array.isArray(d)
+          ? (d as Integration[])
+          : ((d as { integrations?: Integration[] })?.integrations ??
+            EMPTY_INTEGRATIONS);
+      } else {
+        const e = listR.reason as any;
+        error = e?.response?.data?.error || "Failed to load integrations";
+      }
+      const github =
+        ghR.status === "fulfilled" ? (ghR.value.data as GithubStatus) : null;
+      return { items, github, error };
+    },
+  });
+  const items = data?.items ?? EMPTY_INTEGRATIONS;
+  const github = data?.github ?? null;
+  const error = data?.error ?? null;
 
   function confirmDisconnectGithub() {
     Alert.alert(
@@ -66,7 +68,11 @@ export default function IntegrationsScreen() {
           style: "destructive",
           onPress: () =>
             disconnectGithub()
-              .then(() => load())
+              .then(() =>
+                queryClient.invalidateQueries({
+                  queryKey: ["admin", "integrations"],
+                }),
+              )
               .catch((e: any) =>
                 Alert.alert(
                   "Error",
@@ -86,7 +92,11 @@ export default function IntegrationsScreen() {
         style: "destructive",
         onPress: () =>
           deleteIntegration(i.id)
-            .then(() => load())
+            .then(() =>
+              queryClient.invalidateQueries({
+                queryKey: ["admin", "integrations"],
+              }),
+            )
             .catch((e: any) =>
               Alert.alert(
                 "Error",
@@ -198,7 +208,14 @@ export default function IntegrationsScreen() {
           </Text>
         }
         ListFooterComponent={
-          <Pressable style={styles.refreshBtn} onPress={load}>
+          <Pressable
+            style={styles.refreshBtn}
+            onPress={() =>
+              queryClient.invalidateQueries({
+                queryKey: ["admin", "integrations"],
+              })
+            }
+          >
             <RefreshCw size={14} color={theme.textSecondary} />
             <Text style={styles.refreshText}>Refresh</Text>
           </Pressable>
@@ -210,76 +227,80 @@ export default function IntegrationsScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { alignItems: "center", justifyContent: "center", flex: 1 },
-  list: { padding: 16, gap: 10, paddingBottom: 40 },
-  ghCard: {
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radiusLg,
-    padding: 16,
-    gap: 8,
-    marginBottom: 6,
-  },
-  ghHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
-  ghTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: theme.text },
-  statusPill: {
-    borderRadius: theme.radiusFull,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  statusText: { fontSize: 11, fontWeight: "700" },
-  ghMeta: { fontSize: 13, color: theme.textSecondary },
-  ghHint: { fontSize: 12, color: theme.textMuted, lineHeight: 17 },
-  dangerBtn: {
-    borderWidth: 1,
-    borderColor: theme.danger,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 10,
-    alignItems: "center",
-    marginTop: 4,
-  },
-  dangerBtnText: { color: theme.danger, fontSize: 13, fontWeight: "600" },
-  card: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 12,
-  },
-  iconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: theme.primaryGlow,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  body: { flex: 1, gap: 2 },
-  name: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: theme.text,
-    textTransform: "capitalize",
-  },
-  meta: { fontSize: 12, color: theme.textSecondary },
-  iconBtn: { padding: 6 },
-  empty: {
-    color: theme.textMuted,
-    fontSize: 13,
-    textAlign: "center",
-    paddingVertical: 24,
-  },
-  refreshBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 12,
-  },
-  refreshText: { fontSize: 13, color: theme.textSecondary, fontWeight: "500" },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { alignItems: "center", justifyContent: "center", flex: 1 },
+    list: { padding: 16, gap: 10, paddingBottom: 40 },
+    ghCard: {
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radiusLg,
+      padding: 16,
+      gap: 8,
+      marginBottom: 6,
+    },
+    ghHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+    ghTitle: { flex: 1, fontSize: 16, fontWeight: "700", color: theme.text },
+    statusPill: {
+      borderRadius: theme.radiusFull,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
+    statusText: { fontSize: 11, fontWeight: "700" },
+    ghMeta: { fontSize: 13, color: theme.textSecondary },
+    ghHint: { fontSize: 12, color: theme.textMuted, lineHeight: 17 },
+    dangerBtn: {
+      borderWidth: 1,
+      borderColor: theme.danger,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 10,
+      alignItems: "center",
+      marginTop: 4,
+    },
+    dangerBtnText: { color: theme.danger, fontSize: 13, fontWeight: "600" },
+    card: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 12,
+    },
+    iconWrap: {
+      width: 38,
+      height: 38,
+      borderRadius: 10,
+      backgroundColor: theme.primaryGlow,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    body: { flex: 1, gap: 2 },
+    name: {
+      fontSize: 15,
+      fontWeight: "600",
+      color: theme.text,
+      textTransform: "capitalize",
+    },
+    meta: { fontSize: 12, color: theme.textSecondary },
+    iconBtn: { padding: 6 },
+    empty: {
+      color: theme.textMuted,
+      fontSize: 13,
+      textAlign: "center",
+      paddingVertical: 24,
+    },
+    refreshBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      paddingVertical: 12,
+    },
+    refreshText: {
+      fontSize: 13,
+      color: theme.textSecondary,
+      fontWeight: "500",
+    },
+  });

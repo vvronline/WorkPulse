@@ -1,16 +1,14 @@
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState } from "react";
-import { ActivityIndicator,
+  ActivityIndicator,
   FlatList,
   Image,
   Pressable,
   RefreshControl,
   ScrollView,
   Text,
-  View
+  View,
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import {
@@ -53,6 +51,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "analytics", label: "Analytics" },
   { id: "requests", label: "My Requests" },
 ];
+
+const EMPTY_MEMBERS: TeamMember[] = [];
+const EMPTY_APPROVALS: Approval[] = [];
 
 const ROLE_LABELS: Record<string, string> = {
   employee: "Employee",
@@ -201,25 +202,16 @@ export default function TeamScreen() {
 function AttendanceTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
+  const { data: members = EMPTY_MEMBERS, isLoading: loading } = useQuery({
+    queryKey: ["team", "attendance"],
+    queryFn: async () => {
       const { data } = await getTeamAttendance();
-      setMembers(Array.isArray(data) ? data : []);
-    } catch {
-      setMembers([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+      return Array.isArray(data) ? data : EMPTY_MEMBERS;
+    },
+  });
 
   const groups = useMemo(() => {
     const g: Record<TeamMember["status"], TeamMember[]> = {
@@ -248,9 +240,12 @@ function AttendanceTab() {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={() => {
+          onRefresh={async () => {
             setRefreshing(true);
-            load();
+            await queryClient.invalidateQueries({
+              queryKey: ["team", "attendance"],
+            });
+            setRefreshing(false);
           }}
           tintColor={theme.primary}
         />
@@ -259,7 +254,9 @@ function AttendanceTab() {
       {/* Stats grid */}
       <View style={styles.statsGrid}>
         <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: STATUS_META.working.color }]}>
+          <Text
+            style={[styles.statValue, { color: STATUS_META.working.color }]}
+          >
             {groups.working.length}
           </Text>
           <Text style={styles.statLabel}>Working</Text>
@@ -275,7 +272,9 @@ function AttendanceTab() {
           <Text style={styles.statLabel}>Not Started</Text>
         </View>
         <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: STATUS_META.on_leave.color }]}>
+          <Text
+            style={[styles.statValue, { color: STATUS_META.on_leave.color }]}
+          >
             {groups.on_leave.length}
           </Text>
           <Text style={styles.statLabel}>On Leave</Text>
@@ -365,7 +364,9 @@ function MemberRow({ item }: { item: TeamMember }) {
         ) : null}
       </View>
       <View style={[styles.badge, { backgroundColor: meta.bg }]}>
-        <Text style={[styles.badgeText, { color: meta.color }]}>{meta.label}</Text>
+        <Text style={[styles.badgeText, { color: meta.color }]}>
+          {meta.label}
+        </Text>
       </View>
     </Pressable>
   );
@@ -384,38 +385,31 @@ function ApprovalsTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { alert, dialog } = useDialog();
-  const [items, setItems] = useState<Approval[]>([]);
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState("pending");
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [rejectId, setRejectId] = useState<number | null>(null);
   const [rejecting, setRejecting] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getApprovals(
-        filter ? { status: filter } : undefined,
-      );
-      setItems(data || []);
-    } catch {
-      setItems([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [filter]);
+  const approvalsKey = ["team", "approvals", filter];
+  const { data: items = EMPTY_APPROVALS, isLoading: loading } = useQuery({
+    queryKey: approvalsKey,
+    queryFn: async () =>
+      (await getApprovals(filter ? { status: filter } : undefined)).data ||
+      EMPTY_APPROVALS,
+  });
 
-  useEffect(() => {
-    setLoading(true);
-    load();
-  }, [load]);
+  const removeLocally = (id: number) =>
+    queryClient.setQueryData<Approval[]>(approvalsKey, (prev) =>
+      (prev || EMPTY_APPROVALS).filter((i) => i.id !== id),
+    );
 
   async function approve(item: Approval) {
     setBusyId(item.id);
     try {
       await approveRequest(item.id);
-      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      removeLocally(item.id);
     } catch (e: any) {
       alert("Error", e?.response?.data?.error || "Action failed");
     } finally {
@@ -430,7 +424,7 @@ function ApprovalsTab() {
       await rejectRequest(rejectId, values.reason?.trim() || undefined);
       const id = rejectId;
       setRejectId(null);
-      setItems((prev) => prev.filter((i) => i.id !== id));
+      removeLocally(id);
     } catch (e: any) {
       alert("Error", e?.response?.data?.error || "Failed to reject");
     } finally {
@@ -452,7 +446,10 @@ function ApprovalsTab() {
         {APPROVAL_FILTERS.map((f) => (
           <Pressable
             key={f.value || "all"}
-            style={[styles.filterChip, filter === f.value && styles.filterChipActive]}
+            style={[
+              styles.filterChip,
+              filter === f.value && styles.filterChipActive,
+            ]}
             onPress={() => setFilter(f.value)}
           >
             <Text
@@ -474,9 +471,10 @@ function ApprovalsTab() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => {
+            onRefresh={async () => {
               setRefreshing(true);
-              load();
+              await queryClient.invalidateQueries({ queryKey: approvalsKey });
+              setRefreshing(false);
             }}
             tintColor={theme.primary}
           />
@@ -493,7 +491,9 @@ function ApprovalsTab() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.approvalName}>{name}</Text>
-                  <Text style={styles.approvalType}>{typeLabel(item.type)}</Text>
+                  <Text style={styles.approvalType}>
+                    {typeLabel(item.type)}
+                  </Text>
                 </View>
                 <View style={[styles.badge, { backgroundColor: st.bg }]}>
                   <Text style={[styles.badgeText, { color: st.color }]}>
@@ -507,7 +507,9 @@ function ApprovalsTab() {
                 <Text style={styles.approvalDetail}>{requestDetail(item)}</Text>
               </View>
               {item.metadata?.reason ? (
-                <Text style={styles.approvalReason}>"{item.metadata.reason}"</Text>
+                <Text style={styles.approvalReason}>
+                  "{item.metadata.reason}"
+                </Text>
               ) : null}
 
               {isPending ? (
@@ -603,7 +605,9 @@ function SummaryCard({
   return (
     <View style={styles.summaryCard}>
       <View style={styles.summaryIcon}>{icon}</View>
-      <Text style={[styles.summaryValue, valueColor ? { color: valueColor } : null]}>
+      <Text
+        style={[styles.summaryValue, valueColor ? { color: valueColor } : null]}
+      >
         {value}
       </Text>
       <Text style={styles.summaryLabel}>{label}</Text>
@@ -619,7 +623,10 @@ function PercentBar({ value, color }: { value?: number; color: string }) {
     <View style={styles.percentWrap}>
       <View style={styles.percentTrack}>
         <View
-          style={[styles.percentFill, { width: `${pct}%`, backgroundColor: color }]}
+          style={[
+            styles.percentFill,
+            { width: `${pct}%`, backgroundColor: color },
+          ]}
         />
       </View>
       <Text style={styles.percentLabel}>{pct}%</Text>
@@ -630,27 +637,15 @@ function PercentBar({ value, color }: { value?: number; color: string }) {
 function AnalyticsTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [data, setData] = useState<TeamAnalytics | null>(null);
+  const queryClient = useQueryClient();
   const [range, setRange] = useState("7");
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getTeamAnalytics(Number(range));
-      setData(data);
-    } catch {
-      setData(null);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [range]);
-
-  useEffect(() => {
-    setLoading(true);
-    load();
-  }, [load]);
+  const analyticsKey = ["team", "analytics", range];
+  const { data = null, isLoading: loading } = useQuery({
+    queryKey: analyticsKey,
+    queryFn: async () => (await getTeamAnalytics(Number(range))).data,
+  });
 
   const members = useMemo(() => {
     const list = data?.members || [];
@@ -671,9 +666,10 @@ function AnalyticsTab() {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={() => {
+          onRefresh={async () => {
             setRefreshing(true);
-            load();
+            await queryClient.invalidateQueries({ queryKey: analyticsKey });
+            setRefreshing(false);
           }}
           tintColor={theme.primary}
         />
@@ -683,7 +679,10 @@ function AnalyticsTab() {
         {RANGE_OPTIONS.map((r) => (
           <Pressable
             key={r.value}
-            style={[styles.filterChip, range === r.value && styles.filterChipActive]}
+            style={[
+              styles.filterChip,
+              range === r.value && styles.filterChipActive,
+            ]}
             onPress={() => setRange(r.value)}
           >
             <Text
@@ -753,7 +752,10 @@ function AnalyticsTab() {
                 <View style={styles.perfHeader}>
                   <View style={styles.avatarSm}>
                     {avatar ? (
-                      <Image source={{ uri: avatar }} style={styles.avatarImgSm} />
+                      <Image
+                        source={{ uri: avatar }}
+                        style={styles.avatarImgSm}
+                      />
                     ) : (
                       <Text style={styles.avatarTextSm}>
                         {initials(mem.full_name)}
@@ -795,7 +797,10 @@ function AnalyticsTab() {
 
                 <View style={styles.perfBarRow}>
                   <Text style={styles.perfBarLabel}>Target Met</Text>
-                  <PercentBar value={mem.targetMetPercent} color={theme.success} />
+                  <PercentBar
+                    value={mem.targetMetPercent}
+                    color={theme.success}
+                  />
                 </View>
                 <View style={styles.perfBarRow}>
                   <Text style={styles.perfBarLabel}>Punctuality</Text>
@@ -815,25 +820,14 @@ function AnalyticsTab() {
 function MyRequestsTab() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [items, setItems] = useState<Approval[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await getMyRequests({ status: "all" });
-      setItems(data || []);
-    } catch {
-      setItems([]);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data: items = EMPTY_APPROVALS, isLoading: loading } = useQuery({
+    queryKey: ["team", "myRequests"],
+    queryFn: async () =>
+      (await getMyRequests({ status: "all" })).data || EMPTY_APPROVALS,
+  });
 
   if (loading) {
     return (
@@ -851,9 +845,12 @@ function MyRequestsTab() {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={() => {
+          onRefresh={async () => {
             setRefreshing(true);
-            load();
+            await queryClient.invalidateQueries({
+              queryKey: ["team", "myRequests"],
+            });
+            setRefreshing(false);
           }}
           tintColor={theme.primary}
         />

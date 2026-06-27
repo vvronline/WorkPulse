@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   Alert,
@@ -13,7 +14,14 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
-import { Archive, ArchiveRestore, Folder, Plus, Trash2, X } from "lucide-react-native";
+import {
+  Archive,
+  ArchiveRestore,
+  Folder,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react-native";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { useKeyboardInset } from "../../src/hooks/useKeyboardInset";
@@ -25,12 +33,13 @@ import {
   type Project,
 } from "../../src/admin";
 
+const EMPTY_PROJECTS: Project[] = [];
+
 export default function ProjectsScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
-  const [items, setItems] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
@@ -39,21 +48,15 @@ export default function ProjectsScreen() {
   const [key, setKey] = useState("");
   const [description, setDescription] = useState("");
 
-  const load = useCallback(() => {
-    setLoading(true);
-    getProjects(showArchived)
-      .then((r) => {
-        const d = r.data as unknown;
-        const arr = Array.isArray(d) ? d : ((d as any)?.projects ?? []);
-        setItems(arr);
-      })
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false));
-  }, [showArchived]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data: items = EMPTY_PROJECTS, isLoading: loading } = useQuery({
+    queryKey: ["admin", "projects", showArchived],
+    queryFn: async () => {
+      const r = await getProjects(showArchived);
+      const d = r.data as unknown;
+      const arr = Array.isArray(d) ? d : ((d as any)?.projects ?? []);
+      return arr as Project[];
+    },
+  });
 
   function openCreate() {
     setName("");
@@ -75,7 +78,7 @@ export default function ProjectsScreen() {
         description: description.trim() || undefined,
       });
       setModalOpen(false);
-      load();
+      queryClient.invalidateQueries({ queryKey: ["admin", "projects"] });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to create");
     } finally {
@@ -85,7 +88,9 @@ export default function ProjectsScreen() {
 
   function toggleArchive(p: Project) {
     archiveProject(p.id, !p.is_archived)
-      .then(() => load())
+      .then(() =>
+        queryClient.invalidateQueries({ queryKey: ["admin", "projects"] }),
+      )
       .catch((e: any) =>
         Alert.alert("Error", e?.response?.data?.error || "Failed"),
       );
@@ -99,9 +104,16 @@ export default function ProjectsScreen() {
         style: "destructive",
         onPress: () =>
           deleteProject(p.id)
-            .then(() => load())
+            .then(() =>
+              queryClient.invalidateQueries({
+                queryKey: ["admin", "projects"],
+              }),
+            )
             .catch((e: any) =>
-              Alert.alert("Error", e?.response?.data?.error || "Failed to delete"),
+              Alert.alert(
+                "Error",
+                e?.response?.data?.error || "Failed to delete",
+              ),
             ),
       },
     ]);
@@ -116,7 +128,9 @@ export default function ProjectsScreen() {
           style={[styles.chip, !showArchived && styles.chipActive]}
           onPress={() => setShowArchived(false)}
         >
-          <Text style={[styles.chipText, !showArchived && styles.chipTextActive]}>
+          <Text
+            style={[styles.chipText, !showArchived && styles.chipTextActive]}
+          >
             Active
           </Text>
         </Pressable>
@@ -124,7 +138,9 @@ export default function ProjectsScreen() {
           style={[styles.chip, showArchived && styles.chipActive]}
           onPress={() => setShowArchived(true)}
         >
-          <Text style={[styles.chipText, showArchived && styles.chipTextActive]}>
+          <Text
+            style={[styles.chipText, showArchived && styles.chipTextActive]}
+          >
             All (incl. archived)
           </Text>
         </Pressable>
@@ -250,114 +266,114 @@ export default function ProjectsScreen() {
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  filterRow: { flexDirection: "row", gap: 8, padding: 16, paddingBottom: 8 },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: theme.radiusFull,
-    backgroundColor: theme.surface,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-  },
-  chipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-  chipText: { fontSize: 13, color: theme.textSecondary, fontWeight: "500" },
-  chipTextActive: { color: "#fff", fontWeight: "600" },
-  list: { padding: 16, paddingTop: 4, gap: 10, paddingBottom: 90 },
-  card: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 12,
-  },
-  iconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: theme.primaryGlow,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  body: { flex: 1, gap: 2 },
-  nameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  name: { fontSize: 15, fontWeight: "600", color: theme.text, flexShrink: 1 },
-  keyBadge: {
-    backgroundColor: theme.surface,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-  },
-  keyText: { fontSize: 10, color: theme.textSecondary, fontWeight: "700" },
-  meta: { fontSize: 12, color: theme.textSecondary },
-  iconBtn: { padding: 6 },
-  empty: {
-    color: theme.textMuted,
-    fontSize: 13,
-    textAlign: "center",
-    paddingTop: 32,
-  },
-  fab: {
-    position: "absolute",
-    right: 20,
-    bottom: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: theme.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 6,
-  },
-  modalOverlay: { flex: 1, justifyContent: "flex-end" },
-  modalScrim: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.6)",
-  },
-  sheet: {
-    backgroundColor: theme.bgElevated,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    gap: 10,
-  },
-  sheetHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  sheetTitle: { fontSize: 18, fontWeight: "700", color: theme.text },
-  fieldLabel: { fontSize: 12, color: theme.textSecondary, fontWeight: "500" },
-  input: {
-    backgroundColor: theme.inputBg,
-    borderWidth: 1,
-    borderColor: theme.inputBorder,
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: theme.text,
-    fontSize: 15,
-  },
-  inputMultiline: { minHeight: 70, textAlignVertical: "top" },
-  saveBtn: {
-    backgroundColor: theme.primary,
-    borderRadius: theme.radiusSm,
-    paddingVertical: 13,
-    alignItems: "center",
-    marginTop: 6,
-  },
-  saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    center: { flex: 1, alignItems: "center", justifyContent: "center" },
+    filterRow: { flexDirection: "row", gap: 8, padding: 16, paddingBottom: 8 },
+    chip: {
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: theme.radiusFull,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    chipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+    chipText: { fontSize: 13, color: theme.textSecondary, fontWeight: "500" },
+    chipTextActive: { color: "#fff", fontWeight: "600" },
+    list: { padding: 16, paddingTop: 4, gap: 10, paddingBottom: 90 },
+    card: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 12,
+    },
+    iconWrap: {
+      width: 38,
+      height: 38,
+      borderRadius: 10,
+      backgroundColor: theme.primaryGlow,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    body: { flex: 1, gap: 2 },
+    nameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+    name: { fontSize: 15, fontWeight: "600", color: theme.text, flexShrink: 1 },
+    keyBadge: {
+      backgroundColor: theme.surface,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 6,
+      paddingVertical: 1,
+    },
+    keyText: { fontSize: 10, color: theme.textSecondary, fontWeight: "700" },
+    meta: { fontSize: 12, color: theme.textSecondary },
+    iconBtn: { padding: 6 },
+    empty: {
+      color: theme.textMuted,
+      fontSize: 13,
+      textAlign: "center",
+      paddingTop: 32,
+    },
+    fab: {
+      position: "absolute",
+      right: 20,
+      bottom: 24,
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: theme.primary,
+      alignItems: "center",
+      justifyContent: "center",
+      shadowColor: "#000",
+      shadowOpacity: 0.3,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 6,
+    },
+    modalOverlay: { flex: 1, justifyContent: "flex-end" },
+    modalScrim: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: "rgba(0,0,0,0.6)",
+    },
+    sheet: {
+      backgroundColor: theme.bgElevated,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      padding: 20,
+      gap: 10,
+    },
+    sheetHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 4,
+    },
+    sheetTitle: { fontSize: 18, fontWeight: "700", color: theme.text },
+    fieldLabel: { fontSize: 12, color: theme.textSecondary, fontWeight: "500" },
+    input: {
+      backgroundColor: theme.inputBg,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      color: theme.text,
+      fontSize: 15,
+    },
+    inputMultiline: { minHeight: 70, textAlignVertical: "top" },
+    saveBtn: {
+      backgroundColor: theme.primary,
+      borderRadius: theme.radiusSm,
+      paddingVertical: 13,
+      alignItems: "center",
+      marginTop: 6,
+    },
+    saveBtnText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  });

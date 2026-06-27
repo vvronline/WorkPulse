@@ -1,9 +1,7 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState } from "react";
-import { ActivityIndicator,
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Modal,
@@ -13,7 +11,7 @@ import { ActivityIndicator,
   Switch,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 import { Stack } from "expo-router";
 import {
@@ -155,16 +153,26 @@ function stringToValues(s: string): (number | string)[] {
     .map((v) => (isNaN(Number(v)) ? v : Number(v)));
 }
 
+// Stable module-level empties so memoized derivations don't churn between renders.
+const EMPTY_TYPES: AgileWorkItemType[] = [];
+const EMPTY_STATES: AgileWorkflowState[] = [];
+const EMPTY_LABELS: TaskLabelManage[] = [];
+const EMPTY_FIELDS: CustomFieldDef[] = [];
+
+type AgileConfigData = {
+  settings: AgileSettings | null;
+  types: AgileWorkItemType[];
+  states: AgileWorkflowState[];
+  canEdit: boolean;
+  labels: TaskLabelManage[];
+  customFields: CustomFieldDef[];
+};
+
 export default function AgileConfigScreen() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const kbInset = useKeyboardInset();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [canEdit, setCanEdit] = useState(false);
-  const [settings, setSettings] = useState<AgileSettings | null>(null);
-  const [types, setTypes] = useState<AgileWorkItemType[]>([]);
-  const [states, setStates] = useState<AgileWorkflowState[]>([]);
+  const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
 
   // Local editable copies for the General section (saved with a button, like web).
@@ -176,7 +184,9 @@ export default function AgileConfigScreen() {
 
   // Work item type modal state
   const [typeModal, setTypeModal] = useState(false);
-  const [editingType, setEditingType] = useState<AgileWorkItemType | null>(null);
+  const [editingType, setEditingType] = useState<AgileWorkItemType | null>(
+    null,
+  );
   const [typeName, setTypeName] = useState("");
   const [typeIcon, setTypeIcon] = useState("");
   const [typeColor, setTypeColor] = useState(COLOR_PRESETS[0]);
@@ -200,14 +210,14 @@ export default function AgileConfigScreen() {
   const [stateActive, setStateActive] = useState(true);
 
   // Labels
-  const [labels, setLabels] = useState<TaskLabelManage[]>([]);
   const [labelModal, setLabelModal] = useState(false);
-  const [editingLabel, setEditingLabel] = useState<TaskLabelManage | null>(null);
+  const [editingLabel, setEditingLabel] = useState<TaskLabelManage | null>(
+    null,
+  );
   const [labelName, setLabelName] = useState("");
   const [labelColor, setLabelColor] = useState(LABEL_PRESETS[0]);
 
   // Custom fields
-  const [fields, setFields] = useState<CustomFieldDef[]>([]);
   const [fieldModal, setFieldModal] = useState(false);
   const [editingField, setEditingField] = useState<CustomFieldDef | null>(null);
   const [fieldLabel, setFieldLabel] = useState("");
@@ -230,39 +240,91 @@ export default function AgileConfigScreen() {
     setGeneralDirty(false);
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    const [setR, typR, staR, permR, labR, fldR] = await Promise.allSettled([
-      getAgileSettings(),
-      getWorkItemTypes(),
-      getWorkflowStates(),
-      getAgilePermissions(),
-      getTaskLabelsManage(),
-      getCustomFieldsAll(),
-    ]);
-    if (setR.status === "fulfilled") {
-      setSettings(setR.value.data);
-      syncGeneral(setR.value.data);
-    } else {
-      const e = setR.reason as any;
-      setError(e?.response?.data?.error || "Failed to load Agile settings");
-    }
-    if (typR.status === "fulfilled")
-      setTypes(Array.isArray(typR.value.data) ? typR.value.data : []);
-    if (staR.status === "fulfilled")
-      setStates(Array.isArray(staR.value.data) ? staR.value.data : []);
-    if (permR.status === "fulfilled") setCanEdit(!!permR.value.data?.canEdit);
-    if (labR.status === "fulfilled")
-      setLabels(Array.isArray(labR.value.data) ? labR.value.data : []);
-    if (fldR.status === "fulfilled")
-      setFields(Array.isArray(fldR.value.data) ? fldR.value.data : []);
-    setLoading(false);
-  }, [syncGeneral]);
+  const {
+    data: agileData,
+    isLoading: loading,
+    isError,
+    error: queryError,
+  } = useQuery({
+    queryKey: ["admin", "agileConfig"],
+    queryFn: async () => {
+      const [setR, typR, staR, permR, labR, fldR] = await Promise.allSettled([
+        getAgileSettings(),
+        getWorkItemTypes(),
+        getWorkflowStates(),
+        getAgilePermissions(),
+        getTaskLabelsManage(),
+        getCustomFieldsAll(),
+      ]);
+      if (setR.status !== "fulfilled") {
+        throw setR.reason;
+      }
+      return {
+        settings: setR.value.data as AgileSettings | null,
+        types:
+          typR.status === "fulfilled" && Array.isArray(typR.value.data)
+            ? typR.value.data
+            : EMPTY_TYPES,
+        states:
+          staR.status === "fulfilled" && Array.isArray(staR.value.data)
+            ? staR.value.data
+            : EMPTY_STATES,
+        canEdit:
+          permR.status === "fulfilled" ? !!permR.value.data?.canEdit : false,
+        labels:
+          labR.status === "fulfilled" && Array.isArray(labR.value.data)
+            ? labR.value.data
+            : EMPTY_LABELS,
+        customFields:
+          fldR.status === "fulfilled" && Array.isArray(fldR.value.data)
+            ? fldR.value.data
+            : EMPTY_FIELDS,
+      };
+    },
+  });
 
+  const settings = agileData?.settings ?? null;
+  const types = agileData?.types ?? EMPTY_TYPES;
+  const states = agileData?.states ?? EMPTY_STATES;
+  const canEdit = agileData?.canEdit ?? false;
+  const labels = agileData?.labels ?? EMPTY_LABELS;
+  const fields = agileData?.customFields ?? EMPTY_FIELDS;
+  const error = isError
+    ? (queryError as any)?.response?.data?.error ||
+      "Failed to load Agile settings"
+    : null;
+
+  // Optimistic / refetched settings writes flow through the query cache so the
+  // General section stays in sync with the cached server data.
+  const setSettings = useCallback(
+    (
+      updater:
+        | AgileSettings
+        | null
+        | ((s: AgileSettings | null) => AgileSettings | null),
+    ) => {
+      queryClient.setQueryData<AgileConfigData>(
+        ["admin", "agileConfig"],
+        (old) => {
+          if (!old) return old;
+          const next =
+            typeof updater === "function"
+              ? (updater as (s: AgileSettings | null) => AgileSettings | null)(
+                  old.settings,
+                )
+              : updater;
+          return { ...old, settings: next };
+        },
+      );
+    },
+    [queryClient],
+  );
+
+  // Keep the editable General-section copies aligned with cached settings,
+  // mirroring the syncGeneral call the old load() performed after each fetch.
   useEffect(() => {
-    load();
-  }, [load]);
+    syncGeneral(settings);
+  }, [settings, syncGeneral]);
 
   /* ── Feature toggles (instant save with verify-after-write) ── */
 
@@ -286,9 +348,7 @@ export default function AgileConfigScreen() {
         const fresh = r.data;
         const applied =
           fresh &&
-          Object.entries(patch).every(
-            ([k, v]) => (fresh as any)[k] === v,
-          );
+          Object.entries(patch).every(([k, v]) => (fresh as any)[k] === v);
         if (applied) {
           setSettings(fresh);
           syncGeneral(fresh);
@@ -315,7 +375,7 @@ export default function AgileConfigScreen() {
         estType === "none"
           ? []
           : estType !== "custom"
-            ? ESTIMATION_PRESETS[estType] ?? stringToValues(estValues)
+            ? (ESTIMATION_PRESETS[estType] ?? stringToValues(estValues))
             : stringToValues(estValues),
       estimation_unit_label: estUnit,
       default_dod: dod,
@@ -406,7 +466,9 @@ export default function AgileConfigScreen() {
         });
       }
       setTypeModal(false);
-      load();
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "agileConfig"],
+      });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to save");
     } finally {
@@ -425,7 +487,11 @@ export default function AgileConfigScreen() {
           style: "destructive",
           onPress: () =>
             deleteWorkItemType(t.id)
-              .then(() => load())
+              .then(() =>
+                queryClient.invalidateQueries({
+                  queryKey: ["admin", "agileConfig"],
+                }),
+              )
               .catch((e: any) =>
                 Alert.alert(
                   "Error",
@@ -492,7 +558,9 @@ export default function AgileConfigScreen() {
         });
       }
       setStateModal(false);
-      load();
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "agileConfig"],
+      });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to save");
     } finally {
@@ -511,7 +579,11 @@ export default function AgileConfigScreen() {
           style: "destructive",
           onPress: () =>
             deleteWorkflowState(s.id)
-              .then(() => load())
+              .then(() =>
+                queryClient.invalidateQueries({
+                  queryKey: ["admin", "agileConfig"],
+                }),
+              )
               .catch((e: any) =>
                 Alert.alert(
                   "Error",
@@ -555,7 +627,9 @@ export default function AgileConfigScreen() {
         await createTaskLabel({ name: labelName.trim(), color: labelColor });
       }
       setLabelModal(false);
-      load();
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "agileConfig"],
+      });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to save label");
     } finally {
@@ -574,7 +648,11 @@ export default function AgileConfigScreen() {
           style: "destructive",
           onPress: () =>
             deleteTaskLabel(l.id)
-              .then(() => load())
+              .then(() =>
+                queryClient.invalidateQueries({
+                  queryKey: ["admin", "agileConfig"],
+                }),
+              )
               .catch((e: any) =>
                 Alert.alert(
                   "Error",
@@ -588,8 +666,7 @@ export default function AgileConfigScreen() {
 
   /* ── Custom fields ── */
 
-  const isSelectType =
-    fieldType === "select" || fieldType === "multiselect";
+  const isSelectType = fieldType === "select" || fieldType === "multiselect";
 
   function openCreateField() {
     setEditingField(null);
@@ -681,7 +758,9 @@ export default function AgileConfigScreen() {
         await createCustomField(payload);
       }
       setFieldModal(false);
-      load();
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "agileConfig"],
+      });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to save field");
     } finally {
@@ -700,7 +779,11 @@ export default function AgileConfigScreen() {
           style: "destructive",
           onPress: () =>
             deleteCustomField(f.id)
-              .then(() => load())
+              .then(() =>
+                queryClient.invalidateQueries({
+                  queryKey: ["admin", "agileConfig"],
+                }),
+              )
               .catch((e: any) =>
                 Alert.alert(
                   "Error",
@@ -744,7 +827,10 @@ export default function AgileConfigScreen() {
   return (
     <ScrollView
       style={styles.screen}
-      contentContainerStyle={[styles.container, { paddingBottom: 48 + kbInset }]}
+      contentContainerStyle={[
+        styles.container,
+        { paddingBottom: 48 + kbInset },
+      ]}
     >
       <Stack.Screen options={{ title: "Agile Config" }} />
 
@@ -866,7 +952,10 @@ export default function AgileConfigScreen() {
           types.map((t) => (
             <View key={t.id} style={styles.itemRow}>
               <View
-                style={[styles.colorDot, { backgroundColor: t.color || "#888" }]}
+                style={[
+                  styles.colorDot,
+                  { backgroundColor: t.color || "#888" },
+                ]}
               />
               <View style={{ flex: 1 }}>
                 <Text style={styles.itemName}>
@@ -998,7 +1087,10 @@ export default function AgileConfigScreen() {
           labels.map((l) => (
             <View key={l.id} style={styles.itemRow}>
               <View
-                style={[styles.colorDot, { backgroundColor: l.color || "#888" }]}
+                style={[
+                  styles.colorDot,
+                  { backgroundColor: l.color || "#888" },
+                ]}
               />
               <View style={{ flex: 1 }}>
                 <View
@@ -1010,9 +1102,7 @@ export default function AgileConfigScreen() {
                   <Text style={styles.labelBadgeText}>{l.name}</Text>
                 </View>
                 <Text style={styles.itemMeta}>
-                  {l.created_by_username
-                    ? `by ${l.created_by_username}`
-                    : "—"}
+                  {l.created_by_username ? `by ${l.created_by_username}` : "—"}
                 </Text>
               </View>
               {canEdit ? (
@@ -1173,7 +1263,11 @@ export default function AgileConfigScreen() {
                 </View>
               ) : null}
             </ScrollView>
-            <Pressable style={styles.saveBtn} onPress={saveType} disabled={busy}>
+            <Pressable
+              style={styles.saveBtn}
+              onPress={saveType}
+              disabled={busy}
+            >
               <Text style={styles.saveBtnText}>
                 {busy ? "Saving…" : editingType ? "Save changes" : "Create"}
               </Text>
@@ -1247,7 +1341,9 @@ export default function AgileConfigScreen() {
                 />
               </View>
               <View style={styles.toggleRow}>
-                <Text style={styles.toggleLabel}>Terminal (counts as done)</Text>
+                <Text style={styles.toggleLabel}>
+                  Terminal (counts as done)
+                </Text>
                 <Switch
                   value={stateTerminal}
                   onValueChange={setStateTerminal}
@@ -1257,7 +1353,9 @@ export default function AgileConfigScreen() {
               </View>
               {editingState ? (
                 <View style={styles.toggleRow}>
-                  <Text style={styles.toggleLabel}>Active (shown on board)</Text>
+                  <Text style={styles.toggleLabel}>
+                    Active (shown on board)
+                  </Text>
                   <Switch
                     value={stateActive}
                     onValueChange={setStateActive}
@@ -1447,14 +1545,9 @@ export default function AgileConfigScreen() {
                         onPress={() => toggleAppliesTo(t.id)}
                       >
                         <View
-                          style={[
-                            styles.checkbox,
-                            on && styles.checkboxOn,
-                          ]}
+                          style={[styles.checkbox, on && styles.checkboxOn]}
                         >
-                          {on ? (
-                            <Text style={styles.checkMark}>✓</Text>
-                          ) : null}
+                          {on ? <Text style={styles.checkMark}>✓</Text> : null}
                         </View>
                         <Text style={styles.checkLabel}>{t.name}</Text>
                       </Pressable>

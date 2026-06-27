@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
   RefreshControl,
@@ -35,69 +36,69 @@ function fmtDays(v: number | null | undefined): string {
   return `${v} d`;
 }
 
+const EMPTY_SPRINTS: Sprint[] = [];
+const EMPTY_TASKS: Task[] = [];
+
 export default function SprintInsights() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const params = useLocalSearchParams<{ sprint_id?: string }>();
-  const [sprints, setSprints] = useState<Sprint[]>([]);
+  const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<number | null>(
     params.sprint_id ? Number(params.sprint_id) : null,
   );
-  const [stats, setStats] = useState<SprintStats | null>(null);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [cycle, setCycle] = useState<SprintCycleTime | null>(null);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Fetch the sprint list once; default the selection to the deep-linked sprint
-  // (when valid), else the active sprint, else the first.
-  useEffect(() => {
-    getSprints()
-      .then((r) => {
-        const list = r.data?.sprints || [];
-        setSprints(list);
-        setSelectedId((prev) => {
-          if (prev && list.some((s) => s.id === prev)) return prev;
-          const active = list.find((s) => s.status === "active");
-          return active?.id ?? list[0]?.id ?? null;
-        });
-      })
-      .catch(() => setSprints([]));
-  }, []);
+  const { data: sprints = EMPTY_SPRINTS } = useQuery({
+    queryKey: ["sprints", "list"],
+    queryFn: async () => (await getSprints()).data?.sprints || EMPTY_SPRINTS,
+  });
 
-  const reload = useCallback(() => {
-    if (!selectedId) {
-      setStats(null);
-      setTasks([]);
-      setCycle(null);
-      setLoading(false);
-      setRefreshing(false);
-      return;
-    }
-    setLoading(true);
-    Promise.allSettled([
-      getSprintStats(selectedId),
-      getSprintTasks(selectedId),
-      getSprintCycleTime(selectedId),
-    ]).then(([stRes, tkRes, cyRes]) => {
-      setStats(stRes.status === "fulfilled" ? stRes.value.data : null);
-      setTasks(
-        tkRes.status === "fulfilled" ? tkRes.value.data.tasks || [] : [],
-      );
-      setCycle(cyRes.status === "fulfilled" ? cyRes.value.data : null);
-      setLoading(false);
-      setRefreshing(false);
+  // Default the selection to the deep-linked sprint (when valid), else the
+  // active sprint, else the first — once the sprint list resolves.
+  useEffect(() => {
+    if (!sprints.length) return;
+    setSelectedId((prev) => {
+      if (prev && sprints.some((s) => s.id === prev)) return prev;
+      const active = sprints.find((s) => s.status === "active");
+      return active?.id ?? sprints[0]?.id ?? null;
     });
-  }, [selectedId]);
+  }, [sprints]);
 
-  useEffect(() => {
-    reload();
-  }, [reload]);
+  const insightsKey = ["sprints", "insights", selectedId];
+  const { data: insights, isLoading: insightsLoading } = useQuery({
+    queryKey: insightsKey,
+    enabled: !!selectedId,
+    queryFn: async () => {
+      const [stRes, tkRes, cyRes] = await Promise.allSettled([
+        getSprintStats(selectedId as number),
+        getSprintTasks(selectedId as number),
+        getSprintCycleTime(selectedId as number),
+      ]);
+      return {
+        stats: (stRes.status === "fulfilled"
+          ? stRes.value.data
+          : null) as SprintStats | null,
+        tasks: (tkRes.status === "fulfilled"
+          ? tkRes.value.data.tasks || EMPTY_TASKS
+          : EMPTY_TASKS) as Task[],
+        cycle: (cyRes.status === "fulfilled"
+          ? cyRes.value.data
+          : null) as SprintCycleTime | null,
+      };
+    },
+  });
 
-  const onRefresh = useCallback(() => {
+  const stats = insights?.stats ?? null;
+  const tasks = insights?.tasks ?? EMPTY_TASKS;
+  const cycle = insights?.cycle ?? null;
+  const loading = !!selectedId && insightsLoading;
+
+  const onRefresh = async () => {
     setRefreshing(true);
-    reload();
-  }, [reload]);
+    await queryClient.invalidateQueries({ queryKey: insightsKey });
+    setRefreshing(false);
+  };
 
   const selectedSprint = sprints.find((s) => s.id === selectedId) || null;
 
@@ -216,7 +217,10 @@ export default function SprintInsights() {
                         </View>
                         {pr ? (
                           <View
-                            style={[styles.prDot, { backgroundColor: pr.color }]}
+                            style={[
+                              styles.prDot,
+                              { backgroundColor: pr.color },
+                            ]}
                           />
                         ) : null}
                         <Text style={styles.ticketPoints}>
@@ -248,10 +252,7 @@ export default function SprintInsights() {
                     value={fmtDays(cycle.lead.avg)}
                     sub={`median ${cycle.lead.median ?? "—"} · p90 ${cycle.lead.p90 ?? "—"}`}
                   />
-                  <StatCard
-                    label="Sampled"
-                    value={String(cycle.cycle.n)}
-                  />
+                  <StatCard label="Sampled" value={String(cycle.cycle.n)} />
                 </View>
                 <View style={styles.ticketList}>
                   {cycle.tasks.map((t) => (
@@ -314,83 +315,97 @@ function StatCard({
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
-  container: { padding: 16, gap: 12, paddingBottom: 40 },
-  subtitle: { color: theme.textMuted, fontSize: 13 },
-  center: { alignItems: "center", justifyContent: "center", paddingVertical: 40 },
-  empty: { color: theme.textMuted, fontSize: 14, fontStyle: "italic", paddingVertical: 8 },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: theme.textSecondary,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginTop: 12,
-  },
-  statGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
-  statCard: {
-    flexGrow: 1,
-    flexBasis: "30%",
-    minWidth: 100,
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    padding: 12,
-    gap: 4,
-  },
-  statLabel: {
-    fontSize: 11,
-    color: theme.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-    fontWeight: "600",
-  },
-  statValue: { fontSize: 18, fontWeight: "800" },
-  statSub: { fontSize: 11, color: theme.textSecondary },
-  ticketList: {
-    backgroundColor: theme.glass,
-    borderWidth: 1,
-    borderColor: theme.glassBorder,
-    borderRadius: theme.radius,
-    overflow: "hidden",
-  },
-  ticketRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.border,
-  },
-  ticketMain: { flex: 1, gap: 2 },
-  ticketKey: { fontSize: 11, fontWeight: "700", color: theme.primaryLight },
-  ticketTitle: { fontSize: 13, color: theme.text },
-  ticketMeta: { flexDirection: "row", alignItems: "center", gap: 8 },
-  statusBadge: {
-    borderRadius: theme.radiusSm,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  statusBadgeText: { fontSize: 10, fontWeight: "700" },
-  prDot: { width: 8, height: 8, borderRadius: 4 },
-  ticketPoints: { fontSize: 11, color: theme.textSecondary, minWidth: 36, textAlign: "right" },
-  cycleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.border,
-  },
-  cycleMeta: { flexDirection: "row", gap: 10 },
-  cycleStat: { fontSize: 12, color: theme.textSecondary, fontWeight: "600" },
-});
+    screen: { flex: 1, backgroundColor: theme.bg },
+    container: { padding: 16, gap: 12, paddingBottom: 40 },
+    subtitle: { color: theme.textMuted, fontSize: 13 },
+    center: {
+      alignItems: "center",
+      justifyContent: "center",
+      paddingVertical: 40,
+    },
+    empty: {
+      color: theme.textMuted,
+      fontSize: 14,
+      fontStyle: "italic",
+      paddingVertical: 8,
+    },
+    sectionTitle: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: theme.textSecondary,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+      marginTop: 12,
+    },
+    statGrid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 10,
+    },
+    statCard: {
+      flexGrow: 1,
+      flexBasis: "30%",
+      minWidth: 100,
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      padding: 12,
+      gap: 4,
+    },
+    statLabel: {
+      fontSize: 11,
+      color: theme.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 0.4,
+      fontWeight: "600",
+    },
+    statValue: { fontSize: 18, fontWeight: "800" },
+    statSub: { fontSize: 11, color: theme.textSecondary },
+    ticketList: {
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      borderRadius: theme.radius,
+      overflow: "hidden",
+    },
+    ticketRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    ticketMain: { flex: 1, gap: 2 },
+    ticketKey: { fontSize: 11, fontWeight: "700", color: theme.primaryLight },
+    ticketTitle: { fontSize: 13, color: theme.text },
+    ticketMeta: { flexDirection: "row", alignItems: "center", gap: 8 },
+    statusBadge: {
+      borderRadius: theme.radiusSm,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+    },
+    statusBadgeText: { fontSize: 10, fontWeight: "700" },
+    prDot: { width: 8, height: 8, borderRadius: 4 },
+    ticketPoints: {
+      fontSize: 11,
+      color: theme.textSecondary,
+      minWidth: 36,
+      textAlign: "right",
+    },
+    cycleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.border,
+    },
+    cycleMeta: { flexDirection: "row", gap: 10 },
+    cycleStat: { fontSize: 12, color: theme.textSecondary, fontWeight: "600" },
+  });

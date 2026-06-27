@@ -1,9 +1,7 @@
+import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState } from "react";
-import { ActivityIndicator,
+  ActivityIndicator,
   Alert,
   FlatList,
   Image,
@@ -12,7 +10,7 @@ import { ActivityIndicator,
   ScrollView,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 import { Stack } from "expo-router";
 import * as FileSystem from "expo-file-system/legacy";
@@ -90,6 +88,11 @@ const ALL_TABS: { key: TabKey; label: string; icon: typeof CreditCard }[] = [
   { key: "chart", label: "Org Chart", icon: GitBranch },
 ];
 
+const EMPTY_SLIPS: MySalarySlip[] = [];
+const EMPTY_DEPARTMENTS: OrgDepartment[] = [];
+const EMPTY_TEAMS: OrgTeam[] = [];
+const EMPTY_LABELS: TaskLabelManage[] = [];
+
 function initials(name?: string) {
   if (!name) return "?";
   const p = name.trim().split(/\s+/);
@@ -111,8 +114,10 @@ export default function OrganizationScreen() {
   // Managers (non-admin) can manage task labels here — mirrors the web
   // Organization page's `canManageLabels = !isAdmin && role === "manager"`.
   const canManageLabels = !isAdmin && user?.role === "manager";
-  const [org, setOrg] = useState<OrgInfo | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: org = null, isLoading: loading } = useQuery({
+    queryKey: ["org", "current"],
+    queryFn: async () => (await getCurrentOrg()).data || null,
+  });
   const [tab, setTab] = useState<TabKey>("salary-slips");
 
   // Admins (incl. platform admin) aren't scoped to a single org and only see
@@ -126,13 +131,6 @@ export default function OrganizationScreen() {
     }
     return base;
   }, [isAdmin, canManageLabels]);
-
-  useEffect(() => {
-    getCurrentOrg()
-      .then((r) => setOrg(r.data || null))
-      .catch(() => setOrg(null))
-      .finally(() => setLoading(false));
-  }, []);
 
   if (loading) {
     return (
@@ -202,14 +200,11 @@ const SLIP_STATUS_COLOR: Record<string, string> = {
 
 function SalarySlipsTab({ theme }: { theme: Theme }) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [slips, setSlips] = useState<MySalarySlip[]>([]);
-  const [bank, setBank] = useState<MyBankDetails | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
     account_holder_name: "",
     account_number: "",
@@ -218,37 +213,35 @@ function SalarySlipsTab({ theme }: { theme: Theme }) {
     account_type: "savings",
   });
 
-  const load = useCallback(async () => {
-    setError(null);
-    const [slipsRes, bankRes] = await Promise.allSettled([
-      getMySalarySlips(),
-      getMyBankDetails(),
-    ]);
-    if (slipsRes.status === "fulfilled") {
-      setSlips(Array.isArray(slipsRes.value.data) ? slipsRes.value.data : []);
-    } else {
-      setSlips([]);
-      setError(
-        (slipsRes.reason as any)?.response?.data?.error ||
-          "Salary slips are unavailable.",
-      );
-    }
-    if (bankRes.status === "fulfilled") setBank(bankRes.value.data || null);
-    else setBank(null);
-    setLoading(false);
-    setRefreshing(false);
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data, isLoading: loading } = useQuery({
+    queryKey: ["org", "salarySlips"],
+    queryFn: async () => {
+      const [slipsRes, bankRes] = await Promise.allSettled([
+        getMySalarySlips(),
+        getMyBankDetails(),
+      ]);
+      let slips: MySalarySlip[] = EMPTY_SLIPS;
+      let error: string | null = null;
+      if (slipsRes.status === "fulfilled") {
+        slips = Array.isArray(slipsRes.value.data)
+          ? slipsRes.value.data
+          : EMPTY_SLIPS;
+      } else {
+        error =
+          (slipsRes.reason as any)?.response?.data?.error ||
+          "Salary slips are unavailable.";
+      }
+      const bank =
+        bankRes.status === "fulfilled" ? bankRes.value.data || null : null;
+      return { slips, bank, error };
+    },
+  });
+  const slips = data?.slips ?? EMPTY_SLIPS;
+  const bank = data?.bank ?? null;
+  const error = data?.error ?? null;
 
   async function handleSave() {
-    if (
-      !form.account_holder_name ||
-      !form.account_number ||
-      !form.ifsc_code
-    ) {
+    if (!form.account_holder_name || !form.account_number || !form.ifsc_code) {
       Alert.alert("Missing fields", "Please fill in all required fields.");
       return;
     }
@@ -263,7 +256,7 @@ function SalarySlipsTab({ theme }: { theme: Theme }) {
         bank_name: "",
         account_type: "savings",
       });
-      await load();
+      await queryClient.invalidateQueries({ queryKey: ["org", "salarySlips"] });
     } catch (e: any) {
       Alert.alert(
         "Error",
@@ -319,9 +312,12 @@ function SalarySlipsTab({ theme }: { theme: Theme }) {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={() => {
+          onRefresh={async () => {
             setRefreshing(true);
-            load();
+            await queryClient.invalidateQueries({
+              queryKey: ["org", "salarySlips"],
+            });
+            setRefreshing(false);
           }}
           tintColor={theme.primary}
         />
@@ -596,24 +592,16 @@ function Field({
 
 function DepartmentsTab({ theme }: { theme: Theme }) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [depts, setDepts] = useState<OrgDepartment[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
+  const { data: depts = EMPTY_DEPARTMENTS, isLoading: loading } = useQuery({
+    queryKey: ["org", "departments"],
+    queryFn: async () => {
       const r = await getOrgDepartments();
-      setDepts(Array.isArray(r.data) ? r.data : []);
-    } catch {
-      setDepts([]);
-    }
-    setLoading(false);
-    setRefreshing(false);
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+      return Array.isArray(r.data) ? r.data : EMPTY_DEPARTMENTS;
+    },
+  });
 
   if (loading) {
     return (
@@ -631,9 +619,12 @@ function DepartmentsTab({ theme }: { theme: Theme }) {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={() => {
+          onRefresh={async () => {
             setRefreshing(true);
-            load();
+            await queryClient.invalidateQueries({
+              queryKey: ["org", "departments"],
+            });
+            setRefreshing(false);
           }}
           tintColor={theme.primary}
         />
@@ -645,9 +636,7 @@ function DepartmentsTab({ theme }: { theme: Theme }) {
           </View>
           <View style={styles.rowBody}>
             <Text style={styles.rowTitle}>{item.name}</Text>
-            <Text style={styles.rowMeta}>
-              Head: {item.head_name || "—"}
-            </Text>
+            <Text style={styles.rowMeta}>Head: {item.head_name || "—"}</Text>
           </View>
           {item.member_count != null ? (
             <View style={styles.countBadge}>
@@ -656,9 +645,7 @@ function DepartmentsTab({ theme }: { theme: Theme }) {
           ) : null}
         </View>
       )}
-      ListEmptyComponent={
-        <Text style={styles.empty}>No departments yet.</Text>
-      }
+      ListEmptyComponent={<Text style={styles.empty}>No departments yet.</Text>}
     />
   );
 }
@@ -667,24 +654,16 @@ function DepartmentsTab({ theme }: { theme: Theme }) {
 
 function TeamsTab({ theme }: { theme: Theme }) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [teams, setTeams] = useState<OrgTeam[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
+  const { data: teams = EMPTY_TEAMS, isLoading: loading } = useQuery({
+    queryKey: ["org", "teams"],
+    queryFn: async () => {
       const r = await getOrgTeams();
-      setTeams(Array.isArray(r.data) ? r.data : []);
-    } catch {
-      setTeams([]);
-    }
-    setLoading(false);
-    setRefreshing(false);
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+      return Array.isArray(r.data) ? r.data : EMPTY_TEAMS;
+    },
+  });
 
   if (loading) {
     return (
@@ -702,9 +681,10 @@ function TeamsTab({ theme }: { theme: Theme }) {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={() => {
+          onRefresh={async () => {
             setRefreshing(true);
-            load();
+            await queryClient.invalidateQueries({ queryKey: ["org", "teams"] });
+            setRefreshing(false);
           }}
           tintColor={theme.primary}
         />
@@ -750,26 +730,15 @@ function TeamsTab({ theme }: { theme: Theme }) {
 
 function OrgChartTab({ theme }: { theme: Theme }) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [chart, setChart] = useState<OrgChart | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const [view, setView] = useState<"dept" | "tree">("dept");
   const [search, setSearch] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const r = await getOrgChart();
-      setChart(r.data || null);
-    } catch {
-      setChart(null);
-    }
-    setLoading(false);
-    setRefreshing(false);
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { data: chart = null, isLoading: loading } = useQuery({
+    queryKey: ["org", "chart"],
+    queryFn: async () => (await getOrgChart()).data || null,
+  });
 
   const filteredMembers = useMemo(() => {
     if (!chart) return [];
@@ -833,9 +802,10 @@ function OrgChartTab({ theme }: { theme: Theme }) {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={() => {
+          onRefresh={async () => {
             setRefreshing(true);
-            load();
+            await queryClient.invalidateQueries({ queryKey: ["org", "chart"] });
+            setRefreshing(false);
           }}
           tintColor={theme.primary}
         />
@@ -907,8 +877,7 @@ function OrgChartTab({ theme }: { theme: Theme }) {
               (t) => String(t.department_id) === String(dept.id),
             );
             const deptDirect = filteredMembers.filter(
-              (m) =>
-                String(m.department_id) === String(dept.id) && !m.team_id,
+              (m) => String(m.department_id) === String(dept.id) && !m.team_id,
             );
             const total = filteredMembers.filter(
               (m) => String(m.department_id) === String(dept.id),
@@ -934,9 +903,7 @@ function OrgChartTab({ theme }: { theme: Theme }) {
                       <View style={styles.teamTitleRow}>
                         <Users size={12} color={theme.textSecondary} />
                         <Text style={styles.teamTitle}>{team.name}</Text>
-                        <Text style={styles.teamCount}>
-                          {tMembers.length}
-                        </Text>
+                        <Text style={styles.teamCount}>{tMembers.length}</Text>
                         {team.lead_name ? (
                           <Text style={styles.teamLead}>
                             · Lead: {team.lead_name}
@@ -1059,8 +1026,7 @@ function TreeNode({
   const hasChildren = children.length > 0;
   const avatar = uploadUrl(member.avatar);
   const highlight =
-    search &&
-    member.full_name.toLowerCase().includes(search.toLowerCase());
+    search && member.full_name.toLowerCase().includes(search.toLowerCase());
 
   return (
     <View style={{ marginLeft: depth > 0 ? 14 : 0 }}>
@@ -1123,8 +1089,7 @@ function TreeNode({
 
 function TaskLabelsTab({ theme }: { theme: Theme }) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [labels, setLabels] = useState<TaskLabelManage[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState<TaskLabelManage | null>(null);
   const [creating, setCreating] = useState(false);
@@ -1132,20 +1097,15 @@ function TaskLabelsTab({ theme }: { theme: Theme }) {
   const [color, setColor] = useState(LABEL_PRESETS[0]);
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
+  const { data: labels = EMPTY_LABELS, isLoading: loading } = useQuery({
+    queryKey: ["org", "taskLabels"],
+    queryFn: async () => {
       const r = await getTaskLabelsManage();
-      setLabels(Array.isArray(r.data) ? r.data : []);
-    } catch {
-      setLabels([]);
-    }
-    setLoading(false);
-    setRefreshing(false);
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+      return Array.isArray(r.data) ? r.data : EMPTY_LABELS;
+    },
+  });
+  const reloadLabels = () =>
+    queryClient.invalidateQueries({ queryKey: ["org", "taskLabels"] });
 
   function startCreate() {
     setEditing(null);
@@ -1181,7 +1141,7 @@ function TaskLabelsTab({ theme }: { theme: Theme }) {
         await createTaskLabel({ name: name.trim(), color });
       }
       cancel();
-      await load();
+      await reloadLabels();
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to save label");
     } finally {
@@ -1200,7 +1160,7 @@ function TaskLabelsTab({ theme }: { theme: Theme }) {
           style: "destructive",
           onPress: () =>
             deleteTaskLabel(l.id)
-              .then(() => load())
+              .then(() => reloadLabels())
               .catch((e: any) =>
                 Alert.alert(
                   "Error",
@@ -1228,9 +1188,12 @@ function TaskLabelsTab({ theme }: { theme: Theme }) {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={() => {
+          onRefresh={async () => {
             setRefreshing(true);
-            load();
+            await queryClient.invalidateQueries({
+              queryKey: ["org", "taskLabels"],
+            });
+            setRefreshing(false);
           }}
           tintColor={theme.primary}
         />
@@ -1275,9 +1238,7 @@ function TaskLabelsTab({ theme }: { theme: Theme }) {
                   ]}
                   onPress={() => setColor(c)}
                 >
-                  {color === c ? (
-                    <CheckCircle2 size={14} color="#fff" />
-                  ) : null}
+                  {color === c ? <CheckCircle2 size={14} color="#fff" /> : null}
                 </Pressable>
               ))}
             </View>
@@ -1313,7 +1274,10 @@ function TaskLabelsTab({ theme }: { theme: Theme }) {
         labels.map((l) => (
           <View key={l.id} style={styles.labelRow}>
             <View
-              style={[styles.labelBadge, { backgroundColor: l.color || "#888" }]}
+              style={[
+                styles.labelBadge,
+                { backgroundColor: l.color || "#888" },
+              ]}
             >
               <Text style={styles.labelBadgeText}>{l.name}</Text>
             </View>
