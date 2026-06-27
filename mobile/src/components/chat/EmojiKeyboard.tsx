@@ -12,12 +12,14 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
+  Platform,
   Pressable,
   SectionList,
   StyleSheet,
   Text,
   TextInput,
   View,
+  useWindowDimensions,
   type ViewToken,
 } from "react-native";
 import { Delete, Search as SearchIcon, X as XIcon } from "lucide-react-native";
@@ -36,6 +38,7 @@ import {
   variantForTone,
 } from "../../emoji/emojiStore";
 import { buildEmojiSections, type EmojiRow } from "./emojiSections";
+import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 
 const COLS = 8;
 
@@ -45,12 +48,16 @@ export default function EmojiKeyboard({
   onBackspace,
   onOpenGif,
   onOpenSticker,
+  onSearchFocus,
+  onSearchBlur,
 }: {
   height: number;
   onPick: (native: string) => void;
   onBackspace: () => void;
   onOpenGif: () => void;
   onOpenSticker: () => void;
+  onSearchFocus?: () => void;
+  onSearchBlur?: () => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -65,14 +72,27 @@ export default function EmojiKeyboard({
 
   const listRef = useRef<SectionList<EmojiRow>>(null);
 
-  const sections = useMemo(
-    () => buildEmojiSections(COLS, recents),
-    [recents]
-  );
+  const { height: winH } = useWindowDimensions();
+  const ownKbInset = useKeyboardInset();
+  // When the search field is focused the system keyboard appears on top of
+  // this docked panel.  Shrink the effective height so results stay visible
+  // above the keyboard and don't get clipped on small devices.
+  const effectiveHeight =
+    ownKbInset > 100
+      ? Math.max(
+          160,
+          Math.min(
+            height,
+            winH - ownKbInset - (Platform.OS === "android" ? 60 : 50),
+          ),
+        )
+      : height;
+
+  const sections = useMemo(() => buildEmojiSections(COLS, recents), [recents]);
   // Only categories that actually have a section (for the bottom strip).
   const stripCats = useMemo(
     () => CATEGORY_ORDER.filter((c) => sections.some((s) => s.key === c.key)),
-    [sections]
+    [sections],
   );
 
   // Search results, chunked into rows so the grid layout matches.
@@ -92,7 +112,7 @@ export default function EmojiKeyboard({
       setRecents(getRecentEmoji());
       onPick(nativeForTone(e, tone));
     },
-    [onPick, tone]
+    [onPick, tone],
   );
 
   const handleTone = (t: number) => {
@@ -108,7 +128,7 @@ export default function EmojiKeyboard({
       if (first?.section) {
         setActiveCat((first.section as { key: EmojiCategory }).key);
       }
-    }
+    },
   ).current;
 
   const viewabilityConfig = useRef({
@@ -140,7 +160,7 @@ export default function EmojiKeyboard({
             style={styles.cell}
             onPress={() => handlePick(e)}
           >
-            <EmojiImage variant={variantForTone(e, tone)} size={28} />
+            <EmojiImage variant={variantForTone(e, tone)} size={36} />
           </Pressable>
         ))}
         {/* Pad the final short row so cells stay left-aligned. */}
@@ -151,7 +171,7 @@ export default function EmojiKeyboard({
           : null}
       </View>
     ),
-    [handlePick, styles, tone]
+    [handlePick, styles, tone],
   );
 
   // Search + skin-tone row. Rendered as the scrolling list's HEADER (not a
@@ -175,6 +195,8 @@ export default function EmojiKeyboard({
                 setQuery(v);
                 setSearching(v.trim().length > 0);
               }}
+              onFocus={onSearchFocus}
+              onBlur={onSearchBlur}
               autoCorrect={false}
             />
             {query.length > 0 ? (
@@ -206,11 +228,11 @@ export default function EmojiKeyboard({
         </View>
       </View>
     ),
-    [onOpenGif, onOpenSticker, query, tone, styles, theme]
+    [onOpenGif, onOpenSticker, query, tone, styles, theme],
   );
 
   return (
-    <View style={[styles.wrap, { height }]}>
+    <View style={[styles.wrap, { height: effectiveHeight }]}>
       {/* Grid (search results OR sectioned categories). The search + skin-tone
           row lives in the list HEADER so it scrolls with the content. */}
       {searching ? (
@@ -360,7 +382,12 @@ const makeStyles = (theme: Theme) =>
       paddingHorizontal: 12,
       height: 36,
     },
-    searchInput: { flex: 1, color: theme.text, fontSize: 14, paddingVertical: 0 },
+    searchInput: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 14,
+      paddingVertical: 0,
+    },
     toneBtn: {
       width: 36,
       height: 36,
@@ -416,6 +443,7 @@ const makeStyles = (theme: Theme) =>
       flex: 1,
       maxWidth: `${100 / COLS}%`,
       aspectRatio: 1,
+      minHeight: 44,
       alignItems: "center",
       justifyContent: "center",
     },

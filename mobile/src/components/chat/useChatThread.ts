@@ -410,9 +410,16 @@ export function useChatThread() {
   // transition-based InputAwareLayout (it tracks the keyboard transition, not a
   // momentary height value).
   const ignoreKbForEmoji = useRef(false);
+  // True while the emoji keyboard's search field has focus so the system
+  // keyboard is intentionally visible — suppresses the safety effect that
+  // auto-closes the emoji panel when kbInset rises.
+  const emojiSearchFocused = useRef(false);
   // Last-measured system keyboard height — the in-app emoji keyboard is shown
   // at this height so toggling between them doesn't shift the message list.
-  const lastKbHeight = useRef(280);
+  // Seeded from ~40 % of the screen height (a reliable cross-device estimate)
+  // so the panel is correctly sized even before the system keyboard has ever
+  // appeared this session.
+  const lastKbHeight = useRef(Math.round(winHeight * 0.4));
   if (kbInset > 100) lastKbHeight.current = kbInset;
 
   // Hydrate emoji recents + skin-tone preference once.
@@ -432,9 +439,13 @@ export function useChatThread() {
   useEffect(() => {
     if (kbInset > 100) {
       if (ignoreKbForEmoji.current) return; // stale height from the dismissing keyboard
+      // Emoji search field is focused → system keyboard is intentional; keep
+      // the emoji panel open so the user can see search results above the keyboard.
+      if (emojiSearchFocused.current) return;
       if (emojiKeyboardOpen) setEmojiKeyboardOpen(false);
     } else {
       ignoreKbForEmoji.current = false; // keyboard fully hidden → re-arm
+      emojiSearchFocused.current = false;
     }
   }, [kbInset, emojiKeyboardOpen]);
 
@@ -2511,6 +2522,14 @@ export function useChatThread() {
     if (emojiKeyboardOpen) setEmojiKeyboardOpen(false);
   }
 
+  function onEmojiSearchFocus() {
+    emojiSearchFocused.current = true;
+  }
+
+  function onEmojiSearchBlur() {
+    emojiSearchFocused.current = false;
+  }
+
   function startCall(type: "voice" | "video") {
     router.push({
       pathname: "/call/[conversationId]",
@@ -2970,10 +2989,13 @@ export function useChatThread() {
     inputRef,
     emojiKeyboardOpen,
     emojiKeyboardHeight: lastKbHeight.current,
+    kbInset,
     toggleEmojiKeyboard,
     insertEmoji,
     emojiBackspace,
     onComposerInputFocus,
+    onEmojiSearchFocus,
+    onEmojiSearchBlur,
     // attachment picker
     plusOpen,
     attachCamera,

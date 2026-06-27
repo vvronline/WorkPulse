@@ -13,7 +13,10 @@ const LINKIFY_RE = /((?:https?:\/\/|www\.)[^\s<>"']+)/gi;
 
 // Strip trailing punctuation that commonly hugs a URL in prose (e.g. a period
 // or closing bracket) so it isn't swallowed into the tappable link.
-function trimTrailingPunctuation(url: string): { url: string; trailing: string } {
+function trimTrailingPunctuation(url: string): {
+  url: string;
+  trailing: string;
+} {
   const m = url.match(/[).,!?;:'"\]]+$/);
   if (!m) return { url, trailing: "" };
   const trailing = m[0];
@@ -50,6 +53,25 @@ function tokenize(text: string): Segment[] {
   return segments;
 }
 
+// Regex that matches one full emoji grapheme sequence (base glyph + any
+// modifiers / variation selectors / ZWJ-joined extensions).
+const EMOJI_SEQ_RE =
+  /(?:\p{Extended_Pictographic}|\p{Emoji_Presentation})[\p{Emoji_Modifier}\uFE0F\u20E3\u200D]*/gu;
+
+/**
+ * Returns true when the message body consists solely of 1–5 emoji with no
+ * other text (Signal's "jumbo emoji" threshold). These are rendered at 42 sp
+ * instead of the standard 16 sp body size so standalone emoji are legible.
+ */
+function isEmojiOnly(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const matches = t.match(EMOJI_SEQ_RE);
+  if (!matches || matches.length > 5) return false;
+  // After stripping all matched emoji sequences + whitespace, nothing should remain.
+  return t.replace(EMOJI_SEQ_RE, "").trim().length === 0;
+}
+
 /**
  * Renders a message's text body (mirrors the web MessageContent). Shows the
  * "deleted" placeholder when the message has been removed. Returns null when
@@ -73,6 +95,8 @@ export default function MessageContent({
     () => (deleted ? null : tokenize(message.content || "")),
     [deleted, message.content],
   );
+  const emojiOnly =
+    !deleted && !!message.content && isEmojiOnly(message.content);
   if (!message.content && !deleted) return null;
   return (
     <Text
@@ -81,6 +105,8 @@ export default function MessageContent({
         // WhatsApp-style: own bubbles use the accent fill, so text is white.
         mine && !deleted && styles.contentMine,
         deleted && styles.deleted,
+        // Signal-style: standalone emoji messages render at 42 sp (jumbo).
+        emojiOnly && styles.emojiOnly,
       ]}
     >
       {deleted
@@ -114,4 +140,5 @@ const makeStyles = (theme: Theme) =>
     // white text just gets an underline so it stays legible.
     link: { color: theme.primaryLight, textDecorationLine: "underline" },
     linkMine: { color: "#fff", textDecorationLine: "underline" },
+    emojiOnly: { fontSize: 42, lineHeight: 50 },
   });

@@ -15,6 +15,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
   type ViewToken,
 } from "react-native";
 import { Search as SearchIcon, X as XIcon } from "lucide-react-native";
@@ -33,6 +34,7 @@ import {
   variantForTone,
 } from "../../emoji/emojiStore";
 import { buildEmojiSections, type EmojiRow } from "./emojiSections";
+import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 
 const COLS = 8;
 
@@ -57,12 +59,19 @@ export default function EmojiPicker({
   const [recents, setRecents] = useState<Emoji[]>(getRecentEmoji);
   const [activeCat, setActiveCat] = useState<EmojiCategory>("smileys");
 
+  const { height: winH } = useWindowDimensions();
+  const kbInset = useKeyboardInset();
+  // Shrink the bottom sheet when the search field triggers the system keyboard
+  // so results remain visible above it.
+  const sheetHeight =
+    kbInset > 100 ? Math.max(300, winH - kbInset - 40) : winH * 0.65;
+
   const listRef = useRef<SectionList<EmojiRow>>(null);
 
   const sections = useMemo(() => buildEmojiSections(COLS, recents), [recents]);
   const stripCats = useMemo(
     () => CATEGORY_ORDER.filter((c) => sections.some((s) => s.key === c.key)),
-    [sections]
+    [sections],
   );
 
   const searchRows: EmojiRow[] = useMemo(() => {
@@ -82,7 +91,7 @@ export default function EmojiPicker({
       onPick(nativeForTone(e, tone));
       onClose();
     },
-    [onPick, onClose, tone]
+    [onPick, onClose, tone],
   );
 
   const handleTone = (t: number) => {
@@ -97,7 +106,7 @@ export default function EmojiPicker({
       if (first?.section) {
         setActiveCat((first.section as { key: EmojiCategory }).key);
       }
-    }
+    },
   ).current;
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 10 }).current;
@@ -122,8 +131,12 @@ export default function EmojiPicker({
     ({ item }: { item: EmojiRow }) => (
       <View style={styles.row}>
         {item.items.map((e) => (
-          <Pressable key={e.id} style={styles.cell} onPress={() => handlePick(e)}>
-            <EmojiImage variant={variantForTone(e, tone)} size={28} />
+          <Pressable
+            key={e.id}
+            style={styles.cell}
+            onPress={() => handlePick(e)}
+          >
+            <EmojiImage variant={variantForTone(e, tone)} size={36} />
           </Pressable>
         ))}
         {item.items.length < COLS
@@ -133,7 +146,7 @@ export default function EmojiPicker({
           : null}
       </View>
     ),
-    [handlePick, styles, tone]
+    [handlePick, styles, tone],
   );
 
   if (!visible) return null;
@@ -141,7 +154,7 @@ export default function EmojiPicker({
   return (
     <View style={styles.overlay}>
       <Pressable style={styles.scrim} onPress={onClose} />
-      <View style={styles.sheet}>
+      <View style={[styles.sheet, { height: sheetHeight }]}>
         <View style={styles.header}>
           <Text style={styles.title}>
             {mode === "compose" ? "Insert emoji" : "Pick a reaction"}
@@ -177,7 +190,10 @@ export default function EmojiPicker({
               </Pressable>
             ) : null}
           </View>
-          <Pressable style={styles.toneBtn} onPress={() => setToneOpen((v) => !v)}>
+          <Pressable
+            style={styles.toneBtn}
+            onPress={() => setToneOpen((v) => !v)}
+          >
             <Text style={styles.toneText}>{SKIN_TONES[tone].swatch}</Text>
           </Pressable>
         </View>
@@ -187,7 +203,10 @@ export default function EmojiPicker({
             {SKIN_TONES.map((t) => (
               <Pressable
                 key={t.key}
-                style={[styles.toneSwatch, t.key === tone && styles.toneSwatchActive]}
+                style={[
+                  styles.toneSwatch,
+                  t.key === tone && styles.toneSwatchActive,
+                ]}
                 onPress={() => handleTone(t.key)}
               >
                 <Text style={styles.toneText}>{t.swatch}</Text>
@@ -282,7 +301,6 @@ const makeStyles = (theme: Theme) =>
       borderTopLeftRadius: 20,
       borderTopRightRadius: 20,
       paddingBottom: 24,
-      height: "65%",
     },
     header: {
       flexDirection: "row",
@@ -312,7 +330,12 @@ const makeStyles = (theme: Theme) =>
       paddingHorizontal: 12,
       height: 36,
     },
-    searchInput: { flex: 1, color: theme.text, fontSize: 14, paddingVertical: 0 },
+    searchInput: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 14,
+      paddingVertical: 0,
+    },
     toneBtn: {
       width: 36,
       height: 36,
@@ -363,10 +386,16 @@ const makeStyles = (theme: Theme) =>
       flex: 1,
       maxWidth: `${100 / COLS}%`,
       aspectRatio: 1,
+      minHeight: 44,
       alignItems: "center",
       justifyContent: "center",
     },
-    empty: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 40 },
+    empty: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingVertical: 40,
+    },
     emptyText: { color: theme.textMuted, fontSize: 13 },
     bottomStrip: {
       flexDirection: "row",
@@ -377,7 +406,12 @@ const makeStyles = (theme: Theme) =>
       borderTopColor: theme.border,
       backgroundColor: theme.bgElevated,
     },
-    strip: { gap: 2, alignItems: "center", flexGrow: 1, justifyContent: "space-between" },
+    strip: {
+      gap: 2,
+      alignItems: "center",
+      flexGrow: 1,
+      justifyContent: "space-between",
+    },
     stripTab: {
       paddingHorizontal: 8,
       paddingVertical: 5,

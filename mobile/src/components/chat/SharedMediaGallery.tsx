@@ -309,12 +309,11 @@ export default function SharedMediaGallery({
 
   const canDelete =
     selectedItems.length > 0 &&
-    selectedItems.every((item) => getItemSenderId(item) === user?.id);
+    selectedItems.some((item) => getItemSenderId(item) === user?.id);
   const canForward = selectedItems.length > 0;
   const onlyLinks =
     selectedItems.length > 0 && selectedItems.every((item) => isLinkItem(item));
-  const canShare =
-    selectedItems.length > 0 && (onlyLinks || selectedItems.length === 1);
+  const canShare = selectedItems.length > 0;
   const canDownload =
     selectedItems.length > 0 &&
     selectedItems.every((item) => !isLinkItem(item));
@@ -330,13 +329,17 @@ export default function SharedMediaGallery({
     const hasNonOwn = selectedItems.some(
       (item) => getItemSenderId(item) !== user?.id,
     );
-    if (hasNonOwn) return "Select only your own messages to delete or edit";
-    if (!canShare && !onlyLinks && selectedItems.length > 1)
-      return "Select one item at a time to share a file";
+    const hasOwn = selectedItems.some(
+      (item) => getItemSenderId(item) === user?.id,
+    );
+    if (hasNonOwn && hasOwn)
+      return "Only your own messages will be deleted or edited";
+    if (hasNonOwn && !hasOwn)
+      return "Select your own messages to delete or edit";
     if (!canEdit && selectedItems.length > 1)
       return "Select exactly one message to edit";
     return null;
-  }, [canEdit, canShare, getItemSenderId, onlyLinks, selectedItems, user?.id]);
+  }, [canEdit, getItemSenderId, selectedItems, user?.id]);
 
   const openForwardPicker = useCallback(async () => {
     if (!canForward || actionBusy) return;
@@ -354,7 +357,11 @@ export default function SharedMediaGallery({
 
   const onDeleteSelected = useCallback(() => {
     if (!canDelete || actionBusy) return;
-    const ids = selectedItems.map((item) => item.id);
+    // Only delete items owned by the current user; others are silently skipped.
+    const ids = selectedItems
+      .filter((item) => getItemSenderId(item) === user?.id)
+      .map((item) => item.id);
+    if (ids.length === 0) return;
     confirm({
       title:
         ids.length === 1
@@ -403,8 +410,10 @@ export default function SharedMediaGallery({
     canDelete,
     clearSelection,
     confirm,
+    getItemSenderId,
     load,
     selectedItems,
+    user?.id,
   ]);
 
   const onForwardTo = useCallback(
@@ -456,16 +465,20 @@ export default function SharedMediaGallery({
         return;
       }
 
-      const item = selectedItems[0];
-      if (!item || isLinkItem(item)) return;
-      const res = await shareAuthedFile(
-        item.file_url,
-        item.file_name,
-        item.file_type,
+      // Share each file sequentially via the OS share sheet.
+      const fileItems = selectedItems.filter(
+        (item): item is SharedFile => !isLinkItem(item),
       );
-      if (!res.ok) {
-        alert("Share failed", res.error || "Could not share this file.");
-        return;
+      for (const item of fileItems) {
+        const res = await shareAuthedFile(
+          item.file_url,
+          item.file_name,
+          item.file_type,
+        );
+        if (!res.ok) {
+          alert("Share failed", res.error || "Could not share this file.");
+          return;
+        }
       }
       clearSelection();
     } catch (e: any) {
@@ -628,6 +641,7 @@ export default function SharedMediaGallery({
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
+            style={styles.actionBarScroll}
             contentContainerStyle={styles.actionBar}
           >
             <ActionBtn
@@ -1212,13 +1226,17 @@ const makeStyles = (theme: Theme) =>
       fontSize: 15,
       fontFamily: theme.fontSemiBold,
     },
-    actionBar: {
-      gap: 8,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
+    actionBarScroll: {
       borderBottomWidth: 1,
       borderBottomColor: theme.border,
       backgroundColor: theme.bgElevated,
+    },
+    actionBar: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
     },
     actionBtn: {
       minWidth: 84,

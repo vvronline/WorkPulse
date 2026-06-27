@@ -78,7 +78,10 @@ export default function ReactionChips({
           <Text style={styles.reactionCount}>{g.count}</Text>
         </AnimatedPressable>
       ))}
-      <Pressable style={styles.addReactionBtn} onPress={() => onAdd(message, mine)}>
+      <Pressable
+        style={styles.addReactionBtn}
+        onPress={() => onAdd(message, mine)}
+      >
         <Plus size={13} color={theme.textMuted} />
       </Pressable>
     </View>
@@ -110,7 +113,7 @@ const makeStyles = (theme: Theme) =>
       borderColor: theme.bg,
       borderRadius: theme.radiusFull,
       paddingHorizontal: 7,
-      paddingVertical: 3,
+      paddingVertical: 4,
       // Subtle lift so the pill reads as floating over the bubble edge.
       shadowColor: "#000",
       shadowOpacity: 0.25,
@@ -122,7 +125,7 @@ const makeStyles = (theme: Theme) =>
       backgroundColor: "rgba(35,131,226,0.18)",
       borderColor: "rgba(35,131,226,0.35)",
     },
-    reactionEmoji: { fontSize: 15 },
+    reactionEmoji: { fontSize: 18 },
     reactionCount: {
       fontSize: 11,
       color: theme.textSecondary,

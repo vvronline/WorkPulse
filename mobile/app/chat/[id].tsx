@@ -222,7 +222,13 @@ export default function ChatThread() {
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
       ) : (
-        <View style={{ flex: 1 }}>
+        <View
+          style={{
+            flex: 1,
+            paddingBottom:
+              c.emojiKeyboardOpen && c.kbInset > 100 ? c.kbInset : 0,
+          }}
+        >
           {/* Pinned-messages banner at the top of the chat. */}
           {c.latestPin ? (
             <PinnedBanner
@@ -336,6 +342,8 @@ export default function ChatThread() {
               onBackspace={c.emojiBackspace}
               onOpenGif={c.attachGifFromEmoji}
               onOpenSticker={c.attachStickerFromEmoji}
+              onSearchFocus={c.onEmojiSearchFocus}
+              onSearchBlur={c.onEmojiSearchBlur}
             />
           ) : null}
         </View>
