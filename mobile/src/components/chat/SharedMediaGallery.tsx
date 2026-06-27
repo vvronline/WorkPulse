@@ -12,7 +12,6 @@ import {
   Share,
   StyleSheet,
   Text,
-  TextInput,
   Vibration,
   View,
   useWindowDimensions,
@@ -24,7 +23,6 @@ import {
   FileText,
   Forward,
   LinkIcon,
-  Pencil,
   Play,
   Share2,
   Trash2,
@@ -34,7 +32,6 @@ import { useAuth } from "../../auth/AuthContext";
 import { uploadUrl } from "../../config";
 import {
   deleteMessage,
-  editMessage,
   forwardMessage,
   getConversations,
   getMessages,
@@ -118,21 +115,15 @@ export default function SharedMediaGallery({
   const [loading, setLoading] = useState(true);
   const [files, setFiles] = useState<SharedFile[]>([]);
   const [links, setLinks] = useState<LinkItem[]>([]);
-  const [messagesById, setMessagesById] = useState<Record<number, ChatMessage>>(
-    {},
-  );
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [opening, setOpening] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [actionBusy, setActionBusy] = useState<
-    null | "delete" | "forward" | "share" | "download" | "edit"
+    null | "delete" | "forward" | "share" | "download"
   >(null);
   const [forwardOpen, setForwardOpen] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
-  const [editText, setEditText] = useState("");
-  const [editingItemId, setEditingItemId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -149,10 +140,8 @@ export default function SharedMediaGallery({
 
       if (msgsRes.status === "fulfilled") {
         const msgs: ChatMessage[] = msgsRes.value.data || [];
-        const map: Record<number, ChatMessage> = {};
         const derived: LinkItem[] = [];
         for (const m of msgs) {
-          map[m.id] = m;
           if (m.deleted_at) continue;
           const url = extractFirstUrl(m.content);
           if (url) {
@@ -170,10 +159,8 @@ export default function SharedMediaGallery({
           (a, b) =>
             new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
         );
-        setMessagesById(map);
         setLinks(derived);
       } else {
-        setMessagesById({});
         setLinks([]);
       }
     } finally {
@@ -300,14 +287,6 @@ export default function SharedMediaGallery({
     [],
   );
 
-  const getEditableText = useCallback(
-    (item: GalleryItem) => {
-      if (isLinkItem(item)) return item.content || "";
-      return messagesById[item.id]?.content || "";
-    },
-    [messagesById],
-  );
-
   const canDelete =
     selectedItems.length > 0 &&
     selectedItems.some((item) => getItemSenderId(item) === user?.id);
@@ -318,13 +297,8 @@ export default function SharedMediaGallery({
   const canDownload =
     selectedItems.length > 0 &&
     selectedItems.every((item) => !isLinkItem(item));
-  const canEdit =
-    selectedItems.length === 1 &&
-    getItemSenderId(selectedItems[0]) === user?.id &&
-    getEditableText(selectedItems[0]).trim().length > 0;
 
-  // Contextual one-liner shown below the action bar explaining why a button is
-  // greyed out. Only the highest-priority constraint is surfaced at once.
+  // Contextual one-liner shown below the hint row explaining ownership constraint.
   const selectionHint = useMemo<string | null>(() => {
     if (selectedItems.length === 0) return null;
     const hasNonOwn = selectedItems.some(
@@ -333,14 +307,10 @@ export default function SharedMediaGallery({
     const hasOwn = selectedItems.some(
       (item) => getItemSenderId(item) === user?.id,
     );
-    if (hasNonOwn && hasOwn)
-      return "Only your own messages will be deleted or edited";
-    if (hasNonOwn && !hasOwn)
-      return "Select your own messages to delete or edit";
-    if (!canEdit && selectedItems.length > 1)
-      return "Select exactly one message to edit";
+    if (hasNonOwn && hasOwn) return "Only your own messages will be deleted";
+    if (hasNonOwn && !hasOwn) return "Select your own messages to delete";
     return null;
-  }, [canEdit, getItemSenderId, selectedItems, user?.id]);
+  }, [getItemSenderId, selectedItems, user?.id]);
 
   const openForwardPicker = useCallback(async () => {
     if (!canForward || actionBusy) return;
@@ -535,41 +505,6 @@ export default function SharedMediaGallery({
     }
   }, [actionBusy, alert, canDownload, clearSelection, selectedItems]);
 
-  const openEditModal = useCallback(() => {
-    if (!canEdit || actionBusy) return;
-    const item = selectedItems[0];
-    if (!item) return;
-    setEditingItemId(item.id);
-    setEditText(getEditableText(item));
-    setEditOpen(true);
-  }, [actionBusy, canEdit, getEditableText, selectedItems]);
-
-  const onSaveEdit = useCallback(async () => {
-    if (editingItemId == null || actionBusy) return;
-    const content = editText.trim();
-    if (!content) {
-      alert("Invalid content", "Edited text cannot be empty.");
-      return;
-    }
-    setActionBusy("edit");
-    try {
-      await editMessage(editingItemId, content);
-      setEditOpen(false);
-      setEditingItemId(null);
-      setEditText("");
-      await load();
-      clearSelection();
-      alert("Edited", "Message updated.");
-    } catch (e: any) {
-      alert(
-        "Edit failed",
-        e?.response?.data?.error || "Could not edit this message.",
-      );
-    } finally {
-      setActionBusy(null);
-    }
-  }, [actionBusy, alert, clearSelection, editText, editingItemId, load]);
-
   // 3-column grid sizing.
   const GRID_GAP = 2;
   const COLS = 3;
@@ -587,7 +522,7 @@ export default function SharedMediaGallery({
                     onPress={clearSelection}
                     style={styles.headerIconBtn}
                   >
-                    <X size={22} color={theme.text} />
+                    <X size={24} color={theme.text} />
                   </Pressable>
                 ),
                 headerRight: () => (
@@ -601,7 +536,7 @@ export default function SharedMediaGallery({
                       style={styles.headerIconBtn}
                     >
                       <Check
-                        size={22}
+                        size={24}
                         color={allSelected ? theme.primary : theme.textMuted}
                       />
                     </Pressable>
@@ -618,7 +553,7 @@ export default function SharedMediaGallery({
                         <ActivityIndicator size={16} color={theme.danger} />
                       ) : (
                         <Trash2
-                          size={22}
+                          size={24}
                           color={
                             canDelete && !actionBusy
                               ? theme.danger
@@ -640,7 +575,7 @@ export default function SharedMediaGallery({
                         <ActivityIndicator size={16} color={theme.text} />
                       ) : (
                         <Forward
-                          size={22}
+                          size={24}
                           color={
                             canForward && !actionBusy
                               ? theme.text
@@ -662,7 +597,7 @@ export default function SharedMediaGallery({
                         <ActivityIndicator size={16} color={theme.text} />
                       ) : (
                         <Share2
-                          size={22}
+                          size={24}
                           color={
                             canShare && !actionBusy
                               ? theme.text
@@ -684,30 +619,9 @@ export default function SharedMediaGallery({
                         <ActivityIndicator size={16} color={theme.text} />
                       ) : (
                         <Download
-                          size={22}
+                          size={24}
                           color={
                             canDownload && !actionBusy
-                              ? theme.text
-                              : theme.textMuted
-                          }
-                        />
-                      )}
-                    </Pressable>
-                    <Pressable
-                      onPress={openEditModal}
-                      disabled={!canEdit || !!actionBusy}
-                      style={[
-                        styles.headerIconBtn,
-                        (!canEdit || !!actionBusy) && styles.headerIconDisabled,
-                      ]}
-                    >
-                      {actionBusy === "edit" ? (
-                        <ActivityIndicator size={16} color={theme.text} />
-                      ) : (
-                        <Pencil
-                          size={22}
-                          color={
-                            canEdit && !actionBusy
                               ? theme.text
                               : theme.textMuted
                           }
@@ -1078,47 +992,6 @@ export default function SharedMediaGallery({
         </Pressable>
       </Modal>
 
-      <Modal
-        visible={editOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setEditOpen(false)}
-      >
-        <Pressable
-          style={styles.modalOverlay}
-          onPress={() => setEditOpen(false)}
-        >
-          <Pressable style={styles.modalCard} onPress={() => {}}>
-            <Text style={styles.modalTitle}>Edit message</Text>
-            <TextInput
-              style={styles.editInput}
-              value={editText}
-              onChangeText={setEditText}
-              multiline
-              autoFocus
-              placeholder="Edit message"
-              placeholderTextColor={theme.textMuted}
-            />
-            <View style={styles.editActions}>
-              <Pressable
-                style={styles.editBtnSecondary}
-                onPress={() => setEditOpen(false)}
-                disabled={!!actionBusy}
-              >
-                <Text style={styles.editBtnSecondaryText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={styles.editBtnPrimary}
-                onPress={() => void onSaveEdit()}
-                disabled={!!actionBusy}
-              >
-                <Text style={styles.editBtnPrimaryText}>Save</Text>
-              </Pressable>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
       {dialog}
     </View>
   );
@@ -1268,7 +1141,7 @@ const makeStyles = (theme: Theme) =>
       fontStyle: "italic",
     },
     headerIconBtn: {
-      padding: 8,
+      padding: 10,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -1278,7 +1151,7 @@ const makeStyles = (theme: Theme) =>
     headerActionRow: {
       flexDirection: "row",
       alignItems: "center",
-      gap: 2,
+      gap: 4,
       marginRight: 4,
     },
     loading: { paddingVertical: 40 },
@@ -1390,46 +1263,5 @@ const makeStyles = (theme: Theme) =>
     forwardConvName: {
       color: theme.text,
       fontSize: 15,
-    },
-    editInput: {
-      minHeight: 110,
-      maxHeight: 220,
-      borderWidth: 1,
-      borderColor: theme.inputBorder,
-      borderRadius: 12,
-      backgroundColor: theme.inputBg,
-      color: theme.text,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      textAlignVertical: "top",
-      fontSize: 15,
-    },
-    editActions: {
-      flexDirection: "row",
-      justifyContent: "flex-end",
-      gap: 10,
-      marginTop: 14,
-    },
-    editBtnSecondary: {
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderRadius: 10,
-      backgroundColor: theme.surface,
-      borderWidth: 1,
-      borderColor: theme.glassBorder,
-    },
-    editBtnSecondaryText: {
-      color: theme.text,
-      fontFamily: theme.fontMedium,
-    },
-    editBtnPrimary: {
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderRadius: 10,
-      backgroundColor: theme.primary,
-    },
-    editBtnPrimaryText: {
-      color: "#fff",
-      fontFamily: theme.fontSemiBold,
     },
   });
