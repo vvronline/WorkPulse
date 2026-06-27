@@ -99,7 +99,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "expo-splash-screen",
       {
         image: "./assets/splash-icon.png",
-        imageWidth: 200,
+        // splash-icon.png carries ~19% transparent safe-zone padding (the logo
+        // occupies the inner ~62%) so the Android 12+ circular splash mask
+        // doesn't clip its edges. imageWidth is sized against the full padded
+        // canvas, so the visible mark lands at ~178dp — keep these two in sync.
+        imageWidth: 288,
         resizeMode: "contain",
         backgroundColor: "#0a0e1c",
         dark: {

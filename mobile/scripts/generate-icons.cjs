@@ -53,13 +53,32 @@ async function generate() {
     .toFile(path.join(ASSETS_DIR, "icon.png"));
   console.log("  ✓ icon.png (1024x1024)");
 
-  // 2. Splash icon — 1024x1024 transparent-friendly (the splash uses a solid
-  //    background from app config, so we just render the artwork centered).
-  await sharp(svg)
-    .resize(1024, 1024, { fit: "cover" })
+  // 2. Splash icon — 1024x1024 with transparent safe-zone padding. On Android
+  //    12+ the system SplashScreen masks the animated icon into a CIRCLE
+  //    (windowSplashScreenAnimatedIcon), so a full-bleed square logo gets its
+  //    corners/edges clipped (reported as the bottom of the logo being cropped
+  //    on launch). Render the artwork at ~62% scale centered on a transparent
+  //    canvas — the same safe zone used for the adaptive launcher icon — so the
+  //    whole logo stays inside the circular mask. The splash uses a solid
+  //    background colour from app.config.ts, so the padding stays transparent.
+  const SPLASH_SIZE = 1024;
+  const SPLASH_ART = Math.round(SPLASH_SIZE * 0.62);
+  const splashArt = await sharp(svg)
+    .resize(SPLASH_ART, SPLASH_ART, { fit: "cover" })
+    .png()
+    .toBuffer();
+  await sharp({
+    create: {
+      width: SPLASH_SIZE,
+      height: SPLASH_SIZE,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    },
+  })
+    .composite([{ input: splashArt, gravity: "center" }])
     .png()
     .toFile(path.join(ASSETS_DIR, "splash-icon.png"));
-  console.log("  ✓ splash-icon.png (1024x1024)");
+  console.log("  ✓ splash-icon.png (1024x1024, padded safe zone)");
 
   // 3. Favicon — 48x48 for the (rarely used) web target.
   await sharp(svg)
