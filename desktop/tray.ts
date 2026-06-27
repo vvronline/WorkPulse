@@ -4,51 +4,57 @@ import path from "path";
 let tray: Tray | null = null;
 
 function setupTray(mainWindow: BrowserWindow): Tray {
-    const iconPath = path.join(__dirname, "icons", "icon.png");
+  // Pre-rendered, sharpened 16px tray bitmap (with a 32px `@2x` sibling that
+  // nativeImage.createFromPath auto-loads on HiDPI displays). This avoids
+  // Electron's low-quality runtime downscale of the 256px icon, which made
+  // the tray icon look blurry.
+  const iconPath = path.join(__dirname, "icons", "tray.png");
 
-    // Create a 16x16 / 22x22 tray icon from the app icon
-    let trayIcon;
-    try {
-        trayIcon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
-    } catch {
-        // Fallback: empty icon if file doesn't exist yet
-        trayIcon = nativeImage.createEmpty();
+  let trayIcon;
+  try {
+    trayIcon = nativeImage.createFromPath(iconPath);
+    if (trayIcon.isEmpty()) {
+      throw new Error("tray icon failed to load");
     }
+  } catch {
+    // Fallback: empty icon if file doesn't exist yet
+    trayIcon = nativeImage.createEmpty();
+  }
 
-    tray = new Tray(trayIcon);
-    tray.setToolTip("WorkPulse");
+  tray = new Tray(trayIcon);
+  tray.setToolTip("WorkPulse");
 
-    const contextMenu = Menu.buildFromTemplate([
-        {
-            label: "Show WorkPulse",
-            click: () => {
-                mainWindow.show();
-                mainWindow.focus();
-            },
-        },
-        { type: "separator" },
-        {
-            label: "Quit",
-            click: () => {
-                app.isQuitting = true;
-                app.quit();
-            },
-        },
-    ]);
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: "Show WorkPulse",
+      click: () => {
+        mainWindow.show();
+        mainWindow.focus();
+      },
+    },
+    { type: "separator" },
+    {
+      label: "Quit",
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
 
-    tray.setContextMenu(contextMenu);
+  tray.setContextMenu(contextMenu);
 
-    // Click tray icon to show/hide window
-    tray.on("click", () => {
-        if (mainWindow.isVisible()) {
-            mainWindow.hide();
-        } else {
-            mainWindow.show();
-            mainWindow.focus();
-        }
-    });
+  // Click tray icon to show/hide window
+  tray.on("click", () => {
+    if (mainWindow.isVisible()) {
+      mainWindow.hide();
+    } else {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
 
-    return tray;
+  return tray;
 }
 
 export { setupTray };

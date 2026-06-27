@@ -36,7 +36,7 @@ win:
     - target: nsis
       arch:
         - x64
-  icon: icons/icon.png
+  icon: icons/icon.ico
   publisherName: WorkPulse
   # TODO: Enable once code signing certificate is set up.
   # Without code signing, Windows SmartScreen will warn users on install.

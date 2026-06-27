@@ -17,6 +17,26 @@ import fs from "fs";
 const SOURCE_PATH = path.join(__dirname, "icons", "icon-source.png");
 const ICONS_DIR = path.join(__dirname, "icons");
 
+/**
+ * Render the master artwork down to a square `size` PNG buffer with maximum
+ * fidelity. Two things make small icons look crisp rather than "cheap":
+ *   1. Lanczos3 resampling (sharp's highest-quality downscale kernel).
+ *   2. A mild, size-proportional unsharp mask on the small bitmaps (≤ 64px).
+ *      Heavy downscaling softens fine logo detail; a gentle sharpen restores
+ *      edge definition without the halos a stronger amount would introduce.
+ * The PNG is written lossless (compressionLevel 9) so nothing is degraded.
+ */
+async function renderPng(source: Buffer, size: number): Promise<Buffer> {
+  let pipeline = sharp(source).resize(size, size, {
+    fit: "cover",
+    kernel: "lanczos3",
+  });
+  if (size <= 64) {
+    pipeline = pipeline.sharpen({ sigma: 0.6 });
+  }
+  return pipeline.png({ compressionLevel: 9, quality: 100 }).toBuffer();
+}
+
 async function generate(): Promise<void> {
   if (!fs.existsSync(SOURCE_PATH)) {
     throw new Error(`Source artwork not found: ${SOURCE_PATH}`);
@@ -26,32 +46,45 @@ async function generate(): Promise<void> {
   // Generate PNG at multiple sizes (for Linux icon set + general use)
   const sizes = [16, 32, 48, 64, 128, 256, 512];
   for (const size of sizes) {
-    await sharp(source)
-      .resize(size, size, { fit: "cover" })
-      .png()
-      .toFile(path.join(ICONS_DIR, `${size}x${size}.png`));
+    const buf = await renderPng(source, size);
+    fs.writeFileSync(path.join(ICONS_DIR, `${size}x${size}.png`), buf);
     console.log(`  ✓ ${size}x${size}.png`);
   }
 
-  // Main icon.png (256x256 — used by Electron window/tray/PiP + Linux)
-  await sharp(source)
-    .resize(256, 256, { fit: "cover" })
-    .png()
-    .toFile(path.join(ICONS_DIR, "icon.png"));
+  // Main icon.png (256x256 — used by the Electron window on macOS/Linux + PiP).
+  fs.writeFileSync(
+    path.join(ICONS_DIR, "icon.png"),
+    await renderPng(source, 256),
+  );
   console.log("  ✓ icon.png (256x256)");
 
-  // Windows .ico — a real multi-resolution icon (16/32/48/64/128/256). While
-  // electron-builder can synthesize one from icon.png, shipping a proper .ico
-  // keeps the file-explorer / shortcut icons crisp at every size.
-  const icoSizes = [16, 32, 48, 64, 128, 256];
+  // Dedicated, pre-sharpened system-tray bitmaps. Electron's runtime
+  // nativeImage.resize() is a low-quality scaler, so downscaling the 256px
+  // icon to 16px on the fly produced the blurry tray/taskbar mark. Shipping a
+  // crisp 16px base plus a 32px `@2x` representation (auto-loaded by
+  // nativeImage.createFromPath on HiDPI displays) keeps the tray icon sharp.
+  fs.writeFileSync(
+    path.join(ICONS_DIR, "tray.png"),
+    await renderPng(source, 16),
+  );
+  fs.writeFileSync(
+    path.join(ICONS_DIR, "tray@2x.png"),
+    await renderPng(source, 32),
+  );
+  console.log("  ✓ tray.png + tray@2x.png (16/32 sharpened)");
+
+  // Windows .ico — a real multi-resolution icon. Including the in-between
+  // taskbar DPI steps (20/24/40) on top of the usual 16/32/48/… means Windows
+  // can pick a hand-rendered bitmap for the exact pixel size it needs instead
+  // of runtime-downscaling a single large image (the root cause of the
+  // "cheap"-looking taskbar icon).
+  const icoSizes = [16, 20, 24, 32, 40, 48, 64, 128, 256];
   const icoBuffers = await Promise.all(
-    icoSizes.map((size) =>
-      sharp(source).resize(size, size, { fit: "cover" }).png().toBuffer(),
-    ),
+    icoSizes.map((size) => renderPng(source, size)),
   );
   const ico = await pngToIco(icoBuffers);
   fs.writeFileSync(path.join(ICONS_DIR, "icon.ico"), ico);
-  console.log("  ✓ icon.ico (16–256 multi-res)");
+  console.log("  ✓ icon.ico (16–256 multi-res, taskbar DPI steps included)");
 
   console.log("\nDone! Desktop icons regenerated from icons/icon-source.png");
   console.log(
