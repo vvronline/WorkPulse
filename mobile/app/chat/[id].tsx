@@ -148,8 +148,12 @@ export default function ChatThread() {
                   // thread was opened as a cold-start root route, the handler
                   // falls back to the chat tab instead of exiting the app.
                   headerLeft: () => (
-                    <Pressable onPress={c.goBackToChatList} hitSlop={8}>
-                      <ArrowLeft size={22} color={theme.text} />
+                    <Pressable
+                      style={styles.headerBackButton}
+                      onPress={c.goBackToChatList}
+                      hitSlop={8}
+                    >
+                      <ArrowLeft size={22} color={theme.primary} />
                     </Pressable>
                   ),
                   headerTitle: () => (
@@ -742,6 +746,13 @@ const makeStyles = (theme: Theme) =>
     screen: { flex: 1, backgroundColor: theme.bg },
     center: { flex: 1, alignItems: "center", justifyContent: "center" },
     headerActions: { flexDirection: "row", gap: 18, alignItems: "center" },
+    headerBackButton: {
+      width: 44,
+      height: 40,
+      alignItems: "flex-start",
+      justifyContent: "center",
+      marginRight: 8,
+    },
     headerTitleWrap: { flexDirection: "row", alignItems: "center", gap: 10 },
     // Signal in-conversation search: header field + bottom match-nav bar.
     searchHeader: {

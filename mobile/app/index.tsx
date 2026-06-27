@@ -69,41 +69,44 @@ export default function Index() {
       //    ignored. The in-memory route (tap) takes precedence.
       await notifeeService.captureInitialCallRoute().catch(() => {});
       if (cancelled) return;
+
       let route = peekPendingCall();
-      if (!route && !peekPendingChat()) {
-        // Bounded retry for the SecureStore-persisted route. On a LOCKED +
-        // KILLED device the full-screen-intent AUTO-launches this activity the
-        // instant the notification is posted; although displayIncomingCall now
-        // persists the route BEFORE displayNotification(), the async SecureStore
-        // write can still land a few milliseconds after this brand-new process
-        // starts reading. A single read could therefore miss it and fall through
-        // to the dashboard (the flash). Retry a handful of times over ~600ms so
-        // the route is reliably picked up and we route STRAIGHT to /call. This
-        // adds no delay on a normal (non-call) launch beyond the first miss
-        // since a genuinely absent route returns null immediately each attempt.
-        for (let attempt = 0; attempt < 6 && !route; attempt++) {
-          route = await loadPersistedPendingCall();
+      let chat = peekPendingChat();
+
+      // Bounded retry for the SecureStore-persisted route. On a LOCKED + KILLED
+      // device the full-screen-intent AUTO-launches this activity the instant
+      // the notification is posted; although displayIncomingCall persists the
+      // route BEFORE displayNotification(), the async SecureStore write can land
+      // a few milliseconds after this brand-new process starts reading.
+      //
+      // The SAME race also affects a cold-start MESSAGE tap: captureInitialCall-
+      // Route runs from BOTH this screen and PendingCallNavigator, but Notifee's
+      // getInitialNotification() yields the launching notification only ONCE. The
+      // loser of that native race sees null and must instead wait for the winner
+      // to finish its async setPendingChat / persistPendingChat write. Without a
+      // retry the chat route was frequently missed and the app fell through to
+      // the dashboard (the "tapping a message just opens the dashboard" bug).
+      // Poll for EITHER a call or a chat route so both are reliably picked up.
+      // A genuinely absent route returns null immediately each attempt, so a
+      // normal launch only pays the cost of the first miss.
+      if (!route && !chat) {
+        for (let attempt = 0; attempt < 6 && !route && !chat; attempt++) {
+          route = (await loadPersistedPendingCall()) ?? peekPendingCall();
           if (route || cancelled) break;
-          // Re-check the in-memory route too — a warm Notifee tap may set it.
-          route = peekPendingCall();
-          if (route) break;
+          chat = peekPendingChat() ?? (await loadPersistedPendingChat());
+          if (chat || cancelled) break;
           await new Promise((r) => setTimeout(r, 100));
         }
       }
       if (cancelled) return;
 
-      // No pending CALL → check for a pending CHAT-notification tap (cold start).
-      // The in-memory route (warm Notifee tap) takes precedence over the
-      // SecureStore-persisted one (survives full process death).
-      if (!route) {
-        let chat = consumePendingChat();
-        if (!chat) {
-          chat = await loadPersistedPendingChat();
-        }
-        if (chat?.conversationId && !cancelled) {
-          void clearPersistedPendingChat();
-          setChatConversationId(String(chat.conversationId));
-        }
+      // A pending CALL always wins over a chat route. Otherwise open the exact
+      // conversation the message notification pointed at (in-memory route from a
+      // warm Notifee tap takes precedence over the SecureStore-persisted one).
+      if (!route && chat?.conversationId) {
+        consumePendingChat();
+        void clearPersistedPendingChat();
+        setChatConversationId(String(chat.conversationId));
       }
 
       if (cancelled) return;
