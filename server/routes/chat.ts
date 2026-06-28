@@ -2898,6 +2898,39 @@ router.get("/calls", auth, async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/chat/calls/delete  { ids: number[] }
+ * Bulk-delete call-log entries (Signal-style multi-select delete on the Calls
+ * tab). Only removes rows for conversations the current user participates in,
+ * so a user can never delete another user's call history. Also covers the
+ * single-delete case (pass a one-element array).
+ */
+router.post("/calls/delete", auth, async (req: Request, res: Response) => {
+  try {
+    const userId = req.userId;
+    const ids = Array.isArray(req.body?.ids)
+      ? (req.body.ids as unknown[])
+          .map((v) => parseInt(String(v), 10))
+          .filter((n) => Number.isInteger(n))
+      : [];
+    if (ids.length === 0) {
+      return res.status(400).json({ error: "No call ids provided" });
+    }
+    const result = await req.db!.query(
+      `DELETE FROM call_logs cl
+         USING conversation_participants cp
+        WHERE cl.id = ANY($1::int[])
+          AND cp.conversation_id = cl.conversation_id
+          AND cp.user_id = $2`,
+      [ids, userId],
+    );
+    res.json({ ok: true, deleted: result.rowCount ?? 0 });
+  } catch (err) {
+    req.log.error({ err }, "Delete call history error");
+    res.status(500).json({ error: "Failed to delete call history" });
+  }
+});
+
+/**
  * GET /api/chat/calls/active
  * Returns the user's currently active call (status = 'answered'), if any.
  */

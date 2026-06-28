@@ -19,9 +19,12 @@ import {
   BellDot,
   BellOff,
   Check,
+  CheckCircle2,
+  Circle,
   FileText,
   Film,
   Image as ImageIcon,
+  ListChecks,
   MailOpen,
   MessageSquare,
   MessagesSquare,
@@ -42,6 +45,7 @@ import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import {
   archiveConversation,
+  deleteCalls,
   deleteConversation,
   favouriteConversation,
   getAllCallHistory,
@@ -66,6 +70,7 @@ import {
   setCachedConversations,
 } from "../../src/storage/chatCache";
 import ChatAvatar from "../../src/components/ChatAvatar";
+import ConfirmDialog from "../../src/components/ConfirmDialog";
 import {
   useKeyboardInset,
   scrollFocusedIntoView,
@@ -91,12 +96,6 @@ type SearchUser = {
   full_name: string;
   avatar?: string | null;
 };
-
-function initials(name?: string | null) {
-  if (!name) return "?";
-  const p = name.trim().split(/\s+/);
-  return ((p[0]?.[0] ?? "") + (p[1]?.[0] ?? "")).toUpperCase() || "?";
-}
 
 function timeAgo(iso?: string | null) {
   if (!iso) return "";
@@ -163,6 +162,16 @@ export default function ChatScreen() {
 
   // Per-conversation action menu.
   const [menuConv, setMenuConv] = useState<Conversation | null>(null);
+
+  // Signal-style multi-select. `selectionMode` flips the list into selection
+  // behaviour (tap toggles a row instead of opening it) and swaps the header
+  // for a selection action bar. `selectedIds` holds the chosen row ids (conv
+  // ids for Chat/Meet, call-log ids for Calls). `confirmDelete` gates the
+  // themed confirmation dialog before a bulk delete runs.
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Live presence map for 1:1 conversation peers (userId → effective status).
   // Mirrors the web `userStatusMap` so chat avatars show a status badge.
@@ -483,6 +492,83 @@ export default function ChatScreen() {
 
   const totalUnread = items.reduce((s, c) => s + (c.unread_count || 0), 0);
 
+  // ── Signal-style multi-select helpers ──
+  const exitSelection = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  // Enter selection mode pre-selecting `id` (long-press entry point).
+  const enterSelection = useCallback((id: number) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([id]));
+  }, []);
+
+  // Toggle a row's selected state. If the last item is unselected we drop back
+  // out of selection mode (Signal parity).
+  const toggleSelected = useCallback((id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      if (next.size === 0) setSelectionMode(false);
+      return next;
+    });
+  }, []);
+
+  // The full set of selectable ids for the ACTIVE tab — used by "Select all".
+  const selectableIds = useMemo<number[]>(() => {
+    if (tab === "calls") return calls.map((c) => c.id);
+    if (tab === "meetings") return meetingConvs.map((c) => c.id);
+    return regular.map((c) => c.id);
+  }, [tab, calls, meetingConvs, regular]);
+
+  const allSelected =
+    selectableIds.length > 0 && selectedIds.size === selectableIds.length;
+
+  const selectAll = useCallback(() => {
+    setSelectedIds((prev) =>
+      prev.size === selectableIds.length
+        ? new Set()
+        : new Set(selectableIds),
+    );
+  }, [selectableIds]);
+
+  // Bulk delete the selected rows. Calls hit the dedicated bulk endpoint;
+  // chat/meeting rows loop deleteConversation (no bulk endpoint needed).
+  const performBulkDelete = useCallback(async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) {
+      setConfirmDelete(false);
+      return;
+    }
+    setDeleting(true);
+    try {
+      if (tab === "calls") {
+        await deleteCalls(ids);
+        setCalls((prev) => prev.filter((c) => !selectedIds.has(c.id)));
+      } else {
+        await Promise.allSettled(ids.map((id) => deleteConversation(id)));
+        setItems((prev) => prev.filter((c) => !selectedIds.has(c.id)));
+      }
+    } catch {
+      /* best-effort; the list refresh below reconciles */
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
+      exitSelection();
+      if (tab === "calls") loadCalls();
+      else load();
+    }
+  }, [selectedIds, tab, exitSelection, load, loadCalls]);
+
+  // Leaving a tab or opening search cancels any in-progress selection so the
+  // selection bar never lingers over the wrong list.
+  useEffect(() => {
+    if (selectionMode) exitSelection();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, showSearch]);
+
   // Flatten the active tab's grouped conversations into a single typed row
   // array for the virtualized FlashList (section headers + conversation rows).
   const listRows = useMemo<ListRow[]>(() => {
@@ -531,8 +617,39 @@ export default function ChatScreen() {
     return <MessageSquare size={13} color={theme.textMuted} />;
   }
 
+  // Avatar for a conversation row. Meeting chats and groups get a recognizable
+  // icon avatar (Signal renders a group glyph) instead of blank initials; 1:1
+  // chats use the peer's avatar/initials with a live status dot.
+  function renderConvAvatar(item: Conversation) {
+    if (item.is_meeting_chat) {
+      return (
+        <View style={styles.iconAvatar}>
+          <Video size={22} color={theme.onAccent} />
+        </View>
+      );
+    }
+    if (item.is_group) {
+      return (
+        <View style={styles.iconAvatar}>
+          <Users size={22} color={theme.onAccent} />
+        </View>
+      );
+    }
+    return (
+      <ChatAvatar
+        name={convName(item)}
+        avatar={item.other_avatar}
+        size={48}
+        userStatus={
+          item.other_user_id ? userStatusMap[item.other_user_id] : undefined
+        }
+      />
+    );
+  }
+
   function renderConv(item: Conversation) {
     const name = convName(item);
+    const selected = selectedIds.has(item.id);
     // Signal-style attachment preview: a type-specific icon + label instead of a
     // generic "Attachment". Falls back to the text message / "No messages yet".
     const attachment = item.last_file_url
@@ -548,23 +665,32 @@ export default function ChatScreen() {
     return (
       <Pressable
         key={item.id}
-        style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
-        onPress={() => openConv(item)}
-        // Signal-style: the per-row overflow menu is removed; the action sheet
-        // is revealed by long-pressing the conversation row instead.
-        onLongPress={() => setMenuConv(item)}
+        style={({ pressed }) => [
+          styles.row,
+          selected && styles.rowSelected,
+          pressed && { opacity: 0.6 },
+        ]}
+        // In selection mode a tap toggles the row; otherwise it opens the chat.
+        onPress={() =>
+          selectionMode ? toggleSelected(item.id) : openConv(item)
+        }
+        // Long-press in selection mode toggles; otherwise it opens the
+        // single-item action sheet (which itself offers a "Select" entry).
+        onLongPress={() =>
+          selectionMode ? toggleSelected(item.id) : setMenuConv(item)
+        }
         delayLongPress={300}
       >
-        <ChatAvatar
-          name={name}
-          avatar={item.is_group ? null : item.other_avatar}
-          size={48}
-          userStatus={
-            !item.is_group && item.other_user_id
-              ? userStatusMap[item.other_user_id]
-              : undefined
-          }
-        />
+        {selectionMode ? (
+          <View style={styles.selectMark}>
+            {selected ? (
+              <CheckCircle2 size={22} color={theme.primary} />
+            ) : (
+              <Circle size={22} color={theme.textMuted} />
+            )}
+          </View>
+        ) : null}
+        {renderConvAvatar(item)}
         <View style={styles.body}>
           <View style={styles.rowTop}>
             <View style={styles.nameWrap}>
@@ -716,7 +842,45 @@ export default function ChatScreen() {
 
   return (
     <View style={styles.screen}>
-      {/* Header with search toggle */}
+      {/* Header row: when searching it becomes a full-width search bar; otherwise
+          it holds the org-tinted Chat/Meet/Calls segmented control on the left
+          and the Search icon on the right — all in a single padded row (mirrors
+          the web client's chat header). The "new chat" icon is intentionally
+          omitted here; the bottom FAB already opens /chat/new. */}
+      {selectionMode ? (
+        // Signal-style selection action bar: close (X) + count on the left,
+        // Select-all + Delete actions on the right.
+        <View style={styles.selectionBar}>
+          <Pressable
+            style={styles.selectionAction}
+            onPress={exitSelection}
+            hitSlop={8}
+          >
+            <X size={22} color={theme.text} />
+          </Pressable>
+          <Text style={styles.selectionCount}>{selectedIds.size} selected</Text>
+          <Pressable
+            style={styles.selectionAction}
+            onPress={selectAll}
+            hitSlop={8}
+          >
+            <ListChecks
+              size={22}
+              color={allSelected ? theme.primary : theme.text}
+            />
+          </Pressable>
+          <Pressable
+            style={styles.selectionAction}
+            onPress={() => selectedIds.size > 0 && setConfirmDelete(true)}
+            hitSlop={8}
+          >
+            <Trash2
+              size={22}
+              color={selectedIds.size > 0 ? theme.danger : theme.textMuted}
+            />
+          </Pressable>
+        </View>
+      ) : (
       <View style={styles.header}>
         {showSearch ? (
           <View style={styles.searchBar}>
@@ -743,70 +907,68 @@ export default function ChatScreen() {
           </View>
         ) : (
           <>
-            <View style={styles.headerSpacer} />
-            <View style={styles.headerBtns}>
-              <Pressable
-                style={styles.headerIcon}
-                onPress={() => setShowSearch(true)}
-              >
-                <Search size={20} color={theme.textSecondary} />
-              </Pressable>
-              <Pressable
-                style={styles.headerIcon}
-                onPress={() => router.push("/chat/new")}
-              >
-                <Users size={20} color={theme.textSecondary} />
-              </Pressable>
+            {/* Org-accent tinted, squircle (rounded-corner) container that
+                wraps the three tab segments as a single grouped control. */}
+            <View style={styles.segmentGroup}>
+              <TabButton
+                active={tab === "msgs"}
+                label="Chat"
+                icon={
+                  <MessageSquare
+                    size={14}
+                    color={
+                      tab === "msgs" ? theme.onAccent : theme.textSecondary
+                    }
+                  />
+                }
+                badge={totalUnread}
+                onPress={() => setTab("msgs")}
+              />
+              {meetingsEnabled ? (
+                <TabButton
+                  active={tab === "meetings"}
+                  label="Meet"
+                  icon={
+                    <Video
+                      size={14}
+                      color={
+                        tab === "meetings"
+                          ? theme.onAccent
+                          : theme.textSecondary
+                      }
+                    />
+                  }
+                  badge={meetingConvs.reduce(
+                    (s, c) => s + (c.unread_count || 0),
+                    0,
+                  )}
+                  onPress={() => setTab("meetings")}
+                />
+              ) : null}
+              <TabButton
+                active={tab === "calls"}
+                label="Calls"
+                icon={
+                  <Phone
+                    size={14}
+                    color={
+                      tab === "calls" ? theme.onAccent : theme.textSecondary
+                    }
+                  />
+                }
+                onPress={() => setTab("calls")}
+              />
             </View>
+            <Pressable
+              style={styles.headerIcon}
+              onPress={() => setShowSearch(true)}
+            >
+              <Search size={20} color={theme.textSecondary} />
+            </Pressable>
           </>
         )}
       </View>
-
-      {/* Tabs */}
-      {!showSearch ? (
-        <View style={styles.tabs}>
-          <TabButton
-            active={tab === "msgs"}
-            label="Chat"
-            icon={
-              <MessageSquare
-                size={14}
-                color={tab === "msgs" ? theme.primary : theme.textSecondary}
-              />
-            }
-            badge={totalUnread}
-            onPress={() => setTab("msgs")}
-          />
-          {meetingsEnabled ? (
-            <TabButton
-              active={tab === "meetings"}
-              label="Meet"
-              icon={
-                <Video
-                  size={14}
-                  color={tab === "meetings" ? theme.primary : theme.textSecondary}
-                />
-              }
-              badge={meetingConvs.reduce(
-                (s, c) => s + (c.unread_count || 0),
-                0,
-              )}
-              onPress={() => setTab("meetings")}
-            />
-          ) : null}
-          <TabButton
-            active={tab === "calls"}
-            label="Calls"
-            icon={
-              <Phone
-                size={14}
-                color={tab === "calls" ? theme.primary : theme.textSecondary}
-              />
-            }
-            onPress={() => setTab("calls")}
-          />
-        </View>
-      ) : null}
+      )}
 
       {/* Search results */}
       {showSearch ? (
@@ -868,14 +1030,46 @@ export default function ChatScreen() {
               : outgoing
                 ? item.other_name || "Unknown"
                 : item.caller_name || "Unknown";
+            const selected = selectedIds.has(item.id);
+            // The avatar for a call row: the OTHER party's avatar (peer for
+            // outgoing, caller for incoming). Group calls fall back to a group
+            // icon avatar.
+            const callAvatar = item.is_group
+              ? null
+              : outgoing
+                ? item.other_avatar
+                : item.caller_avatar;
             return (
               <Pressable
-                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
-                onPress={() => callBack(item)}
+                style={({ pressed }) => [
+                  styles.row,
+                  selected && styles.rowSelected,
+                  pressed && { opacity: 0.6 },
+                ]}
+                onPress={() =>
+                  selectionMode ? toggleSelected(item.id) : callBack(item)
+                }
+                onLongPress={() =>
+                  selectionMode ? toggleSelected(item.id) : enterSelection(item.id)
+                }
+                delayLongPress={300}
               >
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{initials(display)}</Text>
-                </View>
+                {selectionMode ? (
+                  <View style={styles.selectMark}>
+                    {selected ? (
+                      <CheckCircle2 size={22} color={theme.primary} />
+                    ) : (
+                      <Circle size={22} color={theme.textMuted} />
+                    )}
+                  </View>
+                ) : null}
+                {item.is_group ? (
+                  <View style={styles.iconAvatar}>
+                    <Users size={22} color={theme.onAccent} />
+                  </View>
+                ) : (
+                  <ChatAvatar name={display} avatar={callAvatar} size={48} />
+                )}
                 <View style={styles.body}>
                   <Text style={styles.name} numberOfLines={1}>
                     {display}
@@ -965,7 +1159,7 @@ export default function ChatScreen() {
         />
       )}
 
-      {!showSearch ? (
+      {!showSearch && !selectionMode ? (
         <Pressable style={styles.fab} onPress={() => router.push("/chat/new")}>
           <MessagesSquare size={22} color="#fff" />
         </Pressable>
@@ -1000,6 +1194,17 @@ export default function ChatScreen() {
               </View>
             ) : null}
 
+            <Pressable
+              style={styles.sheetRow}
+              onPress={() => {
+                const c = menuConv;
+                setMenuConv(null);
+                if (c) enterSelection(c.id);
+              }}
+            >
+              <ListChecks size={20} color={theme.text} />
+              <Text style={styles.sheetText}>Select</Text>
+            </Pressable>
             <Pressable
               style={styles.sheetRow}
               onPress={() => menuConv && doPin(menuConv)}
@@ -1070,6 +1275,21 @@ export default function ChatScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Bulk-delete confirmation (themed, replaces the OS alert). */}
+      <ConfirmDialog
+        visible={confirmDelete}
+        title="Delete selected?"
+        message={
+          tab === "calls"
+            ? `Delete ${selectedIds.size} call${selectedIds.size === 1 ? "" : "s"} from your history?`
+            : `Delete ${selectedIds.size} conversation${selectedIds.size === 1 ? "" : "s"}? This cannot be undone.`
+        }
+        confirmText={deleting ? "Deleting…" : "Delete"}
+        isDanger
+        onConfirm={performBulkDelete}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </View>
   );
 }
@@ -1152,8 +1372,6 @@ const makeStyles = (theme: Theme) =>
       color: theme.text,
       letterSpacing: -0.5,
     },
-    headerSpacer: { flex: 1 },
-    headerBtns: { flexDirection: "row", gap: 6 },
     headerIcon: {
       width: 40,
       height: 40,
@@ -1179,11 +1397,20 @@ const makeStyles = (theme: Theme) =>
       fontSize: 15,
       paddingVertical: 0,
     },
-    tabs: {
+    // Org-accent tinted, squircle (rounded-corner) container that groups the
+    // Chat/Meet/Calls segments into one control (mirrors the web client's
+    // segmented chat header). `flex: 1` lets it fill the row beside the search
+    // icon, with `marginRight` separating the two.
+    segmentGroup: {
+      flex: 1,
       flexDirection: "row",
-      gap: 6,
-      paddingHorizontal: 12,
-      paddingBottom: 8,
+      gap: 4,
+      marginRight: 10,
+      padding: 4,
+      borderRadius: theme.radiusLg,
+      backgroundColor: theme.primaryGlow,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
     },
     tabBtn: {
       flex: 1,
@@ -1191,28 +1418,25 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "center",
       gap: 4,
-      paddingVertical: 9,
+      paddingVertical: 8,
       // Horizontal padding keeps the icon+label off the edges; the absolutely
       // positioned badge (below) overlaps this padding instead of widening the row.
       paddingHorizontal: 6,
-      // Rounded-corner rectangle (not an oval pill) — `radiusLg` gives the
-      // soft, squircle-like corners of an iOS liquid-glass segment.
-      borderRadius: theme.radiusLg,
-      // Frosted-glass base: a faint translucent fill + hairline glass border.
-      backgroundColor: theme.glass,
-      borderWidth: 1,
-      borderColor: theme.glassBorder,
+      // Rounded-corner rectangle nested inside the tinted group — a slightly
+      // tighter radius than the container for the inset segmented look.
+      borderRadius: theme.radius,
+      // Inactive segments stay transparent so the org-tinted container shows
+      // through; only the active segment gets a fill.
+      backgroundColor: "transparent",
       // Anchor for the absolutely positioned unread badge AND the layered
       // liquid-glass gradient sheen (StyleSheet.absoluteFill).
       position: "relative",
       overflow: "hidden",
     },
     tabBtnActive: {
-      // Active segment: a translucent accent tint (instead of a flat solid
-      // fill) so the glass sheen still reads through, with a brighter accent
-      // border + a soft glow giving the "liquid glass" depth.
-      backgroundColor: theme.primaryGlow,
-      borderColor: theme.primary,
+      // Active segment: a solid accent fill that pops against the tinted
+      // container, giving a clean selected-segment look, with a soft glow.
+      backgroundColor: theme.primary,
       shadowColor: theme.primary,
       shadowOffset: { width: 0, height: 0 },
       shadowOpacity: 0.5,
@@ -1227,7 +1451,7 @@ const makeStyles = (theme: Theme) =>
       fontWeight: "600",
       flexShrink: 1,
     },
-    tabTextActive: { color: theme.primary },
+    tabTextActive: { color: theme.onAccent },
     tabBadge: {
       // Float the badge in the pill's top-right corner so an incoming notification
       // never shifts or crowds the centered icon+label (the padding-break bug).
@@ -1279,7 +1503,8 @@ const makeStyles = (theme: Theme) =>
       paddingVertical: 10,
       paddingHorizontal: 4,
     },
-    avatar: {
+    // Icon avatar for meeting / group rows (Signal-style group glyph).
+    iconAvatar: {
       width: 48,
       height: 48,
       borderRadius: 24,
@@ -1287,7 +1512,32 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "center",
     },
-    avatarText: { color: "#fff", fontSize: 16, fontWeight: "700" },
+    // Selected-row tint + the leading checkbox column in selection mode.
+    rowSelected: { backgroundColor: theme.primaryGlow, borderRadius: theme.radius },
+    selectMark: { width: 26, alignItems: "center", justifyContent: "center" },
+    // Signal-style selection action bar (replaces the header in selection mode).
+    selectionBar: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingTop: 12,
+      paddingBottom: 8,
+      minHeight: 52,
+    },
+    selectionCount: {
+      flex: 1,
+      fontSize: 17,
+      fontWeight: "700",
+      color: theme.text,
+    },
+    selectionAction: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     body: { flex: 1, gap: 3 },
     rowTop: {
       flexDirection: "row",

@@ -882,6 +882,17 @@ export function getAllCallHistory() {
   return api.get<CallLogEntry[]>("/chat/calls");
 }
 
+/**
+ * Bulk-delete call-log entries (Signal-style multi-select delete on the Calls
+ * tab). Pass a one-element array for a single delete. The server only removes
+ * rows for conversations the current user participates in.
+ */
+export function deleteCalls(ids: number[]) {
+  return api.post<{ ok: boolean; deleted: number }>("/chat/calls/delete", {
+    ids,
+  });
+}
+
 export function getConversationCalls(convId: number) {
   return api.get<CallLogEntry[]>(`/chat/conversations/${convId}/calls`);
 }
