@@ -28,10 +28,8 @@ import {
   Trash2,
   X,
 } from "lucide-react-native";
-import { useAuth } from "../../auth/AuthContext";
 import { uploadUrl } from "../../config";
 import {
-  deleteMessage,
   forwardMessage,
   getConversations,
   getMessages,
@@ -40,6 +38,11 @@ import {
   type Conversation,
   type SharedFile,
 } from "../../features";
+import {
+  getLocalDeletedIds,
+  addLocalDeletedIds,
+  isBeforeClearedAt,
+} from "../../storage/chatLocalDeletes";
 import { useDialog } from "../../hooks/useDialog";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
@@ -108,7 +111,6 @@ export default function SharedMediaGallery({
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const { width } = useWindowDimensions();
-  const { user } = useAuth();
   const { alert, confirm, dialog } = useDialog();
 
   const [tab, setTab] = useState<Tab>(normalizeTab(initialTab));
@@ -128,12 +130,24 @@ export default function SharedMediaGallery({
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // Signal-parity local filters: hide anything the user deleted "for me"
+      // on this device, plus anything before a local "clear chat" cutoff. These
+      // are device-only — the source rows still exist on the server / for the
+      // other participant.
+      const locallyDeleted = new Set(getLocalDeletedIds(convId));
+      const isHiddenLocally = (id: number, createdAt?: string | null) =>
+        locallyDeleted.has(Number(id)) || isBeforeClearedAt(convId, createdAt);
+
       const [filesRes, msgsRes] = await Promise.allSettled([
         getSharedFiles(convId),
         getMessages(convId),
       ]);
       if (filesRes.status === "fulfilled") {
-        setFiles(filesRes.value.data || []);
+        setFiles(
+          (filesRes.value.data || []).filter(
+            (f) => !isHiddenLocally(f.id, f.created_at),
+          ),
+        );
       } else {
         setFiles([]);
       }
@@ -143,6 +157,7 @@ export default function SharedMediaGallery({
         const derived: LinkItem[] = [];
         for (const m of msgs) {
           if (m.deleted_at) continue;
+          if (isHiddenLocally(m.id, m.created_at)) continue;
           const url = extractFirstUrl(m.content);
           if (url) {
             derived.push({
@@ -282,14 +297,9 @@ export default function SharedMediaGallery({
     [alert],
   );
 
-  const getItemSenderId = useCallback(
-    (item: GalleryItem) => item.sender_id,
-    [],
-  );
-
-  const canDelete =
-    selectedItems.length > 0 &&
-    selectedItems.some((item) => getItemSenderId(item) === user?.id);
+  // Delete here is a Signal-style "delete for me" (device-only hide), so it
+  // applies to ANY selected item — not just your own messages.
+  const canDelete = selectedItems.length > 0;
   const canForward = selectedItems.length > 0;
   const onlyLinks =
     selectedItems.length > 0 && selectedItems.every((item) => isLinkItem(item));
@@ -298,19 +308,12 @@ export default function SharedMediaGallery({
     selectedItems.length > 0 &&
     selectedItems.every((item) => !isLinkItem(item));
 
-  // Contextual one-liner shown below the hint row explaining ownership constraint.
+  // Contextual one-liner shown below the hint row. Delete is device-only here
+  // ("delete for me"), so there's no ownership constraint to explain.
   const selectionHint = useMemo<string | null>(() => {
     if (selectedItems.length === 0) return null;
-    const hasNonOwn = selectedItems.some(
-      (item) => getItemSenderId(item) !== user?.id,
-    );
-    const hasOwn = selectedItems.some(
-      (item) => getItemSenderId(item) === user?.id,
-    );
-    if (hasNonOwn && hasOwn) return "Only your own messages will be deleted";
-    if (hasNonOwn && !hasOwn) return "Select your own messages to delete";
-    return null;
-  }, [getItemSenderId, selectedItems, user?.id]);
+    return "Items are removed only on this device";
+  }, [selectedItems]);
 
   const openForwardPicker = useCallback(async () => {
     if (!canForward || actionBusy) return;
@@ -326,66 +329,46 @@ export default function SharedMediaGallery({
     }
   }, [actionBusy, canForward]);
 
+  // "Delete for me" — Signal-style device-only hide. Persists the hidden ids
+  // locally and drops them from the gallery immediately. The server rows (and
+  // the other participant's copy) are untouched.
   const onDeleteSelected = useCallback(() => {
     if (!canDelete || actionBusy) return;
-    // Only delete items owned by the current user; others are silently skipped.
-    const ids = selectedItems
-      .filter((item) => getItemSenderId(item) === user?.id)
-      .map((item) => item.id);
+    const ids = selectedItems.map((item) => item.id);
     if (ids.length === 0) return;
     confirm({
       title:
         ids.length === 1
-          ? "Delete selected message"
-          : "Delete selected messages",
+          ? "Delete on this device"
+          : "Delete on this device",
       message:
         ids.length === 1
-          ? "This will remove the selected message."
-          : `This will remove ${ids.length} selected messages.`,
+          ? "This will remove the selected item on this device only. The other person will still have their copy."
+          : `This will remove ${ids.length} selected items on this device only. The other person will still have their copy.`,
       confirmText: "Delete",
       isDanger: true,
-      onConfirm: async () => {
+      onConfirm: () => {
         setActionBusy("delete");
         try {
-          const results = await Promise.allSettled(
-            ids.map((id) => deleteMessage(id)),
-          );
-          const okCount = results.filter(
-            (r) => r.status === "fulfilled",
-          ).length;
-          await load();
+          // Persist the "delete for me" ids so they stay hidden across reloads.
+          addLocalDeletedIds(convId, ids);
+          // Drop them from the in-memory lists right away.
+          const idSet = new Set(ids);
+          setFiles((prev) => prev.filter((f) => !idSet.has(f.id)));
+          setLinks((prev) => prev.filter((l) => !idSet.has(l.id)));
           clearSelection();
-          if (okCount === 0) {
-            alert("Error", "Could not delete the selected messages.");
-          } else if (okCount === ids.length) {
-            alert(
-              "Deleted",
-              okCount === 1
-                ? "Message deleted."
-                : `${okCount} messages deleted.`,
-            );
-          } else {
-            alert(
-              "Partially deleted",
-              `${okCount} of ${ids.length} messages were deleted.`,
-            );
-          }
+          alert(
+            "Deleted",
+            ids.length === 1
+              ? "Item removed on this device."
+              : `${ids.length} items removed on this device.`,
+          );
         } finally {
           setActionBusy(null);
         }
       },
     });
-  }, [
-    actionBusy,
-    alert,
-    canDelete,
-    clearSelection,
-    confirm,
-    getItemSenderId,
-    load,
-    selectedItems,
-    user?.id,
-  ]);
+  }, [actionBusy, alert, canDelete, clearSelection, confirm, convId, selectedItems]);
 
   const onForwardTo = useCallback(
     async (targetConvId: number) => {

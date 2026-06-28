@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Redirect, Tabs } from "expo-router";
-import { ActivityIndicator, AppState, View } from "react-native";
+import {
+  ActivityIndicator,
+  AppState,
+  Pressable,
+  type GestureResponderEvent,
+  type StyleProp,
+  type ViewStyle,
+  View,
+} from "react-native";
 import * as Notifications from "expo-notifications";
 import {
   Calendar,
@@ -20,6 +28,48 @@ import {
 } from "../../src/realtime/chatUnreadEvents";
 import { chatUnreadManager } from "../../src/realtime/chatUnreadEvents";
 import { pushNotificationService } from "../../src/services/pushNotificationService";
+
+// Custom bottom-tab button that replaces React Navigation's default
+// `PlatformPressable` (which applies the Android Material ripple). This renders
+// a plain Pressable with NO ripple and a subtle Signal-style opacity dim while
+// pressed — matching the rest of the app's touch feedback.
+type TabBarButtonProps = {
+  children?: React.ReactNode;
+  onPress?: (e: GestureResponderEvent) => void;
+  onLongPress?: (e: GestureResponderEvent) => void;
+  accessibilityState?: { selected?: boolean; disabled?: boolean };
+  accessibilityLabel?: string;
+  testID?: string;
+  style?: StyleProp<ViewStyle>;
+};
+
+function TabBarButton({
+  children,
+  onPress,
+  onLongPress,
+  accessibilityState,
+  accessibilityLabel,
+  testID,
+  style,
+}: TabBarButtonProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
+      accessibilityLabel={accessibilityLabel}
+      testID={testID}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      android_ripple={null}
+      style={({ pressed }) => [
+        style,
+        { opacity: pressed ? 0.6 : 1 },
+      ]}
+    >
+      {children}
+    </Pressable>
+  );
+}
 
 export default function TabsLayout() {
   const theme = useTheme();
@@ -146,6 +196,9 @@ export default function TabsLayout() {
         header: () => <TopBar />,
         tabBarActiveTintColor: theme.primary,
         tabBarInactiveTintColor: theme.textMuted,
+        // Replace the default ripple-emitting tab button with our no-ripple,
+        // opacity-dim Pressable (Signal-style press feedback).
+        tabBarButton: (props) => <TabBarButton {...(props as TabBarButtonProps)} />,
         tabBarStyle: {
           backgroundColor: theme.bgSecondary,
           borderTopColor: theme.border,

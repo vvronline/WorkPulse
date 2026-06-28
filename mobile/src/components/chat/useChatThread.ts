@@ -29,7 +29,6 @@ import { useAuth } from "../../auth/AuthContext";
 import { useDialog } from "../../hooks/useDialog";
 import {
   ackDelivered,
-  clearChat,
   cancelChatMediaJob,
   deleteMessage,
   editMessage,
@@ -76,6 +75,8 @@ import {
 import {
   getLocalDeletedIds,
   addLocalDeletedIds,
+  setClearedAt,
+  isBeforeClearedAt,
 } from "../../storage/chatLocalDeletes";
 import { STATUS_LABEL, type HeaderSheet } from "./chatUtils";
 
@@ -2272,6 +2273,13 @@ export function useChatThread() {
     setTimeout(() => jumpToMessage(messageId), 350);
   }
 
+  // Clear chat — Signal-style, LOCAL/device-only. This never touches the other
+  // participant's copy (the old behaviour wrongly called the server, which
+  // wiped the conversation for everyone). We record a per-conversation "cleared
+  // at" cutoff so every message up to now is hidden on THIS device — including
+  // messages not yet loaded via pagination — while NEW messages that arrive
+  // afterwards still appear. The cutoff is persisted so the clear survives
+  // reloads/app restarts.
   function doClearChat() {
     setHeaderSheet(null);
     // Defer so the confirm dialog never collides with the dismissing modal.
@@ -2279,23 +2287,15 @@ export function useChatThread() {
       confirm({
         title: "Clear chat",
         message:
-          "Delete all messages in this conversation for everyone? This cannot be undone.",
+          "Clear this chat on your device? The other person will still have their copy.",
         confirmText: "Clear",
         isDanger: true,
         onConfirm: () => {
-          clearChat(convId)
-            .then(() => {
-              setMessages([]);
-              setPinnedMsgs([]);
-              setHasMore(false);
-              clearCachedMessages(convId);
-            })
-            .catch((e: any) =>
-              alert(
-                "Error",
-                e?.response?.data?.error || "Could not clear chat.",
-              ),
-            );
+          setClearedAt(convId);
+          setMessages([]);
+          setPinnedMsgs([]);
+          setHasMore(false);
+          clearCachedMessages(convId);
         },
       });
     }, 300);
@@ -2896,8 +2896,17 @@ export function useChatThread() {
   // it under the composer, and no scroll math is needed to "stick to bottom".
   const messagesReversed = useMemo(
     () =>
-      [...messages].reverse().filter((m) => !locallyDeleted.has(Number(m.id))),
-    [messages, locallyDeleted],
+      [...messages]
+        .reverse()
+        .filter(
+          (m) =>
+            // "Delete for me" — hidden message ids on this device.
+            !locallyDeleted.has(Number(m.id)) &&
+            // "Clear chat for me" — everything up to the local cutoff is hidden
+            // on this device while newer messages still show (Signal model).
+            !isBeforeClearedAt(convId, m.created_at),
+        ),
+    [messages, locallyDeleted, convId],
   );
 
   const latestPin = pinnedMsgs[0];

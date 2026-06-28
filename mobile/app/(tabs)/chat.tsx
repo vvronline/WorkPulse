@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
+import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import {
   Archive,
@@ -70,7 +71,7 @@ import {
   scrollFocusedIntoView,
 } from "../../src/hooks/useKeyboardInset";
 
-type Tab = "msgs" | "meetings" | "calls" | "unread";
+type Tab = "msgs" | "meetings" | "calls";
 
 // A flattened row for the virtualized conversation list. Section headers and
 // conversation rows share one array so FlashList can recycle them efficiently
@@ -476,7 +477,6 @@ export default function ChatScreen() {
   // Derived lists (mirror web ChatSidebar grouping).
   const regular = items.filter((c) => !c.is_meeting_chat);
   const meetingConvs = items.filter((c) => c.is_meeting_chat);
-  const unreadConvs = items.filter((c) => (c.unread_count || 0) > 0);
   const pinned = regular.filter((c) => c.is_pinned);
   const favourites = regular.filter((c) => c.is_favourite && !c.is_pinned);
   const others = regular.filter((c) => !c.is_pinned && !c.is_favourite);
@@ -521,12 +521,9 @@ export default function ChatScreen() {
     } else if (tab === "meetings") {
       for (const c of meetingConvs)
         rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
-    } else if (tab === "unread") {
-      for (const c of unreadConvs)
-        rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
     }
     return rows;
-  }, [tab, pinned, favourites, others, meetingConvs, unreadConvs]);
+  }, [tab, pinned, favourites, others, meetingConvs]);
 
   function renderSectionIcon(icon: "pin" | "star" | "msg") {
     if (icon === "pin") return <Pin size={13} color={theme.textMuted} />;
@@ -746,7 +743,7 @@ export default function ChatScreen() {
           </View>
         ) : (
           <>
-            <Text style={styles.heading}>Chat</Text>
+            <View style={styles.headerSpacer} />
             <View style={styles.headerBtns}>
               <Pressable
                 style={styles.headerIcon}
@@ -774,7 +771,7 @@ export default function ChatScreen() {
             icon={
               <MessageSquare
                 size={14}
-                color={tab === "msgs" ? "#fff" : theme.textSecondary}
+                color={tab === "msgs" ? theme.primary : theme.textSecondary}
               />
             }
             badge={totalUnread}
@@ -787,7 +784,7 @@ export default function ChatScreen() {
               icon={
                 <Video
                   size={14}
-                  color={tab === "meetings" ? "#fff" : theme.textSecondary}
+                  color={tab === "meetings" ? theme.primary : theme.textSecondary}
                 />
               }
               badge={meetingConvs.reduce(
@@ -803,22 +800,10 @@ export default function ChatScreen() {
             icon={
               <Phone
                 size={14}
-                color={tab === "calls" ? "#fff" : theme.textSecondary}
+                color={tab === "calls" ? theme.primary : theme.textSecondary}
               />
             }
             onPress={() => setTab("calls")}
-          />
-          <TabButton
-            active={tab === "unread"}
-            label="Unread"
-            icon={
-              <BellDot
-                size={14}
-                color={tab === "unread" ? "#fff" : theme.textSecondary}
-              />
-            }
-            badge={unreadConvs.length}
-            onPress={() => setTab("unread")}
           />
         </View>
       ) : null}
@@ -949,11 +934,6 @@ export default function ChatScreen() {
             <View style={styles.empty}>
               <Video size={40} color={theme.textMuted} />
               <Text style={styles.emptyText}>No meeting chats yet</Text>
-            </View>
-          ) : tab === "unread" ? (
-            <View style={styles.empty}>
-              <BellDot size={40} color={theme.textMuted} />
-              <Text style={styles.emptyText}>You&apos;re all caught up!</Text>
             </View>
           ) : (
             <View style={styles.empty}>
@@ -1111,9 +1091,28 @@ function TabButton({
   const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <Pressable
-      style={[styles.tabBtn, active && styles.tabBtnActive]}
+      style={({ pressed }) => [
+        styles.tabBtn,
+        active && styles.tabBtnActive,
+        pressed && { opacity: 0.7 },
+      ]}
       onPress={onPress}
     >
+      {/* iOS "liquid glass" sheen — a soft top-down highlight layered over the
+          translucent fill gives the frosted, glossy depth without a native
+          blur dependency. The diagonal gradient brightens the top-left edge
+          and fades to transparent, mimicking light refracting through glass. */}
+      <LinearGradient
+        colors={
+          active
+            ? ["rgba(255,255,255,0.28)", "rgba(255,255,255,0.04)", "rgba(255,255,255,0)"]
+            : ["rgba(255,255,255,0.10)", "rgba(255,255,255,0.02)", "rgba(255,255,255,0)"]
+        }
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0.6, y: 1 }}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
       {icon}
       <Text
         style={[styles.tabText, active && styles.tabTextActive]}
@@ -1153,6 +1152,7 @@ const makeStyles = (theme: Theme) =>
       color: theme.text,
       letterSpacing: -0.5,
     },
+    headerSpacer: { flex: 1 },
     headerBtns: { flexDirection: "row", gap: 6 },
     headerIcon: {
       width: 40,
@@ -1191,18 +1191,34 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "center",
       gap: 4,
-      paddingVertical: 8,
-      // Horizontal padding keeps the icon+label off the pill edges; the absolutely
+      paddingVertical: 9,
+      // Horizontal padding keeps the icon+label off the edges; the absolutely
       // positioned badge (below) overlaps this padding instead of widening the row.
       paddingHorizontal: 6,
-      borderRadius: theme.radiusFull,
-      backgroundColor: theme.surface,
-      // Anchor for the absolutely positioned unread badge so it floats in the
-      // top-right corner rather than pushing the centered content sideways.
+      // Rounded-corner rectangle (not an oval pill) — `radiusLg` gives the
+      // soft, squircle-like corners of an iOS liquid-glass segment.
+      borderRadius: theme.radiusLg,
+      // Frosted-glass base: a faint translucent fill + hairline glass border.
+      backgroundColor: theme.glass,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+      // Anchor for the absolutely positioned unread badge AND the layered
+      // liquid-glass gradient sheen (StyleSheet.absoluteFill).
       position: "relative",
       overflow: "hidden",
     },
-    tabBtnActive: { backgroundColor: theme.primary },
+    tabBtnActive: {
+      // Active segment: a translucent accent tint (instead of a flat solid
+      // fill) so the glass sheen still reads through, with a brighter accent
+      // border + a soft glow giving the "liquid glass" depth.
+      backgroundColor: theme.primaryGlow,
+      borderColor: theme.primary,
+      shadowColor: theme.primary,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.5,
+      shadowRadius: 8,
+      elevation: 3,
+    },
     // `flexShrink` lets the label give way gracefully (with numberOfLines={1}
     // ellipsis) instead of forcing the row wider than its flex slot.
     tabText: {
@@ -1211,7 +1227,7 @@ const makeStyles = (theme: Theme) =>
       fontWeight: "600",
       flexShrink: 1,
     },
-    tabTextActive: { color: "#fff" },
+    tabTextActive: { color: theme.primary },
     tabBadge: {
       // Float the badge in the pill's top-right corner so an incoming notification
       // never shifts or crowds the centered icon+label (the padding-break bug).

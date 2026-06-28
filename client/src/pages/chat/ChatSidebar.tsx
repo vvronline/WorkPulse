@@ -1,4 +1,4 @@
-import { Pin, Star, Users, UserPlus, X, Search, Phone, MessageSquare, Video, BellDot } from "lucide-react";
+import { Pin, Star, Users, UserPlus, X, Search, Phone, MessageSquare, Video } from "lucide-react";
 import { useState } from "react";
 import { ChatAvatar } from "../../components/chat";
 import { useFeatures } from "../../FeaturesContext";
@@ -61,7 +61,6 @@ export default function ChatSidebar({
     // Separate meeting conversations from regular ones
     const regularConvs = conversations.filter((c) => !c.is_meeting_chat);
     const meetingConvs = conversations.filter((c) => c.is_meeting_chat);
-    const unreadConvs = conversations.filter((c) => (c.unread_count || 0) > 0);
 
     const pinned = regularConvs.filter((c) => c.is_pinned);
     const favourites = regularConvs.filter((c) => c.is_favourite && !c.is_pinned);
@@ -125,13 +124,6 @@ export default function ChatSidebar({
                 >
                     <Phone size={14} /> Calls
                 </button>
-                <button
-                    className={`${s.tabBtn} ${sidebarTab === "unread" ? s.tabActive : ""}`}
-                    onClick={() => switchTab("unread")}
-                >
-                    <BellDot size={14} /> Unread
-                    {unreadConvs.length > 0 && <span className={s.totalBadge}>{unreadConvs.length}</span>}
-                </button>
             </div>
 
             {/* ── Calls tab ── */}
@@ -151,26 +143,6 @@ export default function ChatSidebar({
                         </div>
                     ) : (
                         meetingConvs.map((c) => (
-                            <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />
-                        ))
-                    )}
-                </div>
-            )}
-
-            {/* ── Unread tab ── */}
-            {sidebarTab === "unread" && (
-                <div className={s.convList}>
-                    {unreadConvs.length === 0 ? (
-                        <div className={s.empty}>
-                            <BellDot
-                                size={32}
-                                strokeWidth={1.2}
-                                style={{ margin: "0 auto 0.5rem", display: "block", opacity: 0.4 }}
-                            />
-                            You're all caught up!
-                        </div>
-                    ) : (
-                        unreadConvs.map((c) => (
                             <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />
                         ))
                     )}
