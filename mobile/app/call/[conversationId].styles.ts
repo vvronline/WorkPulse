@@ -7,13 +7,16 @@ export const makeStyles = (theme: Theme) =>
     // Dark fades behind the top info + bottom controls so the white call name
     // and control glyphs remain legible on the system-themed (possibly light)
     // video-off background and over bright video.
+    // Rendered as LinearGradients (top → transparent, transparent → bottom) so
+    // the darkening fades out smoothly toward the center instead of painting a
+    // hard-edged solid dark band over the video. No flat backgroundColor here —
+    // the gradient colours are supplied by the LinearGradient component.
     topScrim: {
       position: "absolute",
       top: 0,
       left: 0,
       right: 0,
-      height: 220,
-      backgroundColor: "rgba(0,0,0,0.32)",
+      height: 180,
       zIndex: 1,
     },
     bottomScrim: {
@@ -21,8 +24,7 @@ export const makeStyles = (theme: Theme) =>
       bottom: 0,
       left: 0,
       right: 0,
-      height: 210,
-      backgroundColor: "rgba(0,0,0,0.38)",
+      height: 180,
       zIndex: 1,
     },
     remoteVideo: {

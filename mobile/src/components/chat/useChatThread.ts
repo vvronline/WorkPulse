@@ -375,6 +375,18 @@ export function useChatThread() {
   const [isRecordingActive, setIsRecordingActive] = useState(false);
   const recordingRef = useRef(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
+  // Whether the (inverted) list is currently near the visual bottom (newest
+  // message). In an inverted list offset 0 IS the bottom, so "near bottom" means
+  // a small contentOffset.y. We only auto-scroll to the newest message on an
+  // INCOMING message when the user is already at the bottom — otherwise we keep
+  // their scroll position (Signal-style) and let the floating "scroll to latest"
+  // pill surface instead of yanking them down mid-read.
+  const atBottomRef = useRef(true);
+  // One-shot guard so we only force a jump-to-bottom on the very FIRST cold
+  // paint of a conversation. The inverted list is already structurally
+  // bottom-pinned, so re-scrolling on every background `load()` reconcile just
+  // caused a visible "settle"/jump on open.
+  const didInitialScrollRef = useRef(false);
   // Bubble host-node refs so we can reliably measure each bubble's window rect
   // for the reaction-bar anchor (Pressable forwards its ref to the host View,
   // which exposes measureInWindow — currentTarget often does not).
@@ -457,7 +469,18 @@ export function useChatThread() {
   // message can NEVER push it under the composer — so this is just a nicety for
   // explicit "jump to latest" cases (send, incoming, typing-indicator appears).
   const scrollToEnd = useCallback((animated = false) => {
+    atBottomRef.current = true;
     listRef.current?.scrollToOffset({ offset: 0, animated });
+  }, []);
+
+  // Track whether the (inverted) list is near the visual bottom. The chat
+  // screen forwards the FlatList's onScroll here. In an inverted list offset 0
+  // is the bottom (newest), so "near bottom" is a small contentOffset.y. This
+  // gates the incoming-message auto-scroll so a new message never yanks the
+  // user down while they're reading history (Signal keeps the position and
+  // surfaces the "scroll to latest" pill instead).
+  const onListScroll = useCallback((y: number) => {
+    atBottomRef.current = y <= 80;
   }, []);
 
   // When the peer STARTS typing, the typing-indicator row appears below the
@@ -543,8 +566,15 @@ export function useChatThread() {
           setCachedReadStatus(convId, map);
         })
         .catch(() => {});
-      // Jump to the newest message once the list has content.
-      setTimeout(() => scrollToEnd(false), 80);
+      // Only force a jump-to-bottom on the very FIRST cold paint. The list is
+      // INVERTED (structurally bottom-pinned), so re-scrolling on every
+      // background reconcile just caused a visible "settle"/jump on open and
+      // could yank a user who had scrolled up to read history. Subsequent
+      // reconciles leave the scroll position untouched (Signal-Android feel).
+      if (!didInitialScrollRef.current) {
+        didInitialScrollRef.current = true;
+        setTimeout(() => scrollToEnd(false), 80);
+      }
     } catch {
       /* ignore */
     } finally {
@@ -1005,7 +1035,15 @@ export function useChatThread() {
       if (d.senderId !== user?.id && d.id) {
         ackDelivered(d.id).catch(() => {});
       }
-      scrollToEnd(true);
+      // Only auto-scroll to the newest message when the user is ALREADY at the
+      // bottom, OR when the new message is the user's OWN (sent from another of
+      // their devices). If they've scrolled up to read history, keep their
+      // position — the floating "scroll to latest" pill (driven by the list's
+      // own scroll tracking) lets them jump down deliberately, exactly like
+      // Signal-Android. This removes the "a new message yanks me to the bottom
+      // mid-read" jump.
+      const isOwn = d.senderId === user?.id;
+      if (isOwn || atBottomRef.current) scrollToEnd(true);
     });
     return off;
   }, [convId, user?.id, loadPinned, markReadAndSync, scrollToEnd, router]);
@@ -2933,6 +2971,7 @@ export function useChatThread() {
     listRef,
     listSignature,
     scrollToEnd,
+    onListScroll,
     prependingRef,
     hasMore,
     loadOlder,

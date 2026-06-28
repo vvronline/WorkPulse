@@ -256,10 +256,10 @@ export default function ChatScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
+  // NOTE: the initial conversation-list fetch is handled by the `useFocusEffect`
+  // below (which fires on mount AND every time the tab regains focus). A
+  // separate `useEffect(() => load())` here used to ALSO fire on mount, so the
+  // list was fetched twice on first paint — removed to halve the cold-open work.
   useEffect(() => {
     if (tab === "calls") loadCalls();
   }, [tab, loadCalls]);
@@ -316,16 +316,20 @@ export default function ChatScreen() {
   }, [load, loadCalls, tab]);
 
   function openConv(c: Conversation) {
-    router.push({
-      pathname: "/chat/[id]",
-      params: {
-        id: String(c.id),
-        name: convName(c),
-        avatar: c.is_group ? "" : c.other_avatar || "",
-        peerId: !c.is_group && c.other_user_id ? String(c.other_user_id) : "",
-        isGroup: c.is_group ? "1" : "",
-      },
-    });
+    // Only pass params that have a real value. Sending empty strings ("") for a
+    // missing avatar / peerId / group flag is a foot-gun: any consumer that does
+    // `Number(params.peerId)` without a truthy guard would get `0` and resolve
+    // the wrong peer. Omitting them keeps the thread's param-resolution logic
+    // clean (it already treats absent params as "resolve from cache/network").
+    const params: Record<string, string> = {
+      id: String(c.id),
+      name: convName(c),
+    };
+    if (!c.is_group && c.other_avatar) params.avatar = c.other_avatar;
+    if (!c.is_group && c.other_user_id)
+      params.peerId = String(c.other_user_id);
+    if (c.is_group) params.isGroup = "1";
+    router.push({ pathname: "/chat/[id]", params });
   }
 
   useEffect(() => {
@@ -336,15 +340,21 @@ export default function ChatScreen() {
     setTab("msgs");
     router.setParams({ openConversationId: undefined });
 
-    const conv = items.find((c) => String(c.id) === target);
+    const conv =
+      items.find((c) => String(c.id) === target) ||
+      // The in-memory `items` may not have hydrated yet on a warm launch — fall
+      // back to the synchronous on-device cache so we can STILL pass the full
+      // identity (name/avatar/peer) instead of the bare-id route below.
+      (getCachedConversations() || []).find((c) => String(c.id) === target);
     if (conv) {
       openConv(conv);
       return;
     }
 
     // Cold notification launches may arrive before the conversation list has
-    // rehydrated. Open by id immediately; the thread resolves name/avatar from
-    // cache/network just like Signal's recipient-id based conversation intents.
+    // rehydrated AND before the cache is warm. Open by id immediately; the
+    // thread resolves name/avatar from cache/network just like Signal's
+    // recipient-id based conversation intents.
     router.push({ pathname: "/chat/[id]", params: { id: target } });
   }, [items, params.openConversationId, router]);
 

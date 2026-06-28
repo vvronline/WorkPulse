@@ -588,6 +588,11 @@ function ChatList({
         // past ~1.5 screens of history.
         onScroll={(e) => {
           const y = e.nativeEvent.contentOffset.y;
+          // Feed the raw offset to the hook so it can track whether the list is
+          // near the visual bottom (inverted list → offset 0 is the bottom).
+          // This gates the incoming-message auto-scroll so a new message never
+          // yanks the user down while they're reading history.
+          c.onListScroll(y);
           const next = y > 400;
           if (next !== showScrollBtn) setShowScrollBtn(next);
         }}

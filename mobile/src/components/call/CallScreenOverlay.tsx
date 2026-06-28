@@ -8,6 +8,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import {
   Disc,
   MessageSquare,
@@ -172,8 +173,16 @@ export default function CallScreenOverlay({
           (and over bright video). Hidden in PiP. */}
       {!isInPip ? (
         <>
-          <View style={styles.topScrim} pointerEvents="none" />
-          <View style={styles.bottomScrim} pointerEvents="none" />
+          <LinearGradient
+            colors={["rgba(0,0,0,0.45)", "transparent"] as const}
+            style={styles.topScrim}
+            pointerEvents="none"
+          />
+          <LinearGradient
+            colors={["transparent", "rgba(0,0,0,0.5)"] as const}
+            style={styles.bottomScrim}
+            pointerEvents="none"
+          />
         </>
       ) : null}
 
