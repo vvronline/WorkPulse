@@ -67,6 +67,11 @@ export default function Index() {
       //    intent auto-launch, which is not a tap so getInitialNotification()
       //    is null). The persisted route is TTL-guarded so a stale ring is
       //    ignored. The in-memory route (tap) takes precedence.
+      // captureInitialCallRoute reads Notifee's ONE-SHOT getInitialNotification()
+      // and stashes the right pending route for BOTH a cold-start CALL tap AND a
+      // cold-start MESSAGE tap (it inspects the payload — callId → pending call,
+      // conversationId-only → pending chat). It must therefore be the SINGLE
+      // reader of getInitialNotification(); a second read returns null.
       await notifeeService.captureInitialCallRoute().catch(() => {});
       if (cancelled) return;
 

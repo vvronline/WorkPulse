@@ -1494,11 +1494,31 @@ class NotifeeService {
         ? `${totalMessages} messages from ${conversationCount} chats`
         : `${totalMessages} message${totalMessages === 1 ? "" : "s"}`;
 
+    // KILLED-STATE TAP FIX: Android frequently delivers the GROUP SUMMARY's
+    // press (not the child's) as the launching notification when the app is
+    // killed. getInitialNotification() then returns THIS summary — so it MUST
+    // carry routing data or captureInitialCallRoute sees no conversationId and
+    // the app falls through to the dashboard instead of opening the chat. When
+    // exactly ONE conversation is active we tag the summary with that
+    // conversation so a summary tap still deep-links to the right thread. With
+    // 2+ conversations there is no single target, so we omit data and the tap
+    // opens the chat list (correct — the user picks which chat).
+    const singleConversationId =
+      conversationCount === 1 ? ordered[0]?.conversationId : undefined;
+
     try {
       await notifee.displayNotification({
         id: MESSAGE_GROUP_SUMMARY_ID,
         title: "WorkPulse",
         body: summaryText,
+        ...(singleConversationId
+          ? {
+              data: {
+                conversationId: String(singleConversationId),
+                type: "chat_message",
+              } as Record<string, string>,
+            }
+          : {}),
         android: {
           channelId: MESSAGE_CHANNEL_ID,
           importance: this.AndroidImportance.HIGH ?? 4,
