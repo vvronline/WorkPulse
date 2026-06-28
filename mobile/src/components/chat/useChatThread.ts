@@ -56,6 +56,7 @@ import {
   type StarredMessage,
 } from "../../features";
 import { socket } from "../../realtime/socket";
+import { notifeeService } from "../../services/notifeeService";
 import { setActiveConversation } from "../../realtime/activeConversation";
 import {
   emitChatUnreadChanged,
@@ -489,6 +490,11 @@ export function useChatThread() {
         emitChatUnreadChanged();
       })
       .catch(() => {});
+    // SIGNAL PARITY: opening/reading a conversation in-app must also dismiss its
+    // status-bar message notification AND refresh/cancel the cross-conversation
+    // group summary so the umbrella count stays accurate (and disappears with
+    // the last chat). Best-effort; no-ops when Notifee is unavailable.
+    void notifeeService.cancelMessageNotification(convId);
   }, [convId]);
 
   // Track the conversation currently ON SCREEN so the push-notification handler

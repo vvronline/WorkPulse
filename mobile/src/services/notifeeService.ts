@@ -102,6 +102,17 @@ function ringtoneResourceForTone(toneId: string): string {
 const CALL_SILENT_CHANNEL_ID = "calls_silent_v2";
 const MESSAGE_CHANNEL_ID = "messages_v2";
 
+// Stable group KEY shared by every per-conversation message notification and the
+// group SUMMARY below. Android collapses all children that share this key under
+// the single summary entry (Signal-Android's `NotificationGroup = "messages"`).
+const MESSAGE_GROUP_ID = "wp-messages";
+
+// Stable id for the Android group SUMMARY notification that owns the message
+// group. Posting children with android.groupId === MESSAGE_GROUP_ID plus this
+// summary collapses multiple conversations into ONE expandable WorkPulse entry
+// in the status bar (Signal-Android parity).
+const MESSAGE_GROUP_SUMMARY_ID = "wp-messages-summary";
+
 // Notification SMALL icon — a STATIC, compile-time `drawable` resource (a white-
 // on-transparent silhouette the OS tints). It MUST resolve: a notification
 // posted with no resolvable small icon is DROPPED SILENTLY (sound plays, no
@@ -251,6 +262,101 @@ function clearThread(conversationId: string): void {
   } catch {
     // best-effort
   }
+}
+
+// ── Active-conversation registry (group-summary bookkeeping) ────────────────
+// Signal-Android renders ONE status-bar SUMMARY entry above the per-conversation
+// children, with an InboxStyle that lists a line per active chat plus a running
+// total ("5 messages from 3 chats"). To build/refresh that summary the headless
+// FCM task must know WHICH conversations currently have an outstanding
+// notification — but it has no React/zustand state and the MMKV wrapper only
+// exposes get/set/remove (no key enumeration). We therefore keep a single JSON
+// blob mapping conversationId → its latest line + unread count, updated on every
+// post and pruned on read/open. Same 1-day TTL as the thread store so a stale
+// entry can never resurrect a dead summary.
+const ACTIVE_CONVERSATIONS_KEY = "wp-msg-active-convos";
+
+interface ActiveConversation {
+  /** Display title for the InboxStyle line (sender / group name). */
+  title: string;
+  /** Latest message body (for the InboxStyle line). */
+  latestBody: string;
+  /** Number of unread messages accumulated for this conversation. */
+  count: number;
+  /** epoch ms of the latest message — used for ordering + TTL prune. */
+  timestamp: number;
+}
+
+type ActiveConversationMap = Record<string, ActiveConversation>;
+
+function readActiveConversations(): ActiveConversationMap {
+  try {
+    const raw = storage.getString(ACTIVE_CONVERSATIONS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as ActiveConversationMap;
+    if (!parsed || typeof parsed !== "object") return {};
+    // Prune TTL-expired entries so the summary never lists a long-dead thread.
+    const now = Date.now();
+    const pruned: ActiveConversationMap = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (
+        value &&
+        typeof value.timestamp === "number" &&
+        now - value.timestamp < THREAD_TTL_MS
+      ) {
+        pruned[key] = value;
+      }
+    }
+    return pruned;
+  } catch {
+    return {};
+  }
+}
+
+function writeActiveConversations(map: ActiveConversationMap): void {
+  try {
+    if (Object.keys(map).length === 0) {
+      storage.remove(ACTIVE_CONVERSATIONS_KEY);
+    } else {
+      storage.set(ACTIVE_CONVERSATIONS_KEY, JSON.stringify(map));
+    }
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * Record (or update) a conversation in the active-summary registry. Increments
+ * the per-conversation unread count so the summary can show "N messages".
+ * Returns the resulting map so the caller can decide whether to post a summary.
+ */
+function recordActiveConversation(
+  conversationId: string,
+  info: { title: string; latestBody: string },
+): ActiveConversationMap {
+  const map = readActiveConversations();
+  const existing = map[conversationId];
+  map[conversationId] = {
+    title: info.title,
+    latestBody: info.latestBody,
+    count: (existing?.count ?? 0) + 1,
+    timestamp: Date.now(),
+  };
+  writeActiveConversations(map);
+  return map;
+}
+
+/**
+ * Remove a conversation from the active-summary registry (read/opened/replied)
+ * and return the remaining map so the caller can refresh or cancel the summary.
+ */
+function removeActiveConversation(conversationId: string): ActiveConversationMap {
+  const map = readActiveConversations();
+  if (map[conversationId]) {
+    delete map[conversationId];
+    writeActiveConversations(map);
+  }
+  return map;
 }
 
 // Notifee VALIDATES `vibrationPattern`: it MUST have an EVEN number of entries
@@ -1158,6 +1264,12 @@ class NotifeeService {
       visibility: this.AndroidVisibility.PRIVATE ?? 0,
       pressAction: { id: "default", launchActivity: "default" },
       sound: "default",
+      // SIGNAL-PARITY cross-conversation grouping: every per-conversation child
+      // shares this group key so Android collapses 2+ conversations under the
+      // single summary entry posted by postGroupSummary() (Signal's
+      // `NotificationGroup = "messages"`). With a single conversation the OS
+      // shows the child directly and keeps the summary hidden — correct.
+      groupId: MESSAGE_GROUP_ID,
       // CRITICAL: an Android notification with NO resolvable small icon is
       // DROPPED SILENTLY — the channel's sound still plays (the "ding") but NO
       // status-bar / lockscreen entry ever appears. Point Notifee at the bundled
@@ -1265,6 +1377,23 @@ class NotifeeService {
     // Post NOW without the avatar so the message is guaranteed to appear.
     await postNotification({});
 
+    // ── STEP 1b: refresh the cross-conversation GROUP SUMMARY ─────────────
+    // Record this conversation in the active-summary registry and (re)post the
+    // umbrella summary so 2+ conversations collapse under one "WorkPulse" entry
+    // (Signal parity). No-op visually when only ONE conversation is active — the
+    // OS shows that child directly and hides the summary.
+    if (conversationId) {
+      try {
+        const map = recordActiveConversation(conversationId, {
+          title: isGroupThread ? data.title || senderName : senderName,
+          latestBody: body,
+        });
+        await this.postGroupSummary(map);
+      } catch (err) {
+        console.warn("[NotifeeService] group-summary refresh skipped:", err);
+      }
+    }
+
     // ── STEP 2: attach the large icon BEST-EFFORT (non-blocking) ──────────
     // Avatar-first (option 1): use the SENDER's chat avatar when present; when
     // the message has NO sender avatar, fall back to the admin-set ORG BRANDING
@@ -1308,6 +1437,136 @@ class NotifeeService {
         console.warn("[NotifeeService] large-icon attach skipped:", err);
       }
     }
+  }
+
+  /**
+   * Posts (or refreshes) the cross-conversation GROUP SUMMARY notification —
+   * the Signal-Android parity piece that collapses multiple conversations under
+   * ONE expandable "WorkPulse" status-bar entry.
+   *
+   * Behaviour:
+   *   • 0 active conversations → cancels any existing summary (handled by the
+   *     callers via refreshGroupSummary; this method no-ops on an empty map).
+   *   • 1 active conversation  → still posts the summary, but Android keeps it
+   *     HIDDEN and shows the single child directly (correct OS behaviour).
+   *   • 2+ active conversations → the OS collapses every `groupId`-matched child
+   *     under this summary, which renders an InboxStyle listing one line per
+   *     conversation plus a running total ("N messages from M chats").
+   *
+   * `onlyAlertOnce` keeps a summary REFRESH from re-buzzing — only the child
+   * message notifications alert; the umbrella just updates silently.
+   */
+  private async postGroupSummary(map: ActiveConversationMap): Promise<void> {
+    const notifee = this.resolve();
+    if (!notifee || Platform.OS !== "android") return;
+
+    const entries = Object.entries(map);
+    if (entries.length === 0) {
+      // Nothing active — make sure no stale summary lingers.
+      try {
+        await notifee.cancelNotification(MESSAGE_GROUP_SUMMARY_ID);
+      } catch {
+        /* best-effort */
+      }
+      return;
+    }
+
+    // Order newest-first so the InboxStyle reads like the chat list.
+    const ordered = entries
+      .map(([conversationId, info]) => ({ conversationId, ...info }))
+      .sort((a, b) => b.timestamp - a.timestamp);
+
+    const totalMessages = ordered.reduce(
+      (sum, c) => sum + (Number.isFinite(c.count) ? c.count : 1),
+      0,
+    );
+    const conversationCount = ordered.length;
+
+    // InboxStyle line per conversation: "Sender: latest message".
+    const lines = ordered.map((c) => {
+      const who = c.title || "New message";
+      const what = c.latestBody || "";
+      return what ? `${who}: ${what}` : who;
+    });
+
+    const summaryText =
+      conversationCount > 1
+        ? `${totalMessages} messages from ${conversationCount} chats`
+        : `${totalMessages} message${totalMessages === 1 ? "" : "s"}`;
+
+    try {
+      await notifee.displayNotification({
+        id: MESSAGE_GROUP_SUMMARY_ID,
+        title: "WorkPulse",
+        body: summaryText,
+        android: {
+          channelId: MESSAGE_CHANNEL_ID,
+          importance: this.AndroidImportance.HIGH ?? 4,
+          visibility: this.AndroidVisibility.PRIVATE ?? 0,
+          smallIcon: MESSAGE_SMALL_ICON,
+          // This is the umbrella that owns the group. Children share groupId.
+          groupId: MESSAGE_GROUP_ID,
+          groupSummary: true,
+          // Refreshing the summary must NOT re-alert — only the per-conversation
+          // child notifications buzz; the umbrella updates quietly.
+          onlyAlertOnce: true,
+          pressAction: { id: "default", launchActivity: "default" },
+          style: {
+            type: this.AndroidStyle.INBOX ?? 2,
+            lines,
+            title: "WorkPulse",
+            summary: summaryText,
+          },
+        },
+      });
+    } catch (err) {
+      console.warn("[NotifeeService] Failed to post message group summary:", err);
+    }
+  }
+
+  /**
+   * Recompute the group summary after a conversation's notification is cleared
+   * (read / opened / replied). Re-posts the summary when conversations remain,
+   * or CANCELS it when the last one is gone so an empty umbrella never lingers.
+   */
+  private async refreshGroupSummary(
+    map: ActiveConversationMap,
+  ): Promise<void> {
+    const notifee = this.resolve();
+    if (!notifee || Platform.OS !== "android") return;
+    if (Object.keys(map).length === 0) {
+      try {
+        await notifee.cancelNotification(MESSAGE_GROUP_SUMMARY_ID);
+      } catch {
+        /* best-effort */
+      }
+      return;
+    }
+    await this.postGroupSummary(map);
+  }
+
+  /**
+   * Dismiss a single conversation's message notification AND its accumulated
+   * MessagingStyle history, then refresh/cancel the group summary. Used when a
+   * conversation is opened/read so the status-bar entry (and the umbrella, if it
+   * was the last one) clears. Safe to call from anywhere; never throws.
+   */
+  async cancelMessageNotification(conversationId: string | number): Promise<void> {
+    const convId = String(conversationId);
+    if (!convId) return;
+    clearThread(convId);
+    const map = removeActiveConversation(convId);
+    const notifee = this.resolve();
+    if (notifee) {
+      try {
+        await notifee.cancelNotification(
+          messageConversationNotificationId(convId),
+        );
+      } catch {
+        /* best-effort */
+      }
+    }
+    await this.refreshGroupSummary(map);
   }
 
   /** Cancels a previously-displayed incoming-call notification (call ended/handled). */
@@ -1496,6 +1755,12 @@ class NotifeeService {
         }
         // The thread is now read — drop the accumulated MessagingStyle history.
         if (conversationId) clearThread(conversationId);
+        // Remove from the group summary registry and refresh/cancel the
+        // umbrella so the reply clears this chat from the summary count.
+        if (conversationId) {
+          const map = removeActiveConversation(conversationId);
+          await this.refreshGroupSummary(map);
+        }
 
         // Update the notification IN PLACE to confirm the reply was sent
         // ("You: <reply>"), mirroring Signal, then auto-cancel after a moment.
@@ -1553,6 +1818,12 @@ class NotifeeService {
     // Opening the conversation reads it — clear the grouped history so a later
     // message starts a fresh notification thread.
     if (conversationId) clearThread(conversationId);
+    // Remove from the group-summary registry and refresh/cancel the umbrella so
+    // opening the chat clears its entry (and the summary when it was the last).
+    if (conversationId) {
+      const map = removeActiveConversation(conversationId);
+      await this.refreshGroupSummary(map);
+    }
 
     try {
       // Deep link straight to the 1:1/group thread. Works for a warm or
