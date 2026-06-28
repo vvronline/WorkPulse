@@ -58,6 +58,14 @@
   font-size: 1.5rem;
   margin-bottom: 1.5rem;
   box-shadow: 0 0 30px var(--primary-glow);
+  overflow: hidden;
+}
+
+.auth-icon-img {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  object-fit: contain;
 }
 
 .auth-logo {

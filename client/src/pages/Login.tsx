@@ -151,7 +151,13 @@ export default function Login() {
         {logoSrc ? (
           <img src={logoSrc} alt="Organization" className={s["auth-logo"]} />
         ) : (
-          <img src="/icon-192.png" alt="WorkPulse" className={s["auth-logo"]} />
+          <div className={s["auth-icon"]}>
+            <img
+              src="/icon-192.png"
+              alt="WorkPulse"
+              className={s["auth-icon-img"]}
+            />
+          </div>
         )}
         <h2>Welcome Back</h2>
         <p>Sign in to {branding?.org_name || "WorkPulse"}</p>

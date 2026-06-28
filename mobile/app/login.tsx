@@ -2,6 +2,7 @@ import { useRouter } from "expo-router";
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -14,7 +15,6 @@ import {
 } from "react-native";
 import { AxiosError } from "axios";
 import {
-  ShieldCheck,
   ArrowRight,
   Eye,
   EyeOff,
@@ -116,7 +116,11 @@ export default function LoginScreen() {
       >
         <View style={styles.card}>
           <View style={styles.icon}>
-            <ShieldCheck size={28} strokeWidth={1.5} color="#fff" />
+            <Image
+              source={require("../assets/icon.png")}
+              style={styles.logo}
+              resizeMode="contain"
+            />
           </View>
 
           <Text style={styles.title}>Welcome Back</Text>
@@ -263,6 +267,12 @@ const makeStyles = (theme: Theme) =>
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 20,
+    overflow: "hidden",
+  },
+  logo: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
   },
   title: {
     fontSize: 26,
