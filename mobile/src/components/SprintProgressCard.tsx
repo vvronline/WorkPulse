@@ -74,9 +74,8 @@ export default function SprintProgressCard() {
   if (noSprint) {
     return (
       <Pressable
-        style={styles.card}
+        style={({ pressed }) => [styles.card, pressed && { opacity: 0.6 }]}
         onPress={() => router.push({ pathname: "/tasks", params: { tab: "backlog" } })}
-        android_ripple={{ color: theme.surfaceHover }}
       >
         <View style={styles.header}>
           <View style={styles.titleRow}>
@@ -142,11 +141,10 @@ export default function SprintProgressCard() {
 
   return (
     <Pressable
-      style={styles.card}
+      style={({ pressed }) => [styles.card, pressed && { opacity: 0.6 }]}
       onPress={() =>
         router.push({ pathname: "/tasks", params: { tab: "sprint" } })
       }
-      android_ripple={{ color: theme.surfaceHover }}
     >
       <View style={styles.header}>
         <View style={styles.titleRow}>

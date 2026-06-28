@@ -292,12 +292,11 @@ export default function CalendarScreen() {
                 {selectedEvents.map((item) => (
                   <Pressable
                     key={item.id}
-                    style={styles.event}
+                    style={({ pressed }) => [styles.event, pressed && { opacity: 0.6 }]}
                     onPress={() => {
                       setEditing(item);
                       setModal(true);
                     }}
-                    android_ripple={{ color: theme.surfaceHover }}
                   >
                     <View
                       style={[

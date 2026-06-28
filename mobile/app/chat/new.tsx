@@ -201,9 +201,8 @@ export default function NewChatScreen() {
           const isSelected = selected.some((u) => u.id === item.id);
           return (
             <Pressable
-              style={styles.row}
+              style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
               onPress={() => (groupMode ? toggleSelect(item) : open(item))}
-              android_ripple={{ color: theme.surfaceHover }}
             >
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{initials(item.full_name)}</Text>

@@ -219,9 +219,8 @@ export default function PlatformDashboardScreen() {
           {recent.map((t) => (
             <Pressable
               key={t.id}
-              style={styles.recentCard}
+              style={({ pressed }) => [styles.recentCard, pressed && { opacity: 0.6 }]}
               onPress={() => router.push(`/tenants/${t.id}` as never)}
-              android_ripple={{ color: theme.surfaceHover }}
             >
               <View style={{ flex: 1 }}>
                 <Text style={styles.recentName} numberOfLines={1}>

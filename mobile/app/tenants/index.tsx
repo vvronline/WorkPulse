@@ -119,12 +119,12 @@ export default function PlatformConsole() {
             {group.items.map((item, i) => (
               <Pressable
                 key={item.key}
-                style={[
+                style={({ pressed }) => [
                   styles.row,
                   i < group.items.length - 1 && styles.rowBorder,
+                  pressed && { opacity: 0.6 },
                 ]}
                 onPress={() => router.push(item.route as never)}
-                android_ripple={{ color: theme.surfaceHover }}
               >
                 <View style={styles.iconWrap}>
                   <item.icon size={18} color={theme.textSecondary} />

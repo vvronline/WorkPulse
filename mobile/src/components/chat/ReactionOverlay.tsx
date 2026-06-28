@@ -328,12 +328,12 @@ export default function ReactionOverlay({
             {actions.map((act, i) => (
               <Pressable
                 key={act.key}
-                style={[
+                style={({ pressed }) => [
                   styles.menuRow,
                   i < actions.length - 1 && styles.menuRowDivider,
+                  pressed && { opacity: 0.6 },
                 ]}
                 onPress={act.onPress}
-                android_ripple={{ color: theme.surfaceHover }}
               >
                 {act.icon}
                 <Text

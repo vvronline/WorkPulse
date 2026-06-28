@@ -52,9 +52,8 @@ export default function TasksSummaryCard({
 
   return (
     <Pressable
-      style={styles.card}
+      style={({ pressed }) => [styles.card, pressed && { opacity: 0.6 }]}
       onPress={() => router.push("/tasks")}
-      android_ripple={{ color: theme.surfaceHover }}
     >
       <View style={styles.header}>
         <View style={styles.titleRow}>

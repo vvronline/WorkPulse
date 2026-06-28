@@ -122,9 +122,8 @@ export default function AdminUsersScreen() {
             const avatar = uploadUrl(item.avatar);
             return (
               <Pressable
-                style={styles.userCard}
+                style={({ pressed }) => [styles.userCard, pressed && { opacity: 0.6 }]}
                 onPress={() => router.push(`/admin/user/${item.id}` as never)}
-                android_ripple={{ color: theme.surfaceHover }}
               >
                 <View
                   style={[styles.avatar, !item.is_active && styles.avatarMuted]}

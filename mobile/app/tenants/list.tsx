@@ -198,9 +198,8 @@ export default function TenantListScreen() {
           contentContainerStyle={styles.list}
           renderItem={({ item }) => (
             <Pressable
-              style={styles.card}
+              style={({ pressed }) => [styles.card, pressed && { opacity: 0.6 }]}
               onPress={() => router.push(`/tenants/${item.id}` as never)}
-              android_ripple={{ color: theme.surfaceHover }}
             >
               <View style={styles.iconWrap}>
                 <Building2 size={18} color={theme.primary} />

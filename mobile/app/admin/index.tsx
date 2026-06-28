@@ -298,12 +298,12 @@ export default function AdminPanel() {
               return (
                 <Pressable
                   key={item.key}
-                  style={[
+                  style={({ pressed }) => [
                     styles.row,
                     i < group.items.length - 1 && styles.rowBorder,
+                    pressed && { opacity: 0.6 },
                   ]}
                   onPress={() => router.push(item.route as never)}
-                  android_ripple={{ color: theme.surfaceHover }}
                 >
                   <View style={styles.iconWrap}>
                     <item.icon size={18} color={theme.textSecondary} />
@@ -328,9 +328,8 @@ export default function AdminPanel() {
           <Text style={styles.groupLabel}>Platform</Text>
           <View style={styles.card}>
             <Pressable
-              style={styles.row}
+              style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
               onPress={() => router.push("/tenants" as never)}
-              android_ripple={{ color: theme.surfaceHover }}
             >
               <View style={styles.iconWrap}>
                 <Building size={18} color={theme.textSecondary} />

@@ -922,14 +922,13 @@ export default function TasksScreen() {
           const done = item.status === "done";
           return (
             <Pressable
-              style={styles.card}
+              style={({ pressed }) => [styles.card, pressed && { opacity: 0.6 }]}
               onPress={() =>
                 router.push({
                   pathname: "/tasks/[id]",
                   params: { id: String(item.id) },
                 })
               }
-              android_ripple={{ color: theme.surfaceHover }}
             >
               <Pressable
                 onPress={() => toggle(item)}

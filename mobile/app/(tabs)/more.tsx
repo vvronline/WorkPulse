@@ -90,9 +90,12 @@ export default function MoreScreen() {
         {items.map((item, i) => (
           <Pressable
             key={item.label}
-            style={[styles.row, i < items.length - 1 && styles.rowBorder]}
+            style={({ pressed }) => [
+              styles.row,
+              i < items.length - 1 && styles.rowBorder,
+              pressed && { opacity: 0.6 },
+            ]}
             onPress={item.onPress}
-            android_ripple={{ color: theme.surfaceHover }}
           >
             <View style={styles.iconWrap}>
               <item.icon size={18} color={theme.textSecondary} />

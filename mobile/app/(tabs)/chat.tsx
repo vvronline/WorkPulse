@@ -551,13 +551,12 @@ export default function ChatScreen() {
     return (
       <Pressable
         key={item.id}
-        style={styles.row}
+        style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
         onPress={() => openConv(item)}
         // Signal-style: the per-row overflow menu is removed; the action sheet
         // is revealed by long-pressing the conversation row instead.
         onLongPress={() => setMenuConv(item)}
         delayLongPress={300}
-        android_ripple={{ color: theme.surfaceHover }}
       >
         <ChatAvatar
           name={name}
@@ -842,9 +841,8 @@ export default function ChatScreen() {
             results.map((u) => (
               <Pressable
                 key={u.id}
-                style={styles.row}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
                 onPress={() => startWithUser(u)}
-                android_ripple={{ color: theme.surfaceHover }}
               >
                 <ChatAvatar
                   name={u.full_name}
@@ -887,9 +885,8 @@ export default function ChatScreen() {
                 : item.caller_name || "Unknown";
             return (
               <Pressable
-                style={styles.row}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
                 onPress={() => callBack(item)}
-                android_ripple={{ color: theme.surfaceHover }}
               >
                 <View style={styles.avatar}>
                   <Text style={styles.avatarText}>{initials(display)}</Text>

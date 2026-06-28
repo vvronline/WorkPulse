@@ -215,9 +215,8 @@ export default function AdminHomeScreen() {
       {attention.map((a) => (
         <Pressable
           key={a.key}
-          style={styles.attnCard}
+          style={({ pressed }) => [styles.attnCard, pressed && { opacity: 0.6 }]}
           onPress={() => router.push(a.route as never)}
-          android_ripple={{ color: theme.surfaceHover }}
         >
           <View style={[styles.attnIcon, { backgroundColor: a.color + "22" }]}>
             {a.key === "role-requests" ? (
@@ -310,12 +309,12 @@ export default function AdminHomeScreen() {
             {checklist.map((item, i) => (
               <Pressable
                 key={item.key}
-                style={[
+                style={({ pressed }) => [
                   styles.checkRow,
                   i < checklist.length - 1 && styles.rowBorder,
+                  pressed && { opacity: 0.6 },
                 ]}
                 onPress={() => router.push(item.route as never)}
-                android_ripple={{ color: theme.surfaceHover }}
               >
                 {item.done ? (
                   <CheckCircle2 size={18} color={theme.success} />
@@ -380,9 +379,8 @@ function QuickBtn({
   const styles = useMemo(() => makeStyles(theme), [theme]);
   return (
     <Pressable
-      style={styles.quickBtn}
+      style={({ pressed }) => [styles.quickBtn, pressed && { opacity: 0.6 }]}
       onPress={onPress}
-      android_ripple={{ color: theme.surfaceHover }}
     >
       {icon}
       <Text style={styles.quickBtnText}>{label}</Text>
