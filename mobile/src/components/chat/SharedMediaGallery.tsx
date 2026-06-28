@@ -522,7 +522,7 @@ export default function SharedMediaGallery({
                     onPress={clearSelection}
                     style={styles.headerIconBtn}
                   >
-                    <X size={24} color={theme.text} />
+                    <X size={20} color={theme.text} />
                   </Pressable>
                 ),
                 headerRight: () => (
@@ -536,8 +536,8 @@ export default function SharedMediaGallery({
                       style={styles.headerIconBtn}
                     >
                       <Check
-                        size={24}
-                        color={allSelected ? theme.primary : theme.textMuted}
+                        size={20}
+                        color={allSelected ? theme.textMuted : theme.primary}
                       />
                     </Pressable>
                     <Pressable
@@ -553,7 +553,7 @@ export default function SharedMediaGallery({
                         <ActivityIndicator size={16} color={theme.danger} />
                       ) : (
                         <Trash2
-                          size={24}
+                          size={20}
                           color={
                             canDelete && !actionBusy
                               ? theme.danger
@@ -575,7 +575,7 @@ export default function SharedMediaGallery({
                         <ActivityIndicator size={16} color={theme.text} />
                       ) : (
                         <Forward
-                          size={24}
+                          size={20}
                           color={
                             canForward && !actionBusy
                               ? theme.text
@@ -597,7 +597,7 @@ export default function SharedMediaGallery({
                         <ActivityIndicator size={16} color={theme.text} />
                       ) : (
                         <Share2
-                          size={24}
+                          size={20}
                           color={
                             canShare && !actionBusy
                               ? theme.text
@@ -619,7 +619,7 @@ export default function SharedMediaGallery({
                         <ActivityIndicator size={16} color={theme.text} />
                       ) : (
                         <Download
-                          size={24}
+                          size={20}
                           color={
                             canDownload && !actionBusy
                               ? theme.text
@@ -682,6 +682,7 @@ export default function SharedMediaGallery({
             data={images}
             numColumns={COLS}
             keyExtractor={(f) => String(f.id)}
+            extraData={selectedIds}
             contentContainerStyle={{ paddingBottom: 24 }}
             columnWrapperStyle={{ gap: GRID_GAP, marginBottom: GRID_GAP }}
             renderItem={({ item, index }) => {
@@ -740,6 +741,7 @@ export default function SharedMediaGallery({
             data={videos}
             numColumns={COLS}
             keyExtractor={(f) => String(f.id)}
+            extraData={selectedIds}
             contentContainerStyle={{ paddingBottom: 24 }}
             columnWrapperStyle={{ gap: GRID_GAP, marginBottom: GRID_GAP }}
             renderItem={({ item }) => {
@@ -760,6 +762,8 @@ export default function SharedMediaGallery({
                       <Pressable
                         style={styles.selectionTouchOverlay}
                         onPress={() => toggleSelected(item.id)}
+                        onLongPress={() => toggleSelected(item.id)}
+                        delayLongPress={250}
                       />
                     ) : null}
                     {selected ? (
@@ -842,6 +846,7 @@ export default function SharedMediaGallery({
             key="files-list"
             data={docs}
             keyExtractor={(f) => String(f.id)}
+            extraData={selectedIds}
             contentContainerStyle={{ paddingBottom: 24 }}
             renderItem={({ item }) => {
               const selected = selectedIds.has(item.id);
@@ -893,6 +898,7 @@ export default function SharedMediaGallery({
           key="links-list"
           data={links}
           keyExtractor={(l) => String(l.id)}
+          extraData={selectedIds}
           contentContainerStyle={{ paddingBottom: 24 }}
           renderItem={({ item }) => {
             const selected = selectedIds.has(item.id);
@@ -1141,7 +1147,7 @@ const makeStyles = (theme: Theme) =>
       fontStyle: "italic",
     },
     headerIconBtn: {
-      padding: 10,
+      padding: 6,
       alignItems: "center",
       justifyContent: "center",
     },
@@ -1151,7 +1157,7 @@ const makeStyles = (theme: Theme) =>
     headerActionRow: {
       flexDirection: "row",
       alignItems: "center",
-      gap: 4,
+      gap: 2,
       marginRight: 4,
     },
     loading: { paddingVertical: 40 },
