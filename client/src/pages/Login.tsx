@@ -159,7 +159,7 @@ export default function Login() {
             />
           </div>
         )}
-        <h2>Welcome Back</h2>
+        <h2>Get into the Loops</h2>
         <p>Sign in to {branding?.org_name || "Loops"}</p>
         {(location.state as any)?.message && (
           <div className="success-msg">{(location.state as any).message}</div>
