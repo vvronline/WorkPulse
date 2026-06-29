@@ -1081,7 +1081,9 @@ router.get("/conversations", auth, async (req: Request, res: Response) => {
                             FROM conversation_participants cp3
                             JOIN users u3 ON u3.id = cp3.user_id
                             WHERE cp3.conversation_id = c.id
-                            ORDER BY cp3.id ASC
+                            -- conversation_participants has no surrogate id;
+                            -- keep ordering deterministic via user_id.
+                            ORDER BY cp3.user_id ASC
                             LIMIT 4
                         ) x
                     )

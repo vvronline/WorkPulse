@@ -261,6 +261,11 @@ describe("GET /api/chat/conversations", () => {
             "/uploads/b.png",
             "/uploads/c.png",
         ]);
+        const sqls = mockQuery.mock.calls
+            .map((c: any[]) => c[0])
+            .filter((q: unknown): q is string => typeof q === "string");
+        expect(sqls.some((q: string) => q.includes("ORDER BY cp3.user_id ASC"))).toBe(true);
+        expect(sqls.some((q: string) => q.includes("ORDER BY cp3.id ASC"))).toBe(false);
     });
 
     test("overlays redis unread counts without altering group avatars", async () => {

@@ -25,9 +25,9 @@ export default function InspectorSessionBanner() {
     const [busy, setBusy] = useState(false);
 
     const load = useCallback(async () => {
-        // Only tenant users should poll this — platform admins outside any
-        // tenant context get a 400.
-        if (!user || user.role === "platform_admin") {
+        // Endpoint is approver-scoped (super_admin/hr_admin). For other roles
+        // a 403 is expected, so skip polling to avoid noisy console errors.
+        if (!user || !["super_admin", "hr_admin"].includes(String(user.role))) {
             setSession(null);
             return;
         }
@@ -60,7 +60,7 @@ export default function InspectorSessionBanner() {
         }
     };
 
-    const canRevoke = user?.role === "super_admin" || user?.role === "platform_admin";
+    const canRevoke = user?.role === "super_admin" || user?.role === "hr_admin";
     const endsAt = session.session_ends_at ? new Date(session.session_ends_at) : null;
 
     if (dismissed) return null;
