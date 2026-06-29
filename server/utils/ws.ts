@@ -1064,21 +1064,38 @@ async function handleChatMessage(
           return;
         }
 
-        // Group-call contract:
-        // keep group conversations on the call path (do not force a
-        // meeting redirect). Group calls ring all current members and can
-        // later expand via `call_add_participant`.
+        // Group conversations use the meeting mesh flow for n-way reliability.
+        // Direct call_initiate is p2p and cannot connect all participants.
         const isGroupConv = (
           await db.query("SELECT is_group FROM conversations WHERE id = $1", [
             conversationId,
           ])
         ).rows[0]?.is_group;
+        if (isGroupConv) {
+          logger.info(
+            { senderId, conversationId, tenantId },
+            "call_initiate: group conversation blocked; use meeting flow",
+          );
+          sendToUser(tenantId, senderId, "call_ended", {
+            conversationId,
+            reason: "group_unsupported",
+          });
+          recordCallTransitionFailure({
+            event: "call_transition_failed",
+            action: "initiate",
+            tenantId,
+            senderId,
+            conversationId,
+            reason: "group_unsupported",
+          });
+          return;
+        }
 
         // P0.3 — call_busy on 1:1 collision. For NON-group conversations we
         // ring at most one callee; if that callee already has an active
         // (ringing/answered) call we must NOT create another ringing row.
         // Instead tell the caller the callee is busy and bail out.
-        if (!isGroupConv) {
+        {
           const targetRow = (
             await db.query(
               `SELECT user_id FROM conversation_participants

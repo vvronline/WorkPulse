@@ -1,3 +1,4 @@
+import { createMeeting } from "../../api";
 import type useChatState from "./useChatState";
 
 type ChatState = ReturnType<typeof useChatState>;
@@ -5,8 +6,37 @@ type ChatState = ReturnType<typeof useChatState>;
 export default function useCallActions(state: ChatState) {
     const { user, wsSend, activeConv, setCallState, callSignalRef, callEndRef } =
         state;
+
+    async function startGroupMeeting() {
+        if (!activeConv) return;
+        const groupName =
+            (activeConv.group_name as string) ||
+            (activeConv.name as string) ||
+            "Group call";
+        try {
+            const { data } = await createMeeting({
+                title: groupName,
+                conversation_id: activeConv.id,
+                settings: { allowScreenShare: true },
+            });
+            const code = (data as { meeting_code?: string }).meeting_code;
+            if (code) {
+                window.location.assign(`/meeting/${code}`);
+            } else {
+                alert("Could not start the group call. Please try again.");
+            }
+        } catch (err) {
+            console.error("Failed to start group meeting:", err);
+            alert("Could not start the group call. Please try again.");
+        }
+    }
+
     const initiateCall = (callType: string) => {
         if (!activeConv) return;
+        if (activeConv.is_group) {
+            void startGroupMeeting();
+            return;
+        }
 
         const remoteName = activeConv.is_group
             ? (activeConv.group_name as string) || (activeConv.name as string)

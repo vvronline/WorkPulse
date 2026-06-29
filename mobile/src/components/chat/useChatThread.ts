@@ -30,6 +30,7 @@ import { useDialog } from "../../hooks/useDialog";
 import {
   ackDelivered,
   cancelChatMediaJob,
+  createMeeting,
   deleteMessage,
   editMessage,
   forwardMessage,
@@ -2615,6 +2616,10 @@ export function useChatThread() {
   }
 
   function startCall(type: "voice" | "video") {
+    if (isGroupConv) {
+      void startGroupMeeting();
+      return;
+    }
     router.push({
       pathname: "/call/[conversationId]",
       params: {
@@ -2626,6 +2631,23 @@ export function useChatThread() {
         isGroup: isGroupConv ? "1" : "0",
       },
     });
+  }
+
+  async function startGroupMeeting() {
+    try {
+      const { data } = await createMeeting({
+        title: name || "Group call",
+        conversation_id: convId,
+      });
+      const code = data?.meeting_code;
+      if (code) {
+        router.push(`/meeting/${code}` as never);
+      } else {
+        alert("Call failed", "Could not start the group call. Please try again.");
+      }
+    } catch {
+      alert("Call failed", "Could not start the group call. Please try again.");
+    }
   }
 
   // ── Multi-select (Signal-style) ───────────────────────────────────────────
