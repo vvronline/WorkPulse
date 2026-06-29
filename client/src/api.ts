@@ -809,6 +809,16 @@ export const updateGroup = (convId: number | string, data: AnyData) =>
     API.put(`/chat/conversations/${convId}/group`, data);
 export const getMembers = (convId: number | string) =>
     API.get(`/chat/conversations/${convId}/members`);
+// Group management (Phase 1): leave, role change, ownership transfer.
+export const leaveGroup = (convId: number | string) =>
+    API.post(`/chat/conversations/${convId}/leave`);
+export const setGroupRole = (
+    convId: number | string,
+    userId: number | string,
+    role: "admin" | "member",
+) => API.put(`/chat/conversations/${convId}/participants/${userId}/role`, { role });
+export const transferGroupOwner = (convId: number | string, userId: number | string) =>
+    API.post(`/chat/conversations/${convId}/transfer-owner`, { userId });
 export const getMessages = (convId: number | string, before?: string) =>
     API.get(`/chat/conversations/${convId}/messages`, { params: { before } });
 export const markConversationRead = (convId: number | string) =>

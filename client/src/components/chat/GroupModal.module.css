@@ -100,12 +100,100 @@
     font-size: 0.75rem;
     padding: 0 2px;
 }
+/* ─── Member list (edit mode) ─── */
+.memberList {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 260px;
+    overflow-y: auto;
+}
+.memberRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 4px;
+    border-radius: var(--radius-sm);
+}
+.memberRow:hover { background: var(--surface-hover); }
+.memberName {
+    flex: 1;
+    color: var(--text);
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.roleBadge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    background: rgba(245, 158, 11, .15);
+    color: #f59e0b;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+.iconBtn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+}
+.iconBtn:hover { background: var(--surface-hover); color: var(--text); }
+.memberMenuWrap { position: relative; }
+.memberMenu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    z-index: 10;
+    background: var(--bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.25);
+    display: flex;
+    flex-direction: column;
+    min-width: 160px;
+    overflow: hidden;
+}
+.memberMenu button {
+    background: none;
+    border: none;
+    color: var(--text);
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+.memberMenu button:hover { background: var(--surface-hover); }
+.memberMenu button.danger { color: #ef4444; }
+
 .footer {
     padding: 12px 16px;
     border-top: 1px solid var(--glass-border);
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
 }
+.leaveBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: none;
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, .4);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+.leaveBtn:hover { background: rgba(239, 68, 68, .1); }
 .saveBtn {
     padding: 8px 20px;
     background: var(--primary);

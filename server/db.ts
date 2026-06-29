@@ -1113,6 +1113,80 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
     // action sheet): mute notifications and archive a conversation.
     await q(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_muted BOOLEAN NOT NULL DEFAULT FALSE`);
     await q(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE`);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Group-chat enhancements (Slack-style): local roles, group metadata,
+    // post/add policies, notification granularity, and huddle (group call)
+    // state. All ALTERs are idempotent so they're safe to re-run.
+    //
+    // Hybrid permission model: the local `role` here (owner/admin/member)
+    // governs day-to-day group actions; org-wide RBAC (users.role / roleLevel
+    // in middleware/rbac.ts) provides a governance override for moderation.
+    // ─────────────────────────────────────────────────────────────────────
+
+    // Local conversation role for group members.
+    await q(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'member'`);
+    await q(`
+        DO $do$ BEGIN
+            ALTER TABLE conversation_participants DROP CONSTRAINT IF EXISTS conversation_participants_role_check;
+            ALTER TABLE conversation_participants ADD CONSTRAINT conversation_participants_role_check
+                CHECK (role IN ('owner','admin','member'));
+        EXCEPTION WHEN others THEN NULL;
+        END $do$;
+    `);
+
+    // Per-participant notification granularity (extends the boolean is_muted).
+    //   all      → notify on every message (default)
+    //   mentions → notify only when @mentioned
+    //   none     → never notify
+    await q(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS notify_level TEXT NOT NULL DEFAULT 'all'`);
+    await q(`
+        DO $do$ BEGIN
+            ALTER TABLE conversation_participants DROP CONSTRAINT IF EXISTS conversation_participants_notify_level_check;
+            ALTER TABLE conversation_participants ADD CONSTRAINT conversation_participants_notify_level_check
+                CHECK (notify_level IN ('all','mentions','none'));
+        EXCEPTION WHEN others THEN NULL;
+        END $do$;
+    `);
+    // Timed mute — when set and in the future, suppress notifications until it.
+    await q(`ALTER TABLE conversation_participants ADD COLUMN IF NOT EXISTS muted_until TIMESTAMPTZ`);
+
+    // Group metadata.
+    await q(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS avatar TEXT`);
+    await q(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS description TEXT`);
+    // Who may post: 'all' members, or 'admins' only.
+    await q(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS post_policy TEXT NOT NULL DEFAULT 'all'`);
+    await q(`
+        DO $do$ BEGIN
+            ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_post_policy_check;
+            ALTER TABLE conversations ADD CONSTRAINT conversations_post_policy_check
+                CHECK (post_policy IN ('all','admins'));
+        EXCEPTION WHEN others THEN NULL;
+        END $do$;
+    `);
+    // Who may add members: 'all' members, or 'admins' only (default admins).
+    await q(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS add_policy TEXT NOT NULL DEFAULT 'admins'`);
+    await q(`
+        DO $do$ BEGIN
+            ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_add_policy_check;
+            ALTER TABLE conversations ADD CONSTRAINT conversations_add_policy_check
+                CHECK (add_policy IN ('all','admins'));
+        EXCEPTION WHEN others THEN NULL;
+        END $do$;
+    `);
+
+    // Backfill: existing group creators become owners; everyone else stays
+    // 'member'. Safe to re-run (only flips rows that aren't already owner).
+    await q(`
+        UPDATE conversation_participants cp
+           SET role = 'owner'
+          FROM conversations c
+         WHERE c.id = cp.conversation_id
+           AND c.is_group = TRUE
+           AND c.created_by = cp.user_id
+           AND cp.role <> 'owner'
+    `);
+
     await q(`
         CREATE TABLE IF NOT EXISTS messages (
             id              SERIAL PRIMARY KEY,
@@ -1285,6 +1359,8 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
     `);
     await q(`CREATE INDEX IF NOT EXISTS idx_meetings_org ON meetings(org_id, created_at DESC)`);
     await q(`CREATE INDEX IF NOT EXISTS idx_meetings_code ON meetings(meeting_code)`);
+    // Huddle (ambient group call) flag on the meeting bound to a conversation.
+    await q(`ALTER TABLE meetings ADD COLUMN IF NOT EXISTS is_huddle BOOLEAN NOT NULL DEFAULT FALSE`);
 
     await q(`
         CREATE TABLE IF NOT EXISTS meeting_participants (

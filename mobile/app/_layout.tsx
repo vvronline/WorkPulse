@@ -91,6 +91,10 @@ function ThemedStack() {
         options={{ ...headerScreen, title: "Conversation info" }}
       />
       <Stack.Screen
+        name="chat/group"
+        options={{ ...headerScreen, title: "Group settings" }}
+      />
+      <Stack.Screen
         name="chat/shared"
         options={{ ...headerScreen, title: "Shared media" }}
       />

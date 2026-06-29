@@ -279,6 +279,7 @@ export default function Chat() {
                 <GroupModal
                     existingGroup={groupEditData?.group || null}
                     members={groupEditData?.members || []}
+                    currentUserId={user?.id}
                     onClose={() => { setShowGroupModal(false); setGroupEditData(null); }}
                     onSuccess={() => { setShowGroupModal(false); setGroupEditData(null); loadConversations(); }}
                 />

@@ -36,6 +36,22 @@ jest.mock("../utils/audit", () => ({
     queryLogs: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
 }));
 
+// Force loadUserContext down its deterministic DB path: with the user-context
+// cache always missing, every request runs the same `SELECT … is_active FROM
+// users` lookup, so the per-test mockQuery chains stay stable (otherwise the
+// first group test would warm the cache and the second would skip the user
+// lookup, shifting its mock sequence).
+jest.mock("../redis", () => {
+    const actual = jest.requireActual("../redis");
+    return {
+        ...actual,
+        // Always miss the user-context cache so loadUserContext runs its DB
+        // lookup deterministically in every request.
+        getUserContext: jest.fn().mockResolvedValue(null),
+        setUserContext: jest.fn().mockResolvedValue(undefined),
+    };
+});
+
 const jwt = require("jsonwebtoken");
 const request = require("supertest");
 
@@ -397,7 +413,20 @@ describe("PUT /api/chat/conversations/:id/group", () => {
     test("returns 403 when requester is not a participant", async () => {
         setupAuth();
         mockQuery
+            // loadUserContext: active user (role employee → level 1, no extra
+            // tenant_roles query).
+            .mockResolvedValueOnce({
+                rows: [{ role: "employee", org_id: 1, is_active: true }],
+                rowCount: 1,
+            })
+            // route conversation lookup
             .mockResolvedValueOnce({ rows: [{ id: 10, is_group: true, org_id: 1 }], rowCount: 1 })
+            // loadGroupContext: conversation policy row
+            .mockResolvedValueOnce({
+                rows: [{ is_group: true, created_by: 1, post_policy: "all", add_policy: "admins" }],
+                rowCount: 1,
+            })
+            // loadGroupContext: caller's role — none (not a participant)
             .mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
         const res = await request(app)
@@ -412,9 +441,26 @@ describe("PUT /api/chat/conversations/:id/group", () => {
     test("removes only users validated in the same org", async () => {
         setupAuth();
         mockQuery
+            // 1) loadUserContext: active user (employee → level 1)
+            .mockResolvedValueOnce({
+                rows: [{ role: "employee", org_id: 1, is_active: true }],
+                rowCount: 1,
+            })
+            // 2) route conversation lookup (SELECT * FROM conversations …)
             .mockResolvedValueOnce({ rows: [{ id: 10, is_group: true, org_id: 1 }], rowCount: 1 })
-            .mockResolvedValueOnce({ rows: [{ "?column?": 1 }], rowCount: 1 })
-            .mockResolvedValueOnce({ rows: [{ id: 2 }], rowCount: 1 })
+            // 3) loadGroupContext: conversation policy row
+            .mockResolvedValueOnce({
+                rows: [{ is_group: true, created_by: 1, post_policy: "all", add_policy: "admins" }],
+                rowCount: 1,
+            })
+            // 4) loadGroupContext: caller's role. Phase 1 RBAC — removing
+            //    members is admin-class, so the caller must be owner/admin.
+            .mockResolvedValueOnce({ rows: [{ role: "owner" }], rowCount: 1 })
+            // 5) actor full_name lookup (for the activity system message)
+            .mockResolvedValueOnce({ rows: [{ full_name: "Owner" }], rowCount: 1 })
+            // 6) validate removable users in the same org (returns row + role)
+            .mockResolvedValueOnce({ rows: [{ id: 2, full_name: "Bob", role: "member" }], rowCount: 1 })
+            // 7) DELETE participant
             .mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
         const res = await request(app)
@@ -425,12 +471,17 @@ describe("PUT /api/chat/conversations/:id/group", () => {
 
         expect(res.status).toBe(200);
 
+        // The remove-validation query selects the member's role too so the
+        // route can refuse to let an admin remove the owner (Phase 1 RBAC).
         const validateCall = mockQuery.mock.calls.find(
-            ([sql]: any[]) => typeof sql === "string" && sql.includes("SELECT u.id FROM users u")
+            ([sql]: any[]) =>
+                typeof sql === "string" &&
+                sql.includes("SELECT u.id, u.full_name, cp.role FROM users u")
         );
         expect(validateCall).toBeTruthy();
         expect(validateCall[1][0]).toEqual([2, 999]);
         expect(validateCall[1][1]).toBe(1);
+        expect(validateCall[1][2]).toBe(10);
 
         const deleteCalls = mockQuery.mock.calls.filter(
             ([sql]: any[]) =>

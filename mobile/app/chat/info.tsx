@@ -13,6 +13,7 @@ import {
   Phone,
   Pin,
   Search,
+  Settings,
   Star,
   Video as VideoIcon,
 } from "lucide-react-native";
@@ -39,6 +40,8 @@ export default function ChatInfo() {
     isGroup?: string;
     peerStatus?: string;
     memberCount?: string;
+    myRole?: string;
+    description?: string;
   }>();
 
   const convId = Number(params.id);
@@ -47,6 +50,8 @@ export default function ChatInfo() {
   const isGroup = params.isGroup === "1";
   const peerStatus = params.peerStatus || null;
   const memberCount = params.memberCount ? Number(params.memberCount) : 0;
+  const myRole = params.myRole || "member";
+  const description = params.description || "";
 
   const subtitle = isGroup
     ? memberCount
@@ -78,6 +83,17 @@ export default function ChatInfo() {
     router.push({
       pathname: "/chat/saved",
       params: { id: String(convId), name, mode: "saved" },
+    });
+
+  const goToGroupSettings = () =>
+    router.push({
+      pathname: "/chat/group",
+      params: {
+        id: String(convId),
+        name,
+        description,
+        myRole,
+      },
     });
 
   const startCall = (type: "voice" | "video") =>
@@ -130,6 +146,20 @@ export default function ChatInfo() {
           styles={styles}
         />
       </View>
+
+      {/* Section: group management (groups only). */}
+      {isGroup && (
+        <View style={styles.section}>
+          <SettingRow
+            icon={<Settings size={20} color={theme.text} />}
+            label="Group settings & members"
+            onPress={goToGroupSettings}
+            styles={styles}
+            theme={theme}
+            last
+          />
+        </View>
+      )}
 
       {/* Section: shared content. */}
       <View style={styles.section}>

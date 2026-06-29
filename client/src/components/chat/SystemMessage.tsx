@@ -1,5 +1,18 @@
 import React from "react";
-import { Phone, PhoneOff, PhoneMissed, Video, VideoOff, UserPlus, Info } from "lucide-react";
+import {
+    Phone,
+    PhoneOff,
+    PhoneMissed,
+    Video,
+    VideoOff,
+    UserPlus,
+    UserMinus,
+    LogOut,
+    Pencil,
+    Crown,
+    Shield,
+    Info,
+} from "lucide-react";
 import s from "./SystemMessage.module.css";
 
 const ICON_MAP: Record<string, React.ReactElement> = {
@@ -14,6 +27,14 @@ const ICON_MAP: Record<string, React.ReactElement> = {
     meeting_updated: <Video size={14} />,
     meeting_cancelled: <VideoOff size={14} />,
     participant_added: <UserPlus size={14} />,
+    // Group activity (Phase 1)
+    member_added: <UserPlus size={14} />,
+    member_removed: <UserMinus size={14} />,
+    member_left: <LogOut size={14} />,
+    group_renamed: <Pencil size={14} />,
+    group_info_updated: <Pencil size={14} />,
+    owner_transferred: <Crown size={14} />,
+    role_changed: <Shield size={14} />,
 };
 
 function formatDuration(secs?: number): string {

@@ -691,6 +691,29 @@ function ChatList({
               </View>
             );
           }
+          // Group activity tombstone (Phase 1): member added/removed/left,
+          // renamed, role changed, ownership transferred, etc. Any non-call
+          // system message renders as a centred grey pill.
+          if (item.format_type === "system") {
+            const label =
+              (item.metadata?.text as string) || item.content || "";
+            return (
+              <View>
+                <View style={styles.sysWrap}>
+                  <Text style={styles.sysText}>{label}</Text>
+                </View>
+                {showDaySeparator ? (
+                  <View style={styles.daySeparator}>
+                    <View style={styles.dayPill}>
+                      <Text style={styles.dayPillText}>
+                        {fmtDaySeparator(item.created_at)}
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+            );
+          }
           return (
             <View>
               <MessageBubble
@@ -868,6 +891,25 @@ const makeStyles = (theme: Theme) =>
       fontSize: 11,
       color: theme.textSecondary,
       fontFamily: theme.fontSemiBold,
+    },
+    // Group activity tombstone (member added/removed/left, renamed, role
+    // change, ownership transfer). Centred grey pill, Signal-style.
+    sysWrap: {
+      alignSelf: "center",
+      maxWidth: "85%",
+      marginVertical: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 5,
+      borderRadius: theme.radiusFull,
+      backgroundColor: theme.bgElevated,
+      borderWidth: 1,
+      borderColor: theme.glassBorder,
+    },
+    sysText: {
+      fontSize: 12,
+      color: theme.textSecondary,
+      textAlign: "center",
+      fontFamily: theme.fontMedium,
     },
     loadOlderBtn: {
       alignSelf: "center",

@@ -14,6 +14,7 @@ import {
   broadcastMediaJobUpdate,
   processChatMediaJob,
 } from "../services/chatMediaPipeline";
+const { canDo, loadGroupContext } = require("../utils/groupPerms");
 
 const router = express.Router();
 router.use(requireTenant, requireFeature("chat"));
@@ -115,6 +116,58 @@ async function getUserOrg(
 ): Promise<number | undefined> {
   const r = await db.query("SELECT org_id FROM users WHERE id = $1", [userId]);
   return r.rows[0]?.org_id;
+}
+
+// ─── Helper: insert + broadcast a system (activity) message ───
+// Mirrors meetings.insertSystemMessage: persists a format_type='system' row
+// carrying a structured `metadata` payload and broadcasts it to all
+// participants so the inline activity tombstone (X added Y, renamed, etc.)
+// renders identically on every client (web + mobile).
+async function emitSystemMessage(
+  db: DbLike,
+  tenantId: number | string | undefined,
+  conversationId: number,
+  actorId: number | undefined,
+  metadata: Record<string, unknown> & { text?: string },
+): Promise<void> {
+  // Activity/tombstone messages are best-effort: a failure to persist or fan
+  // out the system message must NEVER fail the parent operation (e.g. removing
+  // a member should still succeed even if the "X removed Y" notice can't be
+  // written). Any error is swallowed and logged by the caller's surrounding
+  // try/catch via the thrown-then-caught path being avoided here.
+  try {
+    const result = (
+      await db.query(
+        `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)
+         VALUES ($1, $2, $3, 'system', $4) RETURNING id, created_at`,
+        [conversationId, actorId, metadata.text || "", JSON.stringify(metadata)],
+      )
+    ).rows[0];
+    if (!result) return;
+    await db.query("UPDATE conversations SET updated_at = NOW() WHERE id = $1", [
+      conversationId,
+    ]);
+    const participants = (
+      await db.query(
+        "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
+        [conversationId],
+      )
+    ).rows;
+    const outMsg = {
+      id: result.id,
+      conversationId,
+      senderId: actorId,
+      content: metadata.text || "",
+      formatType: "system",
+      metadata,
+      createdAt: result.created_at,
+    };
+    for (const p of participants) {
+      sendToUser(tenantId, p.user_id, "chat_message", outMsg);
+    }
+  } catch {
+    /* best-effort: never let an activity message fail the parent action */
+  }
 }
 
 /**
@@ -428,11 +481,14 @@ router.post(
               [orgId, name.trim().slice(0, 100), req.userId],
             )
           ).rows[0];
-          const values = allIds.map((_uid, i) => `($1, $${i + 2})`).join(", ");
-          await client.query(
-            `INSERT INTO conversation_participants (conversation_id, user_id) VALUES ${values}`,
-            [c.id, ...allIds],
-          );
+          // The creator becomes the group owner; everyone else is a member.
+          for (const uid of allIds) {
+            await client.query(
+              `INSERT INTO conversation_participants (conversation_id, user_id, role)
+               VALUES ($1, $2, $3)`,
+              [c.id, uid, uid === req.userId ? "owner" : "member"],
+            );
+          }
           return c;
         },
       );
@@ -460,6 +516,7 @@ router.post(
 router.put(
   "/conversations/:id/group",
   auth,
+  loadUserContext,
   async (req: Request, res: Response) => {
     try {
       const convId = parseInt(String(req.params.id), 10);
@@ -473,63 +530,197 @@ router.put(
         )
       ).rows[0];
       if (!conv) return res.status(404).json({ error: "Group not found" });
-      if (
-        !(await verifyParticipant(
-          convId,
-          req.userId,
-          req.db as unknown as DbLike,
-        ))
-      ) {
+
+      const ctx = await loadGroupContext(
+        req.db as unknown as DbLike,
+        convId,
+        req.userId,
+        req.roleLevel || 1,
+      );
+      // Must be a participant OR an org-governance user (>= hr_admin).
+      if (!ctx || (!ctx.role && (req.roleLevel || 1) < 4)) {
         return res.status(403).json({ error: "Not a participant" });
       }
 
-      const { name, addUserIds, removeUserIds } = req.body;
+      const {
+        name,
+        description,
+        avatar,
+        postPolicy,
+        addPolicy,
+        addUserIds,
+        removeUserIds,
+      } = req.body;
 
+      const actor = (
+        await req.db!.query("SELECT full_name FROM users WHERE id = $1", [
+          req.userId,
+        ])
+      ).rows[0];
+      const actorName = actor?.full_name || "Someone";
+
+      // ── Rename ──
       if (name !== undefined) {
-        await req.db!.query(
-          "UPDATE conversations SET name = $1 WHERE id = $2",
-          [name.trim().slice(0, 100), convId],
+        if (!canDo("rename", ctx))
+          return res
+            .status(403)
+            .json({ error: "Only admins can rename this group" });
+        const newName = String(name).trim().slice(0, 100);
+        await req.db!.query("UPDATE conversations SET name = $1 WHERE id = $2", [
+          newName,
+          convId,
+        ]);
+        await emitSystemMessage(
+          req.db as unknown as DbLike,
+          req.tenantId,
+          convId,
+          req.userId,
+          {
+            type: "group_renamed",
+            actorId: req.userId,
+            name: newName,
+            text: `${actorName} renamed the group to "${newName}"`,
+          },
         );
       }
 
-      if (Array.isArray(addUserIds) && addUserIds.length > 0) {
-        const valid = (
+      // ── Description / avatar ──
+      if (description !== undefined || avatar !== undefined) {
+        if (!canDo("set_metadata", ctx))
+          return res
+            .status(403)
+            .json({ error: "Only admins can edit group info" });
+        if (description !== undefined) {
           await req.db!.query(
-            "SELECT id FROM users WHERE id = ANY($1) AND org_id = $2 AND is_active = TRUE",
-            [addUserIds, conv.org_id],
-          )
-        ).rows.map((r: { id: number }) => r.id);
-        for (const uid of valid) {
-          await req.db!.query(
-            "INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            [convId, uid],
+            "UPDATE conversations SET description = $1 WHERE id = $2",
+            [
+              description === null ? null : String(description).slice(0, 500),
+              convId,
+            ],
           );
-          sendToUser(req.tenantId, uid, "chat_group_added", {
-            conversationId: convId,
-          });
+        }
+        if (avatar !== undefined) {
+          await req.db!.query(
+            "UPDATE conversations SET avatar = $1 WHERE id = $2",
+            [avatar === null ? null : String(avatar).slice(0, 1024), convId],
+          );
+        }
+        await emitSystemMessage(
+          req.db as unknown as DbLike,
+          req.tenantId,
+          convId,
+          req.userId,
+          {
+            type: "group_info_updated",
+            actorId: req.userId,
+            text: `${actorName} updated the group info`,
+          },
+        );
+      }
+
+      // ── Policies (owner / governance only) ──
+      if (postPolicy !== undefined || addPolicy !== undefined) {
+        if (!canDo("set_policy", ctx))
+          return res
+            .status(403)
+            .json({ error: "Only the owner can change group policies" });
+        if (postPolicy === "all" || postPolicy === "admins") {
+          await req.db!.query(
+            "UPDATE conversations SET post_policy = $1 WHERE id = $2",
+            [postPolicy, convId],
+          );
+          ctx.postPolicy = postPolicy;
+        }
+        if (addPolicy === "all" || addPolicy === "admins") {
+          await req.db!.query(
+            "UPDATE conversations SET add_policy = $1 WHERE id = $2",
+            [addPolicy, convId],
+          );
+          ctx.addPolicy = addPolicy;
         }
       }
 
-      if (Array.isArray(removeUserIds) && removeUserIds.length > 0) {
-        // Only remove users who are actually participants in this conversation
-        const validRemoveIds = (
+      // ── Add members ──
+      if (Array.isArray(addUserIds) && addUserIds.length > 0) {
+        if (!canDo("add_member", ctx))
+          return res
+            .status(403)
+            .json({ error: "You don't have permission to add members" });
+        const valid = (
           await req.db!.query(
-            `SELECT u.id FROM users u
-                 JOIN conversation_participants cp ON cp.user_id = u.id AND cp.conversation_id = $3
-                 WHERE u.id = ANY($1) AND u.org_id = $2 AND u.is_active = TRUE`,
-            [removeUserIds, conv.org_id, convId],
+            "SELECT id, full_name FROM users WHERE id = ANY($1) AND org_id = $2 AND is_active = TRUE",
+            [addUserIds.map(Number), conv.org_id],
           )
-        ).rows.map((r: { id: number }) => r.id);
-
-        for (const uid of validRemoveIds) {
-          if (uid === req.userId) continue;
-          await req.db!.query(
-            "DELETE FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
-            [convId, uid],
+        ).rows;
+        for (const u of valid) {
+          const ins = await req.db!.query(
+            "INSERT INTO conversation_participants (conversation_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING",
+            [convId, u.id],
           );
-          sendToUser(req.tenantId, uid, "chat_group_removed", {
+          sendToUser(req.tenantId, u.id, "chat_group_added", {
             conversationId: convId,
           });
+          if ((ins.rowCount ?? 0) > 0) {
+            await emitSystemMessage(
+              req.db as unknown as DbLike,
+              req.tenantId,
+              convId,
+              req.userId,
+              {
+                type: "member_added",
+                actorId: req.userId,
+                targetId: u.id,
+                text: `${actorName} added ${u.full_name}`,
+              },
+            );
+          }
+        }
+      }
+
+      // ── Remove members ──
+      if (Array.isArray(removeUserIds) && removeUserIds.length > 0) {
+        if (!canDo("remove_member", ctx))
+          return res
+            .status(403)
+            .json({ error: "You don't have permission to remove members" });
+        const validRemove = (
+          await req.db!.query(
+            `SELECT u.id, u.full_name, cp.role FROM users u
+                 JOIN conversation_participants cp ON cp.user_id = u.id AND cp.conversation_id = $3
+                 WHERE u.id = ANY($1) AND u.org_id = $2`,
+            [removeUserIds.map(Number), conv.org_id, convId],
+          )
+        ).rows;
+
+        for (const u of validRemove) {
+          if (u.id === req.userId) continue; // use /leave to remove self
+          // An admin cannot remove the owner; only owner / governance can.
+          if (
+            u.role === "owner" &&
+            ctx.role !== "owner" &&
+            (req.roleLevel || 1) < 4
+          ) {
+            continue;
+          }
+          await req.db!.query(
+            "DELETE FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+            [convId, u.id],
+          );
+          sendToUser(req.tenantId, u.id, "chat_group_removed", {
+            conversationId: convId,
+          });
+          await emitSystemMessage(
+            req.db as unknown as DbLike,
+            req.tenantId,
+            convId,
+            req.userId,
+            {
+              type: "member_removed",
+              actorId: req.userId,
+              targetId: u.id,
+              text: `${actorName} removed ${u.full_name}`,
+            },
+          );
         }
       }
 
@@ -537,6 +728,255 @@ router.put(
     } catch (err) {
       req.log.error({ err }, "Update group error");
       res.status(500).json({ error: "Failed to update group" });
+    }
+  },
+);
+
+/**
+ * POST /api/chat/conversations/:id/leave
+ * Leave a group. If the owner leaves, ownership is transferred to the oldest
+ * admin (or oldest remaining member) so the group never becomes ownerless.
+ */
+router.post(
+  "/conversations/:id/leave",
+  auth,
+  loadUserContext,
+  async (req: Request, res: Response) => {
+    try {
+      const convId = parseInt(String(req.params.id), 10);
+      if (isNaN(convId))
+        return res.status(400).json({ error: "Invalid conversation" });
+      const conv = (
+        await req.db!.query(
+          "SELECT id, is_group FROM conversations WHERE id = $1",
+          [convId],
+        )
+      ).rows[0];
+      if (!conv || !conv.is_group)
+        return res.status(404).json({ error: "Group not found" });
+
+      const me = (
+        await req.db!.query(
+          "SELECT role FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+          [convId, req.userId],
+        )
+      ).rows[0];
+      if (!me) return res.status(403).json({ error: "Not a participant" });
+
+      // Owner leaving → promote a successor first (oldest admin, else oldest member).
+      if (me.role === "owner") {
+        const successor = (
+          await req.db!.query(
+            `SELECT user_id FROM conversation_participants
+              WHERE conversation_id = $1 AND user_id <> $2
+              ORDER BY (role = 'admin') DESC, user_id ASC
+              LIMIT 1`,
+            [convId, req.userId],
+          )
+        ).rows[0];
+        if (successor) {
+          await req.db!.query(
+            "UPDATE conversation_participants SET role = 'owner' WHERE conversation_id = $1 AND user_id = $2",
+            [convId, successor.user_id],
+          );
+          await req.db!.query(
+            "UPDATE conversations SET created_by = $1 WHERE id = $2",
+            [successor.user_id, convId],
+          );
+        }
+      }
+
+      await req.db!.query(
+        "DELETE FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+        [convId, req.userId],
+      );
+
+      const actor = (
+        await req.db!.query("SELECT full_name FROM users WHERE id = $1", [
+          req.userId,
+        ])
+      ).rows[0];
+      await emitSystemMessage(
+        req.db as unknown as DbLike,
+        req.tenantId,
+        convId,
+        req.userId,
+        {
+          type: "member_left",
+          actorId: req.userId,
+          text: `${actor?.full_name || "Someone"} left the group`,
+        },
+      );
+      sendToUser(req.tenantId, req.userId, "chat_group_removed", {
+        conversationId: convId,
+      });
+
+      res.json({ ok: true });
+    } catch (err) {
+      req.log.error({ err }, "Leave group error");
+      res.status(500).json({ error: "Failed to leave group" });
+    }
+  },
+);
+
+/**
+ * PUT /api/chat/conversations/:id/participants/:userId/role  { role }
+ * Owner (or org-governance) promotes/demotes a member between admin/member.
+ */
+router.put(
+  "/conversations/:id/participants/:userId/role",
+  auth,
+  loadUserContext,
+  async (req: Request, res: Response) => {
+    try {
+      const convId = parseInt(String(req.params.id), 10);
+      const targetId = parseInt(String(req.params.userId), 10);
+      if (isNaN(convId) || isNaN(targetId))
+        return res.status(400).json({ error: "Invalid request" });
+      const role = String(req.body.role || "");
+      if (!["admin", "member"].includes(role))
+        return res.status(400).json({ error: "Invalid role" });
+
+      const ctx = await loadGroupContext(
+        req.db as unknown as DbLike,
+        convId,
+        req.userId,
+        req.roleLevel || 1,
+      );
+      if (!ctx || !ctx.isGroup)
+        return res.status(404).json({ error: "Group not found" });
+      if (!canDo("set_role", ctx))
+        return res
+          .status(403)
+          .json({ error: "Only the owner can change roles" });
+
+      const target = (
+        await req.db!.query(
+          "SELECT cp.role, u.full_name FROM conversation_participants cp JOIN users u ON u.id = cp.user_id WHERE cp.conversation_id = $1 AND cp.user_id = $2",
+          [convId, targetId],
+        )
+      ).rows[0];
+      if (!target)
+        return res.status(404).json({ error: "User is not a member" });
+      if (target.role === "owner")
+        return res
+          .status(400)
+          .json({ error: "Cannot change the owner's role" });
+
+      await req.db!.query(
+        "UPDATE conversation_participants SET role = $1 WHERE conversation_id = $2 AND user_id = $3",
+        [role, convId, targetId],
+      );
+
+      const actor = (
+        await req.db!.query("SELECT full_name FROM users WHERE id = $1", [
+          req.userId,
+        ])
+      ).rows[0];
+      await emitSystemMessage(
+        req.db as unknown as DbLike,
+        req.tenantId,
+        convId,
+        req.userId,
+        {
+          type: "role_changed",
+          actorId: req.userId,
+          targetId,
+          role,
+          text: `${actor?.full_name || "Someone"} ${
+            role === "admin" ? "promoted" : "demoted"
+          } ${target.full_name}${role === "admin" ? " to admin" : ""}`,
+        },
+      );
+      sendToUser(req.tenantId, targetId, "chat_group_role_changed", {
+        conversationId: convId,
+        role,
+      });
+
+      res.json({ ok: true, role });
+    } catch (err) {
+      req.log.error({ err }, "Set role error");
+      res.status(500).json({ error: "Failed to set role" });
+    }
+  },
+);
+
+/**
+ * POST /api/chat/conversations/:id/transfer-owner  { userId }
+ * Current owner hands ownership to another member (the old owner becomes admin).
+ */
+router.post(
+  "/conversations/:id/transfer-owner",
+  auth,
+  loadUserContext,
+  async (req: Request, res: Response) => {
+    try {
+      const convId = parseInt(String(req.params.id), 10);
+      const newOwnerId = parseInt(String(req.body.userId), 10);
+      if (isNaN(convId) || isNaN(newOwnerId))
+        return res.status(400).json({ error: "Invalid request" });
+
+      const ctx = await loadGroupContext(
+        req.db as unknown as DbLike,
+        convId,
+        req.userId,
+        req.roleLevel || 1,
+      );
+      if (!ctx || !ctx.isGroup)
+        return res.status(404).json({ error: "Group not found" });
+      if (!canDo("transfer_owner", ctx))
+        return res
+          .status(403)
+          .json({ error: "Only the owner can transfer ownership" });
+
+      const target = (
+        await req.db!.query(
+          "SELECT u.full_name FROM conversation_participants cp JOIN users u ON u.id = cp.user_id WHERE cp.conversation_id = $1 AND cp.user_id = $2",
+          [convId, newOwnerId],
+        )
+      ).rows[0];
+      if (!target)
+        return res.status(404).json({ error: "User is not a member" });
+
+      await (req.db as unknown as DbLike).transaction(async (client) => {
+        await client.query(
+          "UPDATE conversation_participants SET role = 'admin' WHERE conversation_id = $1 AND user_id = $2",
+          [convId, req.userId],
+        );
+        await client.query(
+          "UPDATE conversation_participants SET role = 'owner' WHERE conversation_id = $1 AND user_id = $2",
+          [convId, newOwnerId],
+        );
+        await client.query(
+          "UPDATE conversations SET created_by = $1 WHERE id = $2",
+          [newOwnerId, convId],
+        );
+      });
+
+      const actor = (
+        await req.db!.query("SELECT full_name FROM users WHERE id = $1", [
+          req.userId,
+        ])
+      ).rows[0];
+      await emitSystemMessage(
+        req.db as unknown as DbLike,
+        req.tenantId,
+        convId,
+        req.userId,
+        {
+          type: "owner_transferred",
+          actorId: req.userId,
+          targetId: newOwnerId,
+          text: `${actor?.full_name || "Someone"} made ${
+            target.full_name
+          } the owner`,
+        },
+      );
+
+      res.json({ ok: true });
+    } catch (err) {
+      req.log.error({ err }, "Transfer owner error");
+      res.status(500).json({ error: "Failed to transfer ownership" });
     }
   },
 );
@@ -565,11 +1005,14 @@ router.get(
       const rows = (
         await req.db!.query(
           `
-            SELECT u.id, u.username, u.full_name, u.avatar, u.last_seen_at
+            SELECT u.id, u.username, u.full_name, u.avatar, u.last_seen_at,
+                   cp.role
             FROM conversation_participants cp
             JOIN users u ON u.id = cp.user_id
             WHERE cp.conversation_id = $1
-            ORDER BY u.full_name
+            ORDER BY
+                CASE cp.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
+                u.full_name
         `,
           [convId],
         )
@@ -596,6 +1039,11 @@ router.get("/conversations", auth, async (req: Request, res: Response) => {
                 c.updated_at,
                 c.name AS group_name,
                 c.is_group,
+                c.description AS group_description,
+                c.avatar AS group_avatar,
+                c.post_policy,
+                c.add_policy,
+                cp.role AS my_role,
                 CASE WHEN c.is_group = FALSE THEN COALESCE(u.id, self_u.id) END        AS other_user_id,
                 CASE WHEN c.is_group = FALSE THEN COALESCE(u.username, self_u.username) END   AS other_username,
                 CASE WHEN c.is_group = FALSE THEN COALESCE(u.full_name, self_u.full_name) END  AS other_full_name,

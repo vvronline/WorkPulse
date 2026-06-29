@@ -421,6 +421,11 @@ export type Conversation = {
   id: number;
   is_group: boolean;
   group_name?: string | null;
+  group_description?: string | null;
+  group_avatar?: string | null;
+  post_policy?: "all" | "admins" | null;
+  add_policy?: "all" | "admins" | null;
+  my_role?: "owner" | "admin" | "member" | null;
   other_user_id?: number | null;
   other_username?: string | null;
   other_full_name?: string | null;
@@ -644,6 +649,52 @@ export function getChatPresence(userIds: number[]) {
 }
 
 /* ─── Chat: groups, files, message actions (mirror client/src/api.ts) ─── */
+
+export type GroupRole = "owner" | "admin" | "member";
+
+export interface GroupMember {
+  id: number;
+  username?: string;
+  full_name?: string;
+  avatar?: string | null;
+  last_seen_at?: string | null;
+  role?: GroupRole;
+}
+
+// Group management (mirrors client/src/api.ts). Roles/metadata/leave for the
+// mobile group-settings screen.
+export function getGroupMembers(convId: number) {
+  return api.get<GroupMember[]>(`/chat/conversations/${convId}/members`);
+}
+export function updateGroup(
+  convId: number,
+  data: {
+    name?: string;
+    description?: string | null;
+    avatar?: string | null;
+    postPolicy?: "all" | "admins";
+    addPolicy?: "all" | "admins";
+    addUserIds?: number[];
+    removeUserIds?: number[];
+  },
+) {
+  return api.put(`/chat/conversations/${convId}/group`, data);
+}
+export function leaveGroup(convId: number) {
+  return api.post(`/chat/conversations/${convId}/leave`);
+}
+export function setGroupRole(
+  convId: number,
+  userId: number,
+  role: "admin" | "member",
+) {
+  return api.put(`/chat/conversations/${convId}/participants/${userId}/role`, {
+    role,
+  });
+}
+export function transferGroupOwner(convId: number, userId: number) {
+  return api.post(`/chat/conversations/${convId}/transfer-owner`, { userId });
+}
 
 export function createGroupConversation(name: string, userIds: number[]) {
   // Server responds { conversationId } — same contract as startConversation.

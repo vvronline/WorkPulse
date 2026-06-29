@@ -12,6 +12,7 @@ type ChatState = ReturnType<typeof useChatState>;
 export default function useConversationActions(state: ChatState) {
     const {
         activeConv,
+        conversations,
         setActiveConv,
         setMessages,
         setConversations,
@@ -96,7 +97,12 @@ export default function useConversationActions(state: ChatState) {
         if (!activeConv?.is_group) return;
         try {
             const { data } = await getMembers(activeConv.id);
-            setGroupEditData({ group: activeConv, members: data });
+            // activeConv carries only a minimal meta (no my_role /
+            // group_description). Merge the full conversation row from the
+            // loaded list so GroupModal can gate admin controls correctly.
+            const full =
+                conversations.find((c) => c.id === activeConv.id) || activeConv;
+            setGroupEditData({ group: { ...activeConv, ...full }, members: data });
             setShowGroupModal(true);
         } catch {
             /* ignore */

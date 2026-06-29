@@ -222,6 +222,10 @@ export function useChatThread() {
   // from here would produce a broken half-connected call. Mirrors the web,
   // where group calls go through the meeting flow instead.
   const [isGroupConv, setIsGroupConv] = useState(params.isGroup === "1");
+  // Caller's local group role + the group's description, surfaced to the
+  // group-settings screen (Phase 1). Resolved from the conversation row.
+  const [myGroupRole, setMyGroupRole] = useState<string>("member");
+  const [groupDescription, setGroupDescription] = useState<string>("");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const kbInset = useKeyboardInset();
@@ -673,6 +677,9 @@ export function useChatThread() {
       if (!active) return;
       if (conv.member_count) setParticipantCount(conv.member_count);
       setIsGroupConv(!!conv.is_group);
+      if (conv.my_role) setMyGroupRole(conv.my_role);
+      if (conv.group_description != null)
+        setGroupDescription(conv.group_description);
       const resolvedName = conv.is_group
         ? conv.group_name || "Group"
         : conv.other_full_name || conv.other_username || "Chat";
@@ -2213,6 +2220,8 @@ export function useChatThread() {
     isGroup: isGroupConv ? "1" : "0",
     peerStatus: peerStatus || "",
     memberCount: String(participantCount),
+    myRole: myGroupRole,
+    description: groupDescription,
   };
 
   function openInfo() {
