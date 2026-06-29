@@ -1,7 +1,8 @@
 import "react-native-gesture-handler";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Text as RNText, TextInput as RNTextInput } from "react-native";
 import { useFonts } from "expo-font";
+import * as SplashScreen from "expo-splash-screen";
 import { QueryClient } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { Stack } from "expo-router";
@@ -13,6 +14,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../src/auth/AuthContext";
 import ImpersonationBanner from "../src/components/ImpersonationBanner";
 import UpdateChecker from "../src/components/UpdateChecker";
+import AnimatedSplash from "../src/components/AnimatedSplash";
 import IncomingCallListener from "../src/realtime/IncomingCallListener";
 import MeetingStartedListener from "../src/realtime/MeetingStartedListener";
 import RealtimeSoundListener from "../src/realtime/RealtimeSoundListener";
@@ -42,6 +44,11 @@ const queryClient = new QueryClient({
     queries: { retry: 1, staleTime: 60_000, gcTime: ONE_DAY },
   },
 });
+
+// Keep the NATIVE splash up until our JS-rendered AnimatedSplash overlay has
+// mounted, so the static native splash hands off to the animated "loops"
+// wordmark with no white flash in between. Best-effort; ignore if it races.
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 /**
  * Themed navigation stack. Lives inside ThemeProvider so header colours track
@@ -218,9 +225,23 @@ export default function RootLayout() {
   // system font).
   const [fontsLoaded, fontError] = useFonts(interFontMap);
 
+  // Controls the JS-rendered AnimatedSplash overlay (logo + animated "loops"
+  // Pacifico wordmark). It stays mounted on top of the app until its own
+  // fade-out animation finishes and calls onDone.
+  const [splashDone, setSplashDone] = useState(false);
+
   useEffect(() => {
     if (fontsLoaded) applyDefaultFont();
   }, [fontsLoaded]);
+
+  // Once fonts are ready (or errored), the app tree mounts — hide the NATIVE
+  // splash so the JS AnimatedSplash overlay (same #0a0e1c background) takes
+  // over and plays the "loops" text animation.
+  useEffect(() => {
+    if (fontsLoaded || fontError) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [fontsLoaded, fontError]);
 
   useEffect(() => {
     installThemedAlertBridge();
@@ -299,6 +320,9 @@ export default function RootLayout() {
               <UpdateChecker />
               <ThemedStack />
               <ThemedAlertHost />
+              {!splashDone ? (
+                <AnimatedSplash onDone={() => setSplashDone(true)} />
+              ) : null}
             </SafeAreaProvider>
           </ThemeProvider>
         </AuthProvider>

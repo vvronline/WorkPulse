@@ -20,6 +20,10 @@ import {
   Inter_600SemiBold,
   Inter_700Bold,
 } from "@expo-google-fonts/inter";
+// Pacifico — a flowing script display face used ONLY for the "loops" brand
+// wordmark (dashboard header + animated splash). It is intentionally not the
+// default UI family; reference it explicitly via FONTS.brand.
+import { Pacifico_400Regular } from "@expo-google-fonts/pacifico";
 
 /** Font-family names referenced from StyleSheet `fontFamily`. */
 export const FONTS = {
@@ -27,6 +31,8 @@ export const FONTS = {
   medium: "Inter_500Medium",
   semiBold: "Inter_600SemiBold",
   bold: "Inter_700Bold",
+  // Script display face for the "loops" brand wordmark only.
+  brand: "Pacifico_400Regular",
 } as const;
 
 /** Map handed to expo-font's `useFonts(...)` loader at app startup. */
@@ -35,4 +41,5 @@ export const interFontMap = {
   Inter_500Medium,
   Inter_600SemiBold,
   Inter_700Bold,
+  Pacifico_400Regular,
 } as const;

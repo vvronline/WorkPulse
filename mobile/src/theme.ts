@@ -134,6 +134,8 @@ export function makeTheme(accent: string = DEFAULT_ACCENT) {
     fontMedium: FONTS.medium,
     fontSemiBold: FONTS.semiBold,
     fontBold: FONTS.bold,
+    // Pacifico script display face for the "loops" brand wordmark only.
+    fontBrand: FONTS.brand,
   } as const;
 }
 

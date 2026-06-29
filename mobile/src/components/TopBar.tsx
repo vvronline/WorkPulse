@@ -85,7 +85,7 @@ export default function TopBar() {
             resizeMode="cover"
           />
         </View>
-        <Text style={styles.title}>Loops</Text>
+        <Text style={styles.title}>loops</Text>
       </View>
 
       {/* Right: notifications + profile */}
@@ -150,7 +150,15 @@ const makeStyles = (theme: Theme) =>
     justifyContent: "center",
   },
   logoImg: { width: 32, height: 32, borderRadius: 9 },
-  title: { fontSize: 17, fontWeight: "700", color: theme.text, letterSpacing: -0.3 },
+  title: {
+    fontSize: 22,
+    fontFamily: theme.fontBrand,
+    color: theme.text,
+    letterSpacing: 0.3,
+    // Pacifico has tall ascenders/descenders; nudge baseline so it sits
+    // centered next to the logo without clipping.
+    paddingTop: 2,
+  },
   right: { flexDirection: "row", alignItems: "center", gap: 12 },
   iconBtn: {
     width: 38,
