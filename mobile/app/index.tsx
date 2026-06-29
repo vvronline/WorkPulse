@@ -184,6 +184,7 @@ export default function Index() {
             peerId: callRoute.peerId,
             peerName: callRoute.peerName,
             peerAvatar: callRoute.peerAvatar,
+            ...(callRoute.isGroup ? { isGroup: callRoute.isGroup } : {}),
             autoAnswer: callRoute.autoAnswer,
             ...(callRoute.action ? { action: callRoute.action } : {}),
           },

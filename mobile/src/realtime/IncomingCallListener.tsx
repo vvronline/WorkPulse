@@ -64,6 +64,7 @@ export default function IncomingCallListener() {
             peerId: String(d.callerId),
             peerName: d.callerName || "Incoming call",
             peerAvatar: d.callerAvatar || "",
+            isGroup: d.isGroup ? "1" : "0",
           },
         });
       } else if (

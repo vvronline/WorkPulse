@@ -39,6 +39,8 @@ export type PendingCallRoute = {
   autoAnswer: string;
   /** "decline" when the user tapped Decline. */
   action?: string;
+  /** "1" when the incoming call belongs to a group conversation. */
+  isGroup?: string;
 };
 
 let pending: PendingCallRoute | null = null;
@@ -83,6 +85,7 @@ export function pendingCallFromData(
     peerAvatar: data.callerAvatar || "",
     autoAnswer: action === "accept_call" || action === "answer" ? "1" : "0",
     action: action === "decline_call" || action === "decline" ? "decline" : undefined,
+    isGroup: data.isGroup === "true" || data.isGroup === "1" ? "1" : "0",
   };
 }
 

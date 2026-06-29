@@ -28,6 +28,7 @@ import { useTheme } from "../../src/theme/ThemeProvider";
 import { useEffect, useMemo, useState } from "react";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import ChatAvatar from "../../src/components/ChatAvatar";
+import GroupCompositeAvatar from "../../src/components/GroupCompositeAvatar";
 import {
   ReplyPreview,
   EditPreview,
@@ -164,13 +165,22 @@ export default function ChatThread() {
                       onPress={c.openInfo}
                       hitSlop={6}
                     >
-                      <ChatAvatar
-                        name={c.name}
-                        avatar={c.headerAvatar}
-                        size={32}
-                        userStatus={c.peerUserId ? c.peerStatus : undefined}
-                        ringColor={theme.bg}
-                      />
+                      {c.isGroupConv ? (
+                        <GroupCompositeAvatar
+                          name={c.name}
+                          avatar={c.headerAvatar}
+                          memberAvatars={c.groupMemberAvatars}
+                          size={32}
+                        />
+                      ) : (
+                        <ChatAvatar
+                          name={c.name}
+                          avatar={c.headerAvatar}
+                          size={32}
+                          userStatus={c.peerUserId ? c.peerStatus : undefined}
+                          ringColor={theme.bg}
+                        />
+                      )}
                       <View style={{ flexShrink: 1 }}>
                         <Text style={styles.headerTitleText} numberOfLines={1}>
                           {c.name || "Chat"}

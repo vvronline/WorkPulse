@@ -181,6 +181,7 @@ function handleCallNotification(
     callType: "voice" | "video";
     callerName?: string;
     callerAvatar?: string;
+    isGroup?: boolean;
     notificationAction?: string;
   },
   router: any,
@@ -216,6 +217,7 @@ function handleCallNotification(
       peerId: String(callData.callerId || ""),
       peerName: callData.callerName || "Incoming call",
       peerAvatar: callData.callerAvatar || "",
+      isGroup: callData.isGroup ? "1" : "0",
       autoAnswer: callData.notificationAction === "accept_call" ? "1" : "0",
     },
   });

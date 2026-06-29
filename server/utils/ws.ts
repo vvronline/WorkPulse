@@ -1064,41 +1064,21 @@ async function handleChatMessage(
           return;
         }
 
-        // P1.5 — gate group calls. 1:1 WebRTC has no mesh/SFU plumbing,
-        // so a group "call" could never actually connect >2 people.
-        // Group n-way belongs to the Meeting flow. Refuse to create a
-        // ringing row for group conversations; tell the caller it's
-        // unsupported so their outgoing-call UI tears down immediately.
+        // Group-call contract:
+        // keep group conversations on the call path (do not force a
+        // meeting redirect). Group calls ring all current members and can
+        // later expand via `call_add_participant`.
         const isGroupConv = (
           await db.query("SELECT is_group FROM conversations WHERE id = $1", [
             conversationId,
           ])
         ).rows[0]?.is_group;
-        if (isGroupConv) {
-          logger.info(
-            { senderId, conversationId, tenantId },
-            "call_initiate: group conversation — calls unsupported, redirect to meeting",
-          );
-          sendToUser(tenantId, senderId, "call_ended", {
-            conversationId,
-            reason: "group_unsupported",
-          });
-          recordCallTransitionFailure({
-            event: "call_transition_failed",
-            action: "initiate",
-            tenantId,
-            senderId,
-            conversationId,
-            reason: "group_unsupported",
-          });
-          return;
-        }
 
         // P0.3 — call_busy on 1:1 collision. For NON-group conversations we
         // ring at most one callee; if that callee already has an active
         // (ringing/answered) call we must NOT create another ringing row.
         // Instead tell the caller the callee is busy and bail out.
-        {
+        if (!isGroupConv) {
           const targetRow = (
             await db.query(
               `SELECT user_id FROM conversation_participants
@@ -3222,21 +3202,9 @@ async function handleChatMessage(
       count: rows.length,
     });
   } else if (msg.type === "call_add_participant") {
-    // Add a participant to an ongoing call.
-    //
-    // IMPORTANT: This is ONLY allowed when the underlying conversation is
-    // already a group conversation. The previous behaviour permanently
-    // inserted the target into `conversation_participants` for any chat —
-    // including 1:1 DMs — which had two awful side-effects:
-    //
-    //   1. The 1:1 WebRTC peer connection has no mesh/SFU plumbing, so
-    //      the 3rd person could never actually hear/see anyone.
-    //   2. The conversation was now a 3-person group forever, so the
-    //      next call from that DM would auto-ring the 3rd person too.
-    //
-    // For n-way calls users should start a Meeting (which has proper
-    // group support). We hard-reject the request here so old / mobile
-    // clients that still expose the button cannot corrupt the chat.
+    // Add a participant to an ongoing GROUP call.
+    // We only allow this on existing group conversations so a 1:1 DM
+    // can never be silently mutated into a group.
     const { callId, conversationId, targetUserId } = msg.data || {};
     if (!callId || !conversationId || !targetUserId) return;
 

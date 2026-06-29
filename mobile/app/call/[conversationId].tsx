@@ -7,10 +7,16 @@ import {
   useState,
 } from "react";
 import {
+  ActivityIndicator,
   Alert,
   AppState,
+  Modal,
   PermissionsAndroid,
   Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
   Vibration,
   View,
 } from "react-native";
@@ -39,6 +45,7 @@ import {
   acceptCallHttp,
   rejectCallHttp,
   endCallHttp,
+  searchChatUsers,
 } from "../../src/features";
 import { SERVER_ORIGIN } from "../../src/config";
 import { getNotificationPreviewDataUri } from "../../src/utils/notificationSoundPreview";
@@ -75,6 +82,7 @@ import {
   hasRealTurn,
 } from "../../src/realtime/callIceConfig";
 import { useMobileCallControls } from "../../src/components/call/useMobileCallControls";
+import { useAuth } from "../../src/auth/AuthContext";
 
 /**
  * Native audio/video call screen (react-native-webrtc). Mirrors the web call
@@ -100,6 +108,7 @@ export default function CallScreen() {
   useKeepAwake();
 
   const theme = useTheme();
+  const { user } = useAuth();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
@@ -110,6 +119,7 @@ export default function CallScreen() {
     peerId?: string;
     peerName?: string;
     peerAvatar?: string;
+    isGroup?: string;
     autoAnswer?: string;
     action?: string;
   }>();
@@ -126,6 +136,7 @@ export default function CallScreen() {
   const isReconnect = params.mode === "reconnect";
   const mode = params.mode === "incoming" ? "incoming" : "outgoing";
   const callType = params.callType === "video" ? "video" : "voice";
+  const isGroupCall = params.isGroup === "1";
   const autoAnswer = params.autoAnswer === "1";
   // Deep-linked decline (e.g. user tapped "Decline" on the full-screen call
   // notification while the app was backgrounded/terminated). When present we
@@ -206,6 +217,28 @@ export default function CallScreen() {
   const [floatingReactions, setFloatingReactions] = useState<
     Array<{ id: number; emoji: string; fromSelf: boolean }>
   >([]);
+  const [showAddParticipant, setShowAddParticipant] = useState(false);
+  const [addParticipantQuery, setAddParticipantQuery] = useState("");
+  const [addParticipantSearching, setAddParticipantSearching] = useState(false);
+  const [addParticipantResults, setAddParticipantResults] = useState<
+    Array<{
+      id: number;
+      full_name?: string;
+      username?: string;
+      avatar?: string | null;
+    }>
+  >([]);
+  const addParticipantTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  useEffect(
+    () => () => {
+      if (addParticipantTimerRef.current) {
+        clearTimeout(addParticipantTimerRef.current);
+      }
+    },
+    [],
+  );
   const [notificationPrefs, setNotificationPrefs] = useState(
     DEFAULT_NOTIFICATION_PREFS,
   );
@@ -3095,6 +3128,11 @@ export default function CallScreen() {
         onCloseChat={closeChatPanel}
         onOpenReactionPicker={openReactionPickerFromMore}
         onCloseReactionPicker={closeReactionPicker}
+        isGroupCall={isGroupCall}
+        onAddParticipant={() => {
+          setShowMore(false);
+          setShowAddParticipant(true);
+        }}
         onToggleNoiseSuppression={toggleNoiseSuppression}
         onToggleRecording={toggleRecording}
         onSendReaction={sendReaction}
@@ -3102,6 +3140,150 @@ export default function CallScreen() {
         onEndCall={() => endAndLeave(true)}
         CallDurationComponent={CallDuration}
       />
+      <Modal
+        visible={showAddParticipant}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowAddParticipant(false)}
+      >
+        <Pressable
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.5)",
+            justifyContent: "flex-end",
+          }}
+          onPress={() => setShowAddParticipant(false)}
+        >
+          <Pressable
+            style={{
+              backgroundColor: theme.bgElevated || theme.surface || "#111827",
+              borderTopLeftRadius: 18,
+              borderTopRightRadius: 18,
+              padding: 16,
+              maxHeight: "72%",
+            }}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text
+              style={{
+                color: theme.text,
+                fontSize: 17,
+                fontFamily: theme.fontBold,
+                marginBottom: 12,
+              }}
+            >
+              Add participant
+            </Text>
+            <View
+              style={{
+                borderWidth: 1,
+                borderColor: theme.glassBorder || theme.border,
+                borderRadius: 12,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                marginBottom: 10,
+              }}
+            >
+              <TextInput
+                value={addParticipantQuery}
+                onChangeText={(val) => {
+                  setAddParticipantQuery(val);
+                  if (addParticipantTimerRef.current) {
+                    clearTimeout(addParticipantTimerRef.current);
+                  }
+                  if (val.trim().length < 2) {
+                    setAddParticipantResults([]);
+                    setAddParticipantSearching(false);
+                    return;
+                  }
+                  addParticipantTimerRef.current = setTimeout(async () => {
+                    setAddParticipantSearching(true);
+                    try {
+                      const r = await searchChatUsers(val.trim());
+                      const selfId = Number(user?.id || 0);
+                      const currentPeerId = Number(peerIdRef.current || 0);
+                      const rows = (r.data || []).filter((u) => {
+                        const uid = Number(u.id);
+                        return uid > 0 && uid !== selfId && uid !== currentPeerId;
+                      });
+                      setAddParticipantResults(rows);
+                    } catch {
+                      setAddParticipantResults([]);
+                    } finally {
+                      setAddParticipantSearching(false);
+                    }
+                  }, 300);
+                }}
+                placeholder="Search people…"
+                placeholderTextColor={theme.textMuted}
+                style={{ color: theme.text, fontSize: 15 }}
+              />
+            </View>
+            {addParticipantSearching ? (
+              <View style={{ paddingVertical: 14, alignItems: "center" }}>
+                <ActivityIndicator color={theme.primary} />
+              </View>
+            ) : null}
+            <ScrollView>
+              {addParticipantResults.map((u) => (
+                <Pressable
+                  key={String(u.id)}
+                  style={{
+                    paddingVertical: 12,
+                    borderBottomWidth: 1,
+                    borderBottomColor: theme.border,
+                  }}
+                  onPress={() => {
+                    if (!callIdRef.current) {
+                      Alert.alert(
+                        "Can't add participant",
+                        "The call is not connected yet.",
+                      );
+                      return;
+                    }
+                    socket.send("call_add_participant", {
+                      callId: callIdRef.current,
+                      conversationId,
+                      targetUserId: Number(u.id),
+                    });
+                    setShowAddParticipant(false);
+                    setAddParticipantQuery("");
+                    setAddParticipantResults([]);
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: theme.text,
+                      fontSize: 15,
+                      fontFamily: theme.fontMedium,
+                    }}
+                  >
+                    {u.full_name || u.username || "User"}
+                  </Text>
+                  {u.username ? (
+                    <Text style={{ color: theme.textMuted, fontSize: 12 }}>
+                      @{u.username}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              ))}
+              {!addParticipantSearching &&
+              addParticipantQuery.trim().length >= 2 &&
+              addParticipantResults.length === 0 ? (
+                <Text
+                  style={{
+                    color: theme.textMuted,
+                    textAlign: "center",
+                    paddingVertical: 16,
+                  }}
+                >
+                  No matching users
+                </Text>
+              ) : null}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

@@ -87,6 +87,7 @@ export default function PendingCallNavigator() {
           peerId: route.peerId,
           peerName: route.peerName,
           peerAvatar: route.peerAvatar,
+          ...(route.isGroup ? { isGroup: route.isGroup } : {}),
           autoAnswer: route.autoAnswer,
           ...(route.action ? { action: route.action } : {}),
         },

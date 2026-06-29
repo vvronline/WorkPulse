@@ -1070,6 +1070,22 @@ router.get("/conversations", auth, async (req: Request, res: Response) => {
                 CASE WHEN c.is_group THEN
                     (SELECT COUNT(*)::int FROM conversation_participants WHERE conversation_id = c.id)
                 END AS member_count,
+                CASE WHEN c.is_group THEN
+                    (
+                        SELECT COALESCE(
+                            json_agg(x.avatar) FILTER (WHERE x.avatar IS NOT NULL),
+                            '[]'::json
+                        )
+                        FROM (
+                            SELECT u3.avatar
+                            FROM conversation_participants cp3
+                            JOIN users u3 ON u3.id = cp3.user_id
+                            WHERE cp3.conversation_id = c.id
+                            ORDER BY cp3.id ASC
+                            LIMIT 4
+                        ) x
+                    )
+                END AS group_member_avatars,
                 cp.is_pinned,
                 cp.is_favourite,
                 cp.is_muted,

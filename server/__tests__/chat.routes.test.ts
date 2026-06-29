@@ -71,6 +71,7 @@ jest.mock("../db", () => ({
 }));
 
 const { app } = require("../index");
+const redis = require("../redis");
 
 const SECRET = process.env.JWT_SECRET || "test-secret";
 const CSRF = { "X-Requested-With": "WorkPulse" };
@@ -218,6 +219,75 @@ describe("GET /api/chat/presence", () => {
         expect(res.body[2].presence).toBe("online");
         expect(res.body[3].presence).toBe("offline");
         expect(res.body[3].userStatus).toBe("offline");
+    });
+});
+
+// ─── GET /api/chat/conversations ───────────────────────────────────────────
+
+describe("GET /api/chat/conversations", () => {
+    let unreadCountsSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+        unreadCountsSpy = jest.spyOn(redis, "getUnreadCounts").mockResolvedValue(null);
+    });
+
+    afterEach(() => {
+        unreadCountsSpy.mockRestore();
+    });
+
+    test("returns group_member_avatars for group conversations", async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({
+            rows: [
+                {
+                    id: 10,
+                    is_group: true,
+                    group_name: "Team Alpha",
+                    group_avatar: null,
+                    unread_count: 2,
+                    group_member_avatars: ["/uploads/a.png", "/uploads/b.png", "/uploads/c.png"],
+                },
+            ],
+            rowCount: 1,
+        });
+        const res = await request(app).get("/api/chat/conversations").set("Cookie", authCookie());
+
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveLength(1);
+        expect(res.body[0].is_group).toBe(true);
+        expect(res.body[0].group_member_avatars).toEqual([
+            "/uploads/a.png",
+            "/uploads/b.png",
+            "/uploads/c.png",
+        ]);
+    });
+
+    test("overlays redis unread counts without altering group avatars", async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({
+            rows: [
+                {
+                    id: 11,
+                    is_group: true,
+                    group_name: "Ops",
+                    group_avatar: null,
+                    unread_count: 1,
+                    group_member_avatars: ["/uploads/o1.png", "/uploads/o2.png"],
+                },
+            ],
+            rowCount: 1,
+        });
+        unreadCountsSpy.mockResolvedValueOnce({ 11: 7 });
+
+        const res = await request(app).get("/api/chat/conversations").set("Cookie", authCookie());
+
+        expect(res.status).toBe(200);
+        expect(res.body[0].unread_count).toBe(7);
+        expect(res.body[0].group_member_avatars).toEqual([
+            "/uploads/o1.png",
+            "/uploads/o2.png",
+        ]);
     });
 });
 

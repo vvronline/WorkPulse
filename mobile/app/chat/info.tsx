@@ -20,6 +20,7 @@ import {
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import ChatAvatar from "../../src/components/ChatAvatar";
+import GroupCompositeAvatar from "../../src/components/GroupCompositeAvatar";
 import { STATUS_LABEL } from "../../src/components/chat/chatUtils";
 
 /**
@@ -38,6 +39,7 @@ export default function ChatInfo() {
     avatar?: string;
     peerId?: string;
     isGroup?: string;
+    groupMemberAvatars?: string;
     peerStatus?: string;
     memberCount?: string;
     myRole?: string;
@@ -48,6 +50,17 @@ export default function ChatInfo() {
   const name = params.name || "Chat";
   const avatar = params.avatar || null;
   const isGroup = params.isGroup === "1";
+  const groupMemberAvatars = useMemo(() => {
+    if (!params.groupMemberAvatars) return [];
+    try {
+      const parsed = JSON.parse(params.groupMemberAvatars);
+      return Array.isArray(parsed)
+        ? parsed.filter((v): v is string => typeof v === "string" && v.length > 0)
+        : [];
+    } catch {
+      return [];
+    }
+  }, [params.groupMemberAvatars]);
   const peerStatus = params.peerStatus || null;
   const memberCount = params.memberCount ? Number(params.memberCount) : 0;
   const myRole = params.myRole || "member";
@@ -105,6 +118,7 @@ export default function ChatInfo() {
         callType: type,
         peerName: name,
         peerAvatar: avatar || "",
+        isGroup: isGroup ? "1" : "0",
       },
     });
 
@@ -114,7 +128,16 @@ export default function ChatInfo() {
 
       {/* Profile header. */}
       <View style={styles.header}>
-        <ChatAvatar name={name} avatar={avatar} size={88} />
+        {isGroup ? (
+          <GroupCompositeAvatar
+            name={name}
+            avatar={avatar}
+            memberAvatars={groupMemberAvatars}
+            size={88}
+          />
+        ) : (
+          <ChatAvatar name={name} avatar={avatar} size={88} />
+        )}
         <Text style={styles.name} numberOfLines={1}>
           {name}
         </Text>

@@ -30,7 +30,6 @@ import { useDialog } from "../../hooks/useDialog";
 import {
   ackDelivered,
   cancelChatMediaJob,
-  createMeeting,
   deleteMessage,
   editMessage,
   forwardMessage,
@@ -203,9 +202,21 @@ export function useChatThread() {
     avatar?: string;
     peerId?: string;
     isGroup?: string;
+    groupMemberAvatars?: string;
   }>();
   const { id } = params;
   const convId = Number(id);
+  const parsedGroupMemberAvatars = useMemo(() => {
+    if (!params.groupMemberAvatars) return [];
+    try {
+      const parsed = JSON.parse(params.groupMemberAvatars);
+      return Array.isArray(parsed)
+        ? parsed.filter((v): v is string => typeof v === "string" && v.length > 0)
+        : [];
+    } catch {
+      return [];
+    }
+  }, [params.groupMemberAvatars]);
   // Header identity (name + avatar). Seeded from the route params for the
   // common case (opened from the conversation list, which passes them), but
   // held in STATE so it can be RESOLVED when missing — e.g. a notification tap
@@ -218,11 +229,12 @@ export function useChatThread() {
   const [headerAvatar, setHeaderAvatar] = useState<string | null>(
     params.avatar || null,
   );
-  // Group conversations get NO 1:1 call buttons — the native call screen is
-  // strictly peer-to-peer (single remote stream), so initiating a "group call"
-  // from here would produce a broken half-connected call. Mirrors the web,
-  // where group calls go through the meeting flow instead.
+  // Whether this conversation is a group thread. Group calls now stay on the
+  // unified call path (no forced meeting redirect).
   const [isGroupConv, setIsGroupConv] = useState(params.isGroup === "1");
+  const [groupMemberAvatars, setGroupMemberAvatars] = useState<string[]>(
+    parsedGroupMemberAvatars,
+  );
   // Caller's local group role + the group's description, surfaced to the
   // group-settings screen (Phase 1). Resolved from the conversation row.
   const [myGroupRole, setMyGroupRole] = useState<string>("member");
@@ -678,13 +690,24 @@ export function useChatThread() {
       if (!active) return;
       if (conv.member_count) setParticipantCount(conv.member_count);
       setIsGroupConv(!!conv.is_group);
+      if (conv.is_group) {
+        setGroupMemberAvatars(
+          Array.isArray(conv.group_member_avatars)
+            ? conv.group_member_avatars.filter(
+                (v): v is string => typeof v === "string" && v.length > 0,
+              )
+            : [],
+        );
+      }
       if (conv.my_role) setMyGroupRole(conv.my_role);
       if (conv.group_description != null)
         setGroupDescription(conv.group_description);
       const resolvedName = conv.is_group
         ? conv.group_name || "Group"
         : conv.other_full_name || conv.other_username || "Chat";
-      const resolvedAvatar = conv.is_group ? null : conv.other_avatar || null;
+      const resolvedAvatar = conv.is_group
+        ? conv.group_avatar || null
+        : conv.other_avatar || null;
       if (!params.name && resolvedName) setName(resolvedName);
       if (!params.avatar && resolvedAvatar) setHeaderAvatar(resolvedAvatar);
       if (!conv.is_group && conv.other_user_id) {
@@ -741,7 +764,13 @@ export function useChatThread() {
     return () => {
       active = false;
     };
-  }, [convId, params.peerId, params.name, params.avatar]);
+  }, [
+    convId,
+    params.peerId,
+    params.name,
+    params.avatar,
+    params.groupMemberAvatars,
+  ]);
 
   // Keep the peer's header status live via the unified `user_status` event.
   useEffect(() => {
@@ -2219,6 +2248,7 @@ export function useChatThread() {
     avatar: headerAvatar || "",
     peerId: peerUserId ? String(peerUserId) : "",
     isGroup: isGroupConv ? "1" : "0",
+    groupMemberAvatars: JSON.stringify(groupMemberAvatars),
     peerStatus: peerStatus || "",
     memberCount: String(participantCount),
     myRole: myGroupRole,
@@ -2584,36 +2614,7 @@ export function useChatThread() {
     emojiSearchFocused.current = false;
   }
 
-  // Group calls are not 1:1 WebRTC — the native call screen is strictly
-  // peer-to-peer (single remote stream). For a group conversation we instead
-  // spin up an instant Meeting bound to THIS conversation (so the meeting card
-  // + invites land in the group everyone is already in) and deep-link the
-  // caller into the meeting room. Other members get the in-chat meeting card +
-  // a join notification (mirrors the web client).
-  async function startGroupMeeting() {
-    try {
-      const { data } = await createMeeting({
-        title: name || "Group call",
-        conversation_id: convId,
-      });
-      const code = data?.meeting_code;
-      if (code) {
-        router.push(`/meeting/${code}` as never);
-      } else {
-        alert("Call failed", "Could not start the group call. Please try again.");
-      }
-    } catch {
-      alert("Call failed", "Could not start the group call. Please try again.");
-    }
-  }
-
   function startCall(type: "voice" | "video") {
-    // Route group conversations through the Meeting flow (n-way), never the
-    // 1:1 native call screen which only supports a single remote peer.
-    if (isGroupConv) {
-      void startGroupMeeting();
-      return;
-    }
     router.push({
       pathname: "/call/[conversationId]",
       params: {
@@ -2622,6 +2623,7 @@ export function useChatThread() {
         callType: type,
         peerName: name || "Call",
         peerAvatar: headerAvatar || "",
+        isGroup: isGroupConv ? "1" : "0",
       },
     });
   }
@@ -2985,6 +2987,7 @@ export function useChatThread() {
     // identity / header
     name,
     headerAvatar,
+    groupMemberAvatars,
     convId,
     isGroupConv,
     peerUserId,

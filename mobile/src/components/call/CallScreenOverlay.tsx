@@ -94,6 +94,8 @@ type Props = {
   onCloseChat: () => void;
   onOpenReactionPicker: () => void;
   onCloseReactionPicker: () => void;
+  isGroupCall: boolean;
+  onAddParticipant: () => void;
   onToggleNoiseSuppression: () => void;
   onToggleRecording: () => void;
   onSendReaction: (emoji: string) => void;
@@ -145,6 +147,8 @@ export default function CallScreenOverlay({
   onCloseChat,
   onOpenReactionPicker,
   onCloseReactionPicker,
+  isGroupCall,
+  onAddParticipant,
   onToggleNoiseSuppression,
   onToggleRecording,
   onSendReaction,
@@ -452,6 +456,19 @@ export default function CallScreenOverlay({
                 </Text>
               </View>
             </Pressable>
+            {isGroupCall ? (
+              <Pressable style={styles.sheetItem} onPress={onAddParticipant}>
+                <View style={styles.sheetIconWrap}>
+                  <MessageSquare size={20} color={CTRL_OFF} />
+                </View>
+                <View style={styles.sheetItemBody}>
+                  <Text style={styles.sheetItemText}>Add participant</Text>
+                  <Text style={styles.sheetItemSub}>
+                    Invite another member to this call
+                  </Text>
+                </View>
+              </Pressable>
+            ) : null}
             <Pressable
               style={[styles.sheetItem, styles.sheetItemLast]}
               onPress={onOpenChat}

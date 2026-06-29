@@ -70,6 +70,7 @@ import {
   setCachedConversations,
 } from "../../src/storage/chatCache";
 import ChatAvatar from "../../src/components/ChatAvatar";
+import GroupCompositeAvatar from "../../src/components/GroupCompositeAvatar";
 import ConfirmDialog from "../../src/components/ConfirmDialog";
 import {
   useKeyboardInset,
@@ -338,7 +339,13 @@ export default function ChatScreen() {
     if (!c.is_group && c.other_avatar) params.avatar = c.other_avatar;
     if (!c.is_group && c.other_user_id)
       params.peerId = String(c.other_user_id);
-    if (c.is_group) params.isGroup = "1";
+    if (c.is_group) {
+      params.isGroup = "1";
+      if (c.group_avatar) params.avatar = c.group_avatar;
+      if (Array.isArray(c.group_member_avatars) && c.group_member_avatars.length) {
+        params.groupMemberAvatars = JSON.stringify(c.group_member_avatars);
+      }
+    }
     router.push({ pathname: "/chat/[id]", params });
   }
 
@@ -630,9 +637,12 @@ export default function ChatScreen() {
     }
     if (item.is_group) {
       return (
-        <View style={styles.iconAvatar}>
-          <Users size={22} color={theme.onAccent} />
-        </View>
+        <GroupCompositeAvatar
+          name={convName(item)}
+          avatar={item.group_avatar}
+          memberAvatars={item.group_member_avatars}
+          size={48}
+        />
       );
     }
     return (
@@ -1064,9 +1074,11 @@ export default function ChatScreen() {
                   </View>
                 ) : null}
                 {item.is_group ? (
-                  <View style={styles.iconAvatar}>
-                    <Users size={22} color={theme.onAccent} />
-                  </View>
+                  <GroupCompositeAvatar
+                    name={display}
+                    memberAvatars={item.group_member_avatars}
+                    size={48}
+                  />
                 ) : (
                   <ChatAvatar name={display} avatar={callAvatar} size={48} />
                 )}
@@ -1183,11 +1195,20 @@ export default function ChatScreen() {
             <View style={styles.sheetHandle} />
             {menuConv ? (
               <View style={styles.sheetHeader}>
-                <ChatAvatar
-                  name={convName(menuConv)}
-                  avatar={menuConv.is_group ? null : menuConv.other_avatar}
-                  size={40}
-                />
+                {menuConv.is_group ? (
+                  <GroupCompositeAvatar
+                    name={convName(menuConv)}
+                    avatar={menuConv.group_avatar}
+                    memberAvatars={menuConv.group_member_avatars}
+                    size={40}
+                  />
+                ) : (
+                  <ChatAvatar
+                    name={convName(menuConv)}
+                    avatar={menuConv.other_avatar}
+                    size={40}
+                  />
+                )}
                 <Text style={styles.sheetTitle} numberOfLines={1}>
                   {convName(menuConv)}
                 </Text>

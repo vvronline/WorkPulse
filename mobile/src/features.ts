@@ -423,6 +423,7 @@ export type Conversation = {
   group_name?: string | null;
   group_description?: string | null;
   group_avatar?: string | null;
+  group_member_avatars?: string[] | null;
   post_policy?: "all" | "admins" | null;
   add_policy?: "all" | "admins" | null;
   my_role?: "owner" | "admin" | "member" | null;
@@ -465,6 +466,7 @@ export type CallLogEntry = {
   other_avatar?: string | null;
   is_group?: boolean;
   group_name?: string | null;
+  group_member_avatars?: string[] | null;
   call_type: "audio" | "video" | string;
   status: "answered" | "missed" | "rejected" | "ended" | string;
   duration?: number;
@@ -1326,6 +1328,24 @@ export type MeetingDetail = {
 // calendar can render Required/Optional badges and the organizer tag.
 export function getMeeting(code: string) {
   return api.get<MeetingDetail>(`/meetings/${code}`);
+}
+
+export function getMeetingParticipants(id: number | string) {
+  return api.get<MeetingParticipant[]>(`/meetings/${id}/participants`);
+}
+
+export function addMeetingParticipant(
+  id: number | string,
+  userId: number | string,
+) {
+  return api.post(`/meetings/${id}/participants`, { user_id: userId });
+}
+
+export function removeMeetingParticipant(
+  id: number | string,
+  userId: number | string,
+) {
+  return api.delete(`/meetings/${id}/participants/${userId}`);
 }
 
 export type MeetingConflict = {

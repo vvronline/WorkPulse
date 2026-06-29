@@ -95,6 +95,8 @@ describe("pushNotifications.sendCallNotification", () => {
             callerId: "3",
             callerName: "Bob",
             callType: "video",
+            isGroup: "true",
+            groupName: "Team Chat",
             dedupeKey: "call:99",
             callCategory: "incoming-call",
         });
