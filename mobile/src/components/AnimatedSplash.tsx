@@ -12,51 +12,44 @@ import { FONTS } from "../fonts";
 
 /**
  * In-app animated splash overlay shown on cold start, layered ABOVE the app
- * tree while the JS bundle boots. It mirrors the native expo-splash-screen
- * (centered logo on the #0a0e1c brand navy) but ADDS the "loops" brand wordmark
- * (Pacifico) animating in underneath — something the static native splash image
- * cannot do.
+ * tree while the JS bundle boots.
  *
- * Sequence:
- *  1. Logo fades + scales in.
- *  2. "loops" wordmark fades up + draws in underneath (slight upward slide).
- *  3. After a short hold, the whole overlay fades out and unmounts via
- *     `onDone` so the underlying dashboard/login is revealed.
+ * It is designed to be a SEAMLESS continuation of the native expo-splash-screen
+ * (same #0a0e1c brand navy, SAME logo at the SAME size/position) so there is no
+ * visible "logo shrinks / second smaller logo" hand-off. The logo is therefore
+ * STATIC here — only the "loops" Pacifico wordmark animates in beneath it, then
+ * the whole overlay fades out via `onDone`.
+ *
+ * NOTE: imageWidth/backgroundColor below MUST stay in sync with the
+ * expo-splash-screen plugin config in app.config.ts.
  */
+
+// Keep in sync with expo-splash-screen `imageWidth` in app.config.ts so the
+// JS logo is the exact same size as the native splash logo (no shrink).
+const LOGO_SIZE = 288;
+
 export default function AnimatedSplash({ onDone }: { onDone: () => void }) {
-  // Logo: fade + scale.
-  const logoOpacity = useSharedValue(0);
-  const logoScale = useSharedValue(0.82);
-  // Wordmark: fade + upward slide.
+  // Wordmark: fade + upward slide. The logo does NOT animate (it must match the
+  // native splash exactly), so only these drive the entrance.
   const wordOpacity = useSharedValue(0);
-  const wordTranslate = useSharedValue(12);
+  const wordTranslate = useSharedValue(10);
   // Whole-screen fade-out.
   const screenOpacity = useSharedValue(1);
 
   useEffect(() => {
-    // 1. Logo in.
-    logoOpacity.value = withTiming(1, {
-      duration: 520,
+    // 1. Wordmark fades + slides in under the (already-visible) logo.
+    wordOpacity.value = withTiming(1, {
+      duration: 560,
       easing: Easing.out(Easing.cubic),
     });
-    logoScale.value = withTiming(1, {
+    wordTranslate.value = withTiming(0, {
       duration: 620,
-      easing: Easing.out(Easing.back(1.4)),
+      easing: Easing.out(Easing.cubic),
     });
 
-    // 2. Wordmark in (after the logo has begun settling).
-    wordOpacity.value = withDelay(
-      420,
-      withTiming(1, { duration: 560, easing: Easing.out(Easing.cubic) }),
-    );
-    wordTranslate.value = withDelay(
-      420,
-      withTiming(0, { duration: 620, easing: Easing.out(Easing.cubic) }),
-    );
-
-    // 3. Hold, then fade the whole overlay out and signal completion.
+    // 2. Hold, then fade the whole overlay out and signal completion.
     screenOpacity.value = withDelay(
-      1500,
+      1400,
       withTiming(
         0,
         { duration: 420, easing: Easing.in(Easing.cubic) },
@@ -70,10 +63,6 @@ export default function AnimatedSplash({ onDone }: { onDone: () => void }) {
   const screenStyle = useAnimatedStyle(() => ({
     opacity: screenOpacity.value,
   }));
-  const logoStyle = useAnimatedStyle(() => ({
-    opacity: logoOpacity.value,
-    transform: [{ scale: logoScale.value }],
-  }));
   const wordStyle = useAnimatedStyle(() => ({
     opacity: wordOpacity.value,
     transform: [{ translateY: wordTranslate.value }],
@@ -82,13 +71,14 @@ export default function AnimatedSplash({ onDone }: { onDone: () => void }) {
   return (
     <Animated.View style={[styles.root, screenStyle]} pointerEvents="none">
       <View style={styles.center}>
-        <Animated.View style={logoStyle}>
-          <Image
-            source={require("../../assets/splash-icon.png")}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-        </Animated.View>
+        <Image
+          source={require("../../assets/splash-icon.png")}
+          style={styles.logo}
+          resizeMode="contain"
+        />
+        {/* Negative margin pulls the wordmark up under the VISIBLE logo mark —
+            splash-icon.png carries ~19% transparent safe-zone padding, so the
+            image's bottom edge sits well below the actual logo. */}
         <Animated.Text style={[styles.word, wordStyle]}>loops</Animated.Text>
       </View>
     </Animated.View>
@@ -110,14 +100,15 @@ const styles = StyleSheet.create({
     zIndex: 9999,
   },
   center: { alignItems: "center", justifyContent: "center" },
-  logo: { width: 168, height: 168 },
+  logo: { width: LOGO_SIZE, height: LOGO_SIZE },
   word: {
-    marginTop: 14,
+    // Pull up under the visible logo mark (image has transparent padding).
+    marginTop: -56,
     fontFamily: FONTS.brand,
-    fontSize: 40,
+    fontSize: 42,
     color: "#ffffff",
     letterSpacing: 0.5,
     // Pacifico's descenders need a little vertical room.
-    lineHeight: 52,
+    lineHeight: 54,
   },
 });
