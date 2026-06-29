@@ -300,7 +300,7 @@ router.get("/:code", async (req: Request, res: Response) => {
 // ─── Create meeting ─────────────────────────────────────────────────────────
 router.post("/", async (req: Request, res: Response) => {
     try {
-        const { title, description, required_participant_ids, optional_participant_ids, participant_ids, calendar_event_id, settings, start_time, end_time } = req.body;
+        const { title, description, required_participant_ids, optional_participant_ids, participant_ids, calendar_event_id, settings, start_time, end_time, conversation_id } = req.body;
         if (!title || !title.trim()) return res.status(400).json({ error: "title is required" });
         if (title.trim().length > 200) return res.status(400).json({ error: "Title too long (max 200 chars)" });
         if (!req.userOrgId) return res.status(403).json({ error: "You must belong to an organization to create meetings" });
@@ -320,16 +320,54 @@ router.post("/", async (req: Request, res: Response) => {
             : [];
         const inviteeIds = legacyIds.length > 0 ? legacyIds : [...requiredIds, ...optionalIds];
 
-        const result = await (req.db as unknown as DbLike).transaction(async (client) => {
-            // 1. Create group conversation for the meeting
-            const conv = (await client.query(
-                `INSERT INTO conversations (org_id, name, is_group, created_at, updated_at)
-                 VALUES ($1, $2, TRUE, NOW(), NOW()) RETURNING id`,
-                [req.userOrgId, `Meeting: ${title.trim()}`]
+        // Instant group-call support: when a `conversation_id` is supplied we bind
+        // the meeting to that EXISTING group conversation (so the meeting card &
+        // invites land in the chat people are already in) instead of creating a
+        // brand-new "Meeting: …" conversation. The caller must be a participant of
+        // that conversation. Invitees are derived from its current members. This
+        // is what the chat "call" button in a group uses now that 1:1 WebRTC group
+        // calls are unsupported — the group call IS a meeting.
+        let reuseConversationId: number | null = null;
+        let derivedInviteeIds: number[] = [];
+        if (conversation_id != null && conversation_id !== "") {
+            const convRow = (await req.db!.query(
+                "SELECT id, is_group FROM conversations WHERE id = $1 AND org_id = $2",
+                [Number(conversation_id), req.userOrgId]
             )).rows[0];
+            if (!convRow) return res.status(404).json({ error: "Conversation not found" });
+            const isMember = (await req.db!.query(
+                "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+                [convRow.id, req.userId]
+            )).rows[0];
+            if (!isMember) return res.status(403).json({ error: "Not a participant of this conversation" });
+            reuseConversationId = convRow.id;
+            derivedInviteeIds = (await req.db!.query(
+                "SELECT user_id FROM conversation_participants WHERE conversation_id = $1 AND user_id != $2",
+                [convRow.id, req.userId]
+            )).rows.map((r: any) => Number(r.user_id)).filter((n: number) => n > 0);
+        }
+        // The authoritative invitee list for the rest of the handler (meeting
+        // participants, conflict checks, notifications). When reusing a group
+        // conversation it is the group's members; otherwise the explicitly
+        // supplied required/optional/legacy invitees.
+        const effectiveInviteeIds = reuseConversationId ? derivedInviteeIds : inviteeIds;
 
-            // 2. Add creator as participant of conversation
-            const allParticipantIds = [req.userId, ...inviteeIds];
+        const result = await (req.db as unknown as DbLike).transaction(async (client) => {
+            // 1. Create (or reuse) the group conversation for the meeting.
+            let conv: { id: number };
+            if (reuseConversationId) {
+                conv = { id: reuseConversationId };
+            } else {
+                conv = (await client.query(
+                    `INSERT INTO conversations (org_id, name, is_group, created_at, updated_at)
+                     VALUES ($1, $2, TRUE, NOW(), NOW()) RETURNING id`,
+                    [req.userOrgId, `Meeting: ${title.trim()}`]
+                )).rows[0];
+            }
+
+            // 2. Ensure creator + invitees are participants of the conversation.
+            //    For an existing group this is a no-op (ON CONFLICT DO NOTHING).
+            const allParticipantIds = [req.userId, ...effectiveInviteeIds];
             for (const uid of allParticipantIds) {
                 await client.query(
                     `INSERT INTO conversation_participants (conversation_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
@@ -362,14 +400,20 @@ router.post("/", async (req: Request, res: Response) => {
                 [meeting.id, req.userId]
             );
 
-            // 5. Add invitees with their participant_type
-            for (const uid of requiredIds.length > 0 || optionalIds.length > 0 ? requiredIds : legacyIds) {
+            // 5. Add invitees with their participant_type. When reusing a group
+            //    conversation every member is added as a required participant
+            //    (there's no required/optional distinction for an instant call).
+            const requiredForMeeting = reuseConversationId
+                ? effectiveInviteeIds
+                : (requiredIds.length > 0 || optionalIds.length > 0 ? requiredIds : legacyIds);
+            const optionalForMeeting = reuseConversationId ? [] : optionalIds;
+            for (const uid of requiredForMeeting) {
                 await client.query(
                     `INSERT INTO meeting_participants (meeting_id, user_id, role, status, participant_type) VALUES ($1, $2, 'participant', 'invited', 'required')`,
                     [meeting.id, uid]
                 );
             }
-            for (const uid of optionalIds) {
+            for (const uid of optionalForMeeting) {
                 await client.query(
                     `INSERT INTO meeting_participants (meeting_id, user_id, role, status, participant_type) VALUES ($1, $2, 'participant', 'invited', 'optional')`,
                     [meeting.id, uid]
@@ -403,11 +447,11 @@ router.post("/", async (req: Request, res: Response) => {
 
         // Check conflicts for all invitees if time range provided
         const conflictMap = (start_time && end_time)
-            ? await getConflictsForUsers(inviteeIds, start_time, end_time, req.db)
+            ? await getConflictsForUsers(effectiveInviteeIds, start_time, end_time, req.db)
             : {};
 
         // Send notifications to invitees
-        for (const uid of inviteeIds) {
+        for (const uid of effectiveInviteeIds) {
             const conflictEvents = conflictMap[uid] || [];
             const hasConflict = conflictEvents.length > 0;
             const conflictTitle = hasConflict ? conflictEvents[0].title : null;

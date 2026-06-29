@@ -1,3 +1,5 @@
+import { useNavigate } from "react-router-dom";
+import { createMeeting } from "../../api";
 import type useChatState from "./useChatState";
 
 type ChatState = ReturnType<typeof useChatState>;
@@ -5,9 +7,46 @@ type ChatState = ReturnType<typeof useChatState>;
 export default function useCallActions(state: ChatState) {
     const { user, wsSend, activeConv, setCallState, callSignalRef, callEndRef } =
         state;
+    const navigate = useNavigate();
+
+    // Group calls are not 1:1 WebRTC — the calling engine only connects two
+    // peers. For a group conversation we instead spin up an instant Meeting
+    // bound to THIS conversation (so the meeting card + invites land in the
+    // group everyone is already in) and navigate the caller into the meeting
+    // room. Other members get the in-chat meeting card + a join notification.
+    const startGroupMeeting = async () => {
+        if (!activeConv) return;
+        const groupName =
+            (activeConv.group_name as string) ||
+            (activeConv.name as string) ||
+            "Group call";
+        try {
+            const { data } = await createMeeting({
+                title: groupName,
+                conversation_id: activeConv.id,
+                settings: { allowScreenShare: true },
+            });
+            const code = (data as { meeting_code?: string }).meeting_code;
+            if (code) {
+                navigate(`/meeting/${code}`);
+            } else {
+                alert("Could not start the group call. Please try again.");
+            }
+        } catch (err) {
+            console.error("Failed to start group meeting:", err);
+            alert("Could not start the group call. Please try again.");
+        }
+    };
 
     const initiateCall = (callType: string) => {
         if (!activeConv) return;
+
+        // Route group conversations through the Meeting flow (n-way), never the
+        // 1:1 WebRTC path which the server rejects for groups.
+        if (activeConv.is_group) {
+            void startGroupMeeting();
+            return;
+        }
 
         const remoteName = activeConv.is_group
             ? (activeConv.group_name as string) || (activeConv.name as string)

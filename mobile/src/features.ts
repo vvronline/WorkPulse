@@ -1283,8 +1283,15 @@ export function createMeeting(data: {
   required_participant_ids?: number[];
   optional_participant_ids?: number[];
   settings?: MeetingSettings;
-  start_time: string;
-  end_time: string;
+  // Optional for scheduled meetings; omitted for instant group calls started
+  // from a chat (where there is no scheduled time window).
+  start_time?: string;
+  end_time?: string;
+  // When supplied, the meeting is bound to this EXISTING group conversation
+  // (instant group call) instead of creating a new "Meeting: …" conversation.
+  // The meeting card + invites are posted into that conversation and its
+  // members become the meeting participants.
+  conversation_id?: number;
 }) {
   return api.post<{ id: number; meeting_code: string; [k: string]: unknown }>(
     "/meetings",

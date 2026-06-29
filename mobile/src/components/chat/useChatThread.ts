@@ -30,6 +30,7 @@ import { useDialog } from "../../hooks/useDialog";
 import {
   ackDelivered,
   cancelChatMediaJob,
+  createMeeting,
   deleteMessage,
   editMessage,
   forwardMessage,
@@ -2583,7 +2584,36 @@ export function useChatThread() {
     emojiSearchFocused.current = false;
   }
 
+  // Group calls are not 1:1 WebRTC — the native call screen is strictly
+  // peer-to-peer (single remote stream). For a group conversation we instead
+  // spin up an instant Meeting bound to THIS conversation (so the meeting card
+  // + invites land in the group everyone is already in) and deep-link the
+  // caller into the meeting room. Other members get the in-chat meeting card +
+  // a join notification (mirrors the web client).
+  async function startGroupMeeting() {
+    try {
+      const { data } = await createMeeting({
+        title: name || "Group call",
+        conversation_id: convId,
+      });
+      const code = data?.meeting_code;
+      if (code) {
+        router.push(`/meeting/${code}` as never);
+      } else {
+        alert("Call failed", "Could not start the group call. Please try again.");
+      }
+    } catch {
+      alert("Call failed", "Could not start the group call. Please try again.");
+    }
+  }
+
   function startCall(type: "voice" | "video") {
+    // Route group conversations through the Meeting flow (n-way), never the
+    // 1:1 native call screen which only supports a single remote peer.
+    if (isGroupConv) {
+      void startGroupMeeting();
+      return;
+    }
     router.push({
       pathname: "/call/[conversationId]",
       params: {
