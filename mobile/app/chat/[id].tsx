@@ -183,29 +183,26 @@ export default function ChatThread() {
                       </View>
                     </Pressable>
                   ),
-                  // 1:1 calls only — the native call screen can't handle group
-                  // calls yet, so hide the call buttons in group conversations.
-                  // The 3-dot overflow menu (search / pinned / files / saved /
-                  // clear chat) is available everywhere, mirroring the web
-                  // ChatHeader.
+                  // Voice/video call buttons. Shown for 1:1 AND group chats —
+                  // the native call screen is single-remote-peer (first member
+                  // to answer connects), exactly mirroring the web ChatHeader,
+                  // which also enables calls for groups. The 3-dot overflow menu
+                  // (search / pinned / files / saved / clear chat) is available
+                  // everywhere too.
                   headerRight: () => (
                     <View style={styles.headerActions}>
-                      {!c.isGroupConv ? (
-                        <>
-                          <Pressable
-                            onPress={() => c.startCall("voice")}
-                            hitSlop={8}
-                          >
-                            <Phone size={20} color={theme.primary} />
-                          </Pressable>
-                          <Pressable
-                            onPress={() => c.startCall("video")}
-                            hitSlop={8}
-                          >
-                            <VideoIcon size={20} color={theme.primary} />
-                          </Pressable>
-                        </>
-                      ) : null}
+                      <Pressable
+                        onPress={() => c.startCall("voice")}
+                        hitSlop={8}
+                      >
+                        <Phone size={20} color={theme.primary} />
+                      </Pressable>
+                      <Pressable
+                        onPress={() => c.startCall("video")}
+                        hitSlop={8}
+                      >
+                        <VideoIcon size={20} color={theme.primary} />
+                      </Pressable>
                       <Pressable
                         onPress={() => c.setMenuOpen(true)}
                         hitSlop={8}

@@ -121,24 +121,22 @@ export default function ChatInfo() {
         {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       </View>
 
-      {/* Quick actions. */}
+      {/* Quick actions. Call/Video are available for 1:1 AND group chats —
+          the native call screen connects the first member to answer (parity
+          with the chat header + web). */}
       <View style={styles.quickRow}>
-        {!isGroup ? (
-          <>
-            <QuickAction
-              icon={<Phone size={22} color={theme.primary} />}
-              label="Call"
-              onPress={() => startCall("voice")}
-              styles={styles}
-            />
-            <QuickAction
-              icon={<VideoIcon size={22} color={theme.primary} />}
-              label="Video"
-              onPress={() => startCall("video")}
-              styles={styles}
-            />
-          </>
-        ) : null}
+        <QuickAction
+          icon={<Phone size={22} color={theme.primary} />}
+          label="Call"
+          onPress={() => startCall("voice")}
+          styles={styles}
+        />
+        <QuickAction
+          icon={<VideoIcon size={22} color={theme.primary} />}
+          label="Video"
+          onPress={() => startCall("video")}
+          styles={styles}
+        />
         <QuickAction
           icon={<Search size={22} color={theme.primary} />}
           label="Search"
