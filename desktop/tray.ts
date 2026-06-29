@@ -22,11 +22,11 @@ function setupTray(mainWindow: BrowserWindow): Tray {
   }
 
   tray = new Tray(trayIcon);
-  tray.setToolTip("WorkPulse");
+  tray.setToolTip("Loops");
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: "Show WorkPulse",
+      label: "Show Loops",
       click: () => {
         mainWindow.show();
         mainWindow.focus();

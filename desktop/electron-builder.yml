@@ -1,6 +1,6 @@
 appId: com.workpulse.desktop
-productName: WorkPulse
-copyright: Copyright © 2026 WorkPulse
+productName: Loops
+copyright: Copyright © 2026 Loops
 
 directories:
   output: dist
@@ -37,7 +37,7 @@ win:
       arch:
         - x64
   icon: icons/icon.ico
-  publisherName: WorkPulse
+  publisherName: Loops
   # TODO: Enable once code signing certificate is set up.
   # Without code signing, Windows SmartScreen will warn users on install.
   verifyUpdateCodeSignature: false
@@ -47,7 +47,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: WorkPulse
+  shortcutName: Loops
   artifactName: "${productName}-Setup-${version}.${ext}"
 
 mac:

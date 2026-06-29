@@ -1509,7 +1509,7 @@ class NotifeeService {
     try {
       await notifee.displayNotification({
         id: MESSAGE_GROUP_SUMMARY_ID,
-        title: "WorkPulse",
+        title: "Loops",
         body: summaryText,
         ...(singleConversationId
           ? {
@@ -1534,7 +1534,7 @@ class NotifeeService {
           style: {
             type: this.AndroidStyle.INBOX ?? 2,
             lines,
-            title: "WorkPulse",
+            title: "Loops",
             summary: summaryText,
           },
         },

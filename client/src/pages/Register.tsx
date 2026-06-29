@@ -83,9 +83,9 @@ export default function Register() {
   return (
     <div className={s["auth-container"]}>
       <div className={s["auth-card"]}>
-        <img src="/icon-192.png" alt="WorkPulse" className={s["auth-logo"]} />
+        <img src="/icon-192.png" alt="Loops" className={s["auth-logo"]} />
         <h2>Create Account</h2>
-        <p>Register to get started with {branding?.org_name || "WorkPulse"}</p>
+        <p>Register to get started with {branding?.org_name || "Loops"}</p>
         {error && <div className="error-msg">{error}</div>}
         <form onSubmit={handleSubmit}>
           <div className="form-group">

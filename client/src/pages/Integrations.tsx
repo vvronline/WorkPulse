@@ -115,7 +115,7 @@ export default function Integrations() {
             <header style={styles.header}>
                 <h1 style={styles.title}>Integrations</h1>
                 <p style={styles.subtitle}>
-                    Connect {branding?.org_name || "WorkPulse"} with the tools your team already uses. Pick a provider
+                    Connect {branding?.org_name || "Loops"} with the tools your team already uses. Pick a provider
                     below to configure it. New integrations are added regularly — items marked
                     <em> Coming soon</em> are on the roadmap.
                 </p>

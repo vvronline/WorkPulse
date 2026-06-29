@@ -85,7 +85,7 @@ export default function TopBar() {
             resizeMode="cover"
           />
         </View>
-        <Text style={styles.title}>WorkPulse</Text>
+        <Text style={styles.title}>Loops</Text>
       </View>
 
       {/* Right: notifications + profile */}

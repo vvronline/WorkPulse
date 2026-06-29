@@ -138,7 +138,7 @@ export default function UpdateChecker() {
 
           {isUpToDate ? (
             <Text style={styles.body}>
-              WorkPulse {info.currentVersion} is the latest version.
+              Loops {info.currentVersion} is the latest version.
             </Text>
           ) : (
             <>

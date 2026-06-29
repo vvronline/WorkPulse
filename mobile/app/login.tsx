@@ -123,8 +123,8 @@ export default function LoginScreen() {
             />
           </View>
 
-          <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in to WorkPulse</Text>
+          <Text style={styles.title}>Get into the Loops</Text>
+          <Text style={styles.subtitle}>Sign in to Loops</Text>
 
           {error ? (
             <View style={styles.errorBox}>

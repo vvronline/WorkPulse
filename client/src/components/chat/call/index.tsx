@@ -682,7 +682,7 @@ export default function CallOverlay({
                 height: 220,
             });
             docPipWindowRef.current = pipWin;
-            pipWin.document.title = "WorkPulse Call";
+            pipWin.document.title = "Loops Call";
             pipWin.document.body.style.margin = "0";
             pipWin.document.body.style.background = "#111827";
             pipWin.document.body.style.color = "#f9fafb";

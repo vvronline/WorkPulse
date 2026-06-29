@@ -210,7 +210,7 @@ export default function OfficeLocationSettings({ org, onUpdate }: OfficeLocation
             if (!info?.ok || !info.bssid) {
                 setWifiAddErr(
                     info?.error === "unavailable"
-                        ? "Wi-Fi BSSID lookup is only available in the WorkPulse desktop app. Open the desktop app from the office network to register an AP."
+                        ? "Wi-Fi BSSID lookup is only available in the Loops desktop app. Open the desktop app from the office network to register an AP."
                         : info?.error === "wifi_disconnected"
                           ? "You're not connected to any Wi-Fi network. Connect to the office Wi-Fi first."
                           : "Could not read the current Wi-Fi BSSID. Make sure Windows Location Services is on."

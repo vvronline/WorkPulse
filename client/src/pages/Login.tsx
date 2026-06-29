@@ -154,13 +154,13 @@ export default function Login() {
           <div className={s["auth-icon"]}>
             <img
               src="/icon-192.png"
-              alt="WorkPulse"
+              alt="Loops"
               className={s["auth-icon-img"]}
             />
           </div>
         )}
         <h2>Welcome Back</h2>
-        <p>Sign in to {branding?.org_name || "WorkPulse"}</p>
+        <p>Sign in to {branding?.org_name || "Loops"}</p>
         {(location.state as any)?.message && (
           <div className="success-msg">{(location.state as any).message}</div>
         )}

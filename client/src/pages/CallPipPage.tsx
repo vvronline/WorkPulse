@@ -116,8 +116,8 @@ export default function CallPipPage() {
                     type="button"
                     style={styles.btn}
                     onClick={() => sendAction("restore")}
-                    title="Return to WorkPulse"
-                    aria-label="Return to WorkPulse"
+                    title="Return to Loops"
+                    aria-label="Return to Loops"
                 >
                     <RestoreIcon />
                 </button>

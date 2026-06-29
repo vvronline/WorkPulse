@@ -284,7 +284,7 @@ export default function RecentMediaStrip({
     return (
       <View style={[styles.promptWrap, { minHeight: height }]}>
         <Text style={styles.promptText}>
-          WorkPulse needs permission to show your photos and videos
+          Loops needs permission to show your photos and videos
         </Text>
         <Pressable
           style={styles.promptButton}
