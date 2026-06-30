@@ -12,7 +12,6 @@ import {
   View,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
-import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import {
   Archive,
@@ -71,6 +70,7 @@ import {
 } from "../../src/storage/chatCache";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import GroupCompositeAvatar from "../../src/components/GroupCompositeAvatar";
+import ChatTabSwitcher from "../../src/components/chat/ChatTabSwitcher";
 import ConfirmDialog from "../../src/components/ConfirmDialog";
 import {
   useKeyboardInset,
@@ -498,6 +498,7 @@ export default function ChatScreen() {
   const others = regular.filter((c) => !c.is_pinned && !c.is_favourite);
 
   const totalUnread = items.reduce((s, c) => s + (c.unread_count || 0), 0);
+  const meetingUnread = meetingConvs.reduce((s, c) => s + (c.unread_count || 0), 0);
 
   // ── Signal-style multi-select helpers ──
   const exitSelection = useCallback(() => {
@@ -678,7 +679,7 @@ export default function ChatScreen() {
         style={({ pressed }) => [
           styles.row,
           selected && styles.rowSelected,
-          pressed && { opacity: 0.6 },
+          pressed && styles.rowPressed,
         ]}
         // In selection mode a tap toggles the row; otherwise it opens the chat.
         onPress={() =>
@@ -917,58 +918,14 @@ export default function ChatScreen() {
           </View>
         ) : (
           <>
-            {/* Org-accent tinted, squircle (rounded-corner) container that
-                wraps the three tab segments as a single grouped control. */}
-            <View style={styles.segmentGroup}>
-              <TabButton
-                active={tab === "msgs"}
-                label="Chat"
-                icon={
-                  <MessageSquare
-                    size={14}
-                    color={
-                      tab === "msgs" ? theme.onAccent : theme.textSecondary
-                    }
-                  />
-                }
-                badge={totalUnread}
-                onPress={() => setTab("msgs")}
-              />
-              {meetingsEnabled ? (
-                <TabButton
-                  active={tab === "meetings"}
-                  label="Meet"
-                  icon={
-                    <Video
-                      size={14}
-                      color={
-                        tab === "meetings"
-                          ? theme.onAccent
-                          : theme.textSecondary
-                      }
-                    />
-                  }
-                  badge={meetingConvs.reduce(
-                    (s, c) => s + (c.unread_count || 0),
-                    0,
-                  )}
-                  onPress={() => setTab("meetings")}
-                />
-              ) : null}
-              <TabButton
-                active={tab === "calls"}
-                label="Calls"
-                icon={
-                  <Phone
-                    size={14}
-                    color={
-                      tab === "calls" ? theme.onAccent : theme.textSecondary
-                    }
-                  />
-                }
-                onPress={() => setTab("calls")}
-              />
-            </View>
+            <ChatTabSwitcher
+              activeTab={tab}
+              meetingsEnabled={meetingsEnabled}
+              totalUnread={totalUnread}
+              meetingUnread={meetingUnread}
+              style={styles.segmentGroup}
+              onChange={setTab}
+            />
             <Pressable
               style={styles.headerIcon}
               onPress={() => setShowSearch(true)}
@@ -998,7 +955,7 @@ export default function ChatScreen() {
             results.map((u) => (
               <Pressable
                 key={u.id}
-                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+                style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
                 onPress={() => startWithUser(u)}
               >
                 <ChatAvatar
@@ -1054,7 +1011,7 @@ export default function ChatScreen() {
                 style={({ pressed }) => [
                   styles.row,
                   selected && styles.rowSelected,
-                  pressed && { opacity: 0.6 },
+                  pressed && styles.rowPressed,
                 ]}
                 onPress={() =>
                   selectionMode ? toggleSelected(item.id) : callBack(item)
@@ -1119,7 +1076,9 @@ export default function ChatScreen() {
           }}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Phone size={40} color={theme.textMuted} />
+              <View style={styles.emptyIconWrap}>
+                <Phone size={36} color={theme.textSecondary} />
+              </View>
               <Text style={styles.emptyText}>No calls yet</Text>
             </View>
           }
@@ -1138,12 +1097,16 @@ export default function ChatScreen() {
         >
           {tab === "meetings" ? (
             <View style={styles.empty}>
-              <Video size={40} color={theme.textMuted} />
+              <View style={styles.emptyIconWrap}>
+                <Video size={36} color={theme.textSecondary} />
+              </View>
               <Text style={styles.emptyText}>No meeting chats yet</Text>
             </View>
           ) : (
             <View style={styles.empty}>
-              <MessagesSquare size={40} color={theme.textMuted} />
+              <View style={styles.emptyIconWrap}>
+                <MessagesSquare size={36} color={theme.textSecondary} />
+              </View>
               <Text style={styles.emptyText}>No conversations yet</Text>
             </View>
           )}
@@ -1315,65 +1278,6 @@ export default function ChatScreen() {
   );
 }
 
-function TabButton({
-  active,
-  label,
-  icon,
-  badge,
-  onPress,
-}: {
-  active: boolean;
-  label: string;
-  icon: React.ReactNode;
-  badge?: number;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-  const styles = useMemo(() => makeStyles(theme), [theme]);
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.tabBtn,
-        active && styles.tabBtnActive,
-        pressed && { opacity: 0.7 },
-      ]}
-      onPress={onPress}
-    >
-      {/* iOS "liquid glass" sheen — a soft top-down highlight layered over the
-          translucent fill gives the frosted, glossy depth without a native
-          blur dependency. The diagonal gradient brightens the top-left edge
-          and fades to transparent, mimicking light refracting through glass. */}
-      <LinearGradient
-        colors={
-          active
-            ? ["rgba(255,255,255,0.28)", "rgba(255,255,255,0.04)", "rgba(255,255,255,0)"]
-            : ["rgba(255,255,255,0.10)", "rgba(255,255,255,0.02)", "rgba(255,255,255,0)"]
-        }
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0.6, y: 1 }}
-        style={StyleSheet.absoluteFill}
-        pointerEvents="none"
-      />
-      {icon}
-      <Text
-        style={[styles.tabText, active && styles.tabTextActive]}
-        numberOfLines={1}
-      >
-        {label}
-      </Text>
-      {/* Badge is absolutely positioned so it NEVER shifts/crowds the centered
-          icon+label when a new notification bumps the unread count. Rendering it
-          inline (the old behaviour) pushed the row wider than the flex tab and
-          broke the layout the moment a badge appeared. */}
-      {badge && badge > 0 ? (
-        <View style={styles.tabBadge}>
-          <Text style={styles.tabBadgeText}>{badge > 99 ? "99+" : badge}</Text>
-        </View>
-      ) : null}
-    </Pressable>
-  );
-}
-
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.bg },
@@ -1383,9 +1287,9 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "space-between",
       paddingHorizontal: 16,
-      paddingTop: 12,
-      paddingBottom: 8,
-      minHeight: 52,
+      paddingTop: 14,
+      paddingBottom: 10,
+      minHeight: 60,
     },
     heading: {
       fontSize: 24,
@@ -1396,9 +1300,12 @@ const makeStyles = (theme: Theme) =>
     headerIcon: {
       width: 40,
       height: 40,
-      borderRadius: 20,
+      borderRadius: 14,
       alignItems: "center",
       justifyContent: "center",
+      backgroundColor: theme.chatHeaderSurface,
+      borderWidth: 1,
+      borderColor: theme.chatSegmentBorder,
     },
     searchBar: {
       flex: 1,
@@ -1408,8 +1315,8 @@ const makeStyles = (theme: Theme) =>
       backgroundColor: theme.inputBg,
       borderWidth: 1,
       borderColor: theme.inputBorder,
-      borderRadius: theme.radiusFull,
-      paddingHorizontal: 14,
+      borderRadius: 14,
+      paddingHorizontal: 12,
       paddingVertical: 8,
     },
     searchInput: {
@@ -1418,89 +1325,27 @@ const makeStyles = (theme: Theme) =>
       fontSize: 15,
       paddingVertical: 0,
     },
-    // Org-accent tinted, squircle (rounded-corner) container that groups the
-    // Chat/Meet/Calls segments into one control (mirrors the web client's
-    // segmented chat header). `flex: 1` lets it fill the row beside the search
-    // icon, with `marginRight` separating the two.
     segmentGroup: {
       flex: 1,
-      flexDirection: "row",
-      gap: 4,
       marginRight: 10,
-      padding: 4,
-      borderRadius: theme.radiusLg,
-      backgroundColor: theme.primaryGlow,
-      borderWidth: 1,
-      borderColor: theme.glassBorder,
     },
-    tabBtn: {
-      flex: 1,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: 4,
-      paddingVertical: 8,
-      // Horizontal padding keeps the icon+label off the edges; the absolutely
-      // positioned badge (below) overlaps this padding instead of widening the row.
-      paddingHorizontal: 6,
-      // Rounded-corner rectangle nested inside the tinted group — a slightly
-      // tighter radius than the container for the inset segmented look.
-      borderRadius: theme.radius,
-      // Inactive segments stay transparent so the org-tinted container shows
-      // through; only the active segment gets a fill.
-      backgroundColor: "transparent",
-      // Anchor for the absolutely positioned unread badge AND the layered
-      // liquid-glass gradient sheen (StyleSheet.absoluteFill).
-      position: "relative",
-      overflow: "hidden",
-    },
-    tabBtnActive: {
-      // Active segment: a solid accent fill that pops against the tinted
-      // container, giving a clean selected-segment look, with a soft glow.
-      backgroundColor: theme.primary,
-      shadowColor: theme.primary,
-      shadowOffset: { width: 0, height: 0 },
-      shadowOpacity: 0.5,
-      shadowRadius: 8,
-      elevation: 3,
-    },
-    // `flexShrink` lets the label give way gracefully (with numberOfLines={1}
-    // ellipsis) instead of forcing the row wider than its flex slot.
-    tabText: {
-      fontSize: 12,
-      color: theme.textSecondary,
-      fontWeight: "600",
-      flexShrink: 1,
-    },
-    tabTextActive: { color: theme.onAccent },
-    tabBadge: {
-      // Float the badge in the pill's top-right corner so an incoming notification
-      // never shifts or crowds the centered icon+label (the padding-break bug).
-      position: "absolute",
-      top: 2,
-      right: 4,
-      minWidth: 16,
-      height: 16,
-      borderRadius: 8,
-      backgroundColor: theme.danger,
-      alignItems: "center",
-      justifyContent: "center",
-      paddingHorizontal: 4,
-      borderWidth: 1,
-      borderColor: theme.bg,
-    },
-    tabBadgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
     fab: {
       position: "absolute",
       right: 20,
       bottom: 24,
       width: 56,
       height: 56,
-      borderRadius: 28,
+      borderRadius: 20,
       backgroundColor: theme.primary,
       alignItems: "center",
       justifyContent: "center",
-      elevation: 4,
+      borderWidth: 1,
+      borderColor: theme.chatSegmentActiveBorder,
+      shadowColor: theme.primary,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.3,
+      shadowRadius: 10,
+      elevation: 6,
     },
     list: { paddingHorizontal: 16, paddingBottom: 90, gap: 2 },
     section: {
@@ -1522,7 +1367,12 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       gap: 12,
       paddingVertical: 10,
-      paddingHorizontal: 4,
+      paddingHorizontal: 10,
+      marginBottom: 6,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: theme.chatRowBorder,
+      backgroundColor: theme.chatRowSurface,
     },
     // Icon avatar for meeting / group rows (Signal-style group glyph).
     iconAvatar: {
@@ -1533,8 +1383,13 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "center",
     },
+    rowPressed: { backgroundColor: theme.chatRowPressed },
     // Selected-row tint + the leading checkbox column in selection mode.
-    rowSelected: { backgroundColor: theme.primaryGlow, borderRadius: theme.radius },
+    rowSelected: {
+      backgroundColor: theme.chatRowSelected,
+      borderColor: theme.chatRowSelectedBorder,
+      borderRadius: 14,
+    },
     selectMark: { width: 26, alignItems: "center", justifyContent: "center" },
     // Signal-style selection action bar (replaces the header in selection mode).
     selectionBar: {
@@ -1580,16 +1435,28 @@ const makeStyles = (theme: Theme) =>
       minWidth: 20,
       height: 20,
       borderRadius: 10,
-      backgroundColor: theme.primary,
+      backgroundColor: theme.chatTabBadgeBg,
       alignItems: "center",
       justifyContent: "center",
       paddingHorizontal: 6,
+      borderWidth: 1,
+      borderColor: theme.chatTabBadgeBorder,
     },
     unreadText: { color: "#fff", fontSize: 11, fontWeight: "700" },
     callMeta: { flexDirection: "row", alignItems: "center", gap: 5 },
     callMetaText: { fontSize: 13, color: theme.textSecondary },
     callRight: { alignItems: "flex-end", gap: 4 },
-    empty: { alignItems: "center", gap: 10, paddingTop: 80 },
+    empty: { alignItems: "center", gap: 12, paddingTop: 90 },
+    emptyIconWrap: {
+      width: 74,
+      height: 74,
+      borderRadius: 22,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.chatEmptySurface,
+      borderWidth: 1,
+      borderColor: theme.chatRowBorder,
+    },
     emptyText: { color: theme.textMuted, fontSize: 14 },
     hint: { color: theme.textMuted, fontSize: 13, paddingVertical: 16 },
     // Signal-style bottom action sheet.
