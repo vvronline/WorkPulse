@@ -21,6 +21,7 @@ import RealtimeSoundListener from "../src/realtime/RealtimeSoundListener";
 import PushNotificationListener from "../src/realtime/PushNotificationListener";
 import PushNotificationInitializer from "../src/realtime/PushNotificationInitializer";
 import PendingCallNavigator from "../src/realtime/PendingCallNavigator";
+import PendingChatNavigator from "../src/realtime/PendingChatNavigator";
 import OngoingCallBanner from "../src/realtime/OngoingCallBanner";
 import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 import { nativeCallService } from "../src/services/nativeCallService";
@@ -315,6 +316,7 @@ export default function RootLayout() {
               <RealtimeSoundListener />
               <PushNotificationListener />
               <PendingCallNavigator />
+              <PendingChatNavigator />
               <OngoingCallBanner />
               <ImpersonationBanner />
               <UpdateChecker />

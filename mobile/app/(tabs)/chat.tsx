@@ -348,27 +348,34 @@ export default function ChatScreen() {
     const target = String(params.openConversationId || "").trim();
     if (!target || openedFromLaunchParamRef.current === target) return;
 
+    // Latch IMMEDIATELY so this only ever fires once per launch param — and so a
+    // re-render caused by `items` hydrating can't re-trigger it (this effect no
+    // longer depends on `items`, so it runs exactly when the param arrives).
     openedFromLaunchParamRef.current = target;
     setTab("msgs");
+    // Clear the param so a later tab re-focus / re-render never re-opens it.
     router.setParams({ openConversationId: undefined });
 
+    // Resolve full identity (name/avatar/peer) from whatever is available
+    // synchronously — the live list OR the on-device cache. This is best-effort
+    // ONLY: we must NEVER block opening the thread on the list being hydrated,
+    // which was the root cause of "tapping a message lands on the chat list".
     const conv =
       items.find((c) => String(c.id) === target) ||
-      // The in-memory `items` may not have hydrated yet on a warm launch — fall
-      // back to the synchronous on-device cache so we can STILL pass the full
-      // identity (name/avatar/peer) instead of the bare-id route below.
       (getCachedConversations() || []).find((c) => String(c.id) === target);
     if (conv) {
       openConv(conv);
       return;
     }
 
-    // Cold notification launches may arrive before the conversation list has
-    // rehydrated AND before the cache is warm. Open by id immediately; the
-    // thread resolves name/avatar from cache/network just like Signal's
-    // recipient-id based conversation intents.
+    // No cached identity yet (cold notification launch before the list/cache is
+    // warm) → open by id IMMEDIATELY. The thread screen resolves name/avatar
+    // from cache/network on its own, exactly like Signal's recipient-id based
+    // ConversationIntents. The key fix: this push happens unconditionally,
+    // independent of `items`, so the correct 1:1 thread always opens.
     router.push({ pathname: "/chat/[id]", params: { id: target } });
-  }, [items, params.openConversationId, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.openConversationId, router]);
 
   // Call back from a history entry (mirrors the web Calls tab, where rows are
   // actionable). Group calls aren't supported by the 1:1 native call screen,

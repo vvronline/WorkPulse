@@ -399,6 +399,16 @@ class NotifeeService {
   private resolved = false;
   private channelsEnsured = false;
   private fsiPermissionChecked = false;
+  // One-shot guard for captureInitialCallRoute. Notifee's
+  // getInitialNotification() returns the launching notification ONLY ONCE — a
+  // second read returns null. captureInitialCallRoute is called from MULTIPLE
+  // places on cold start (app/index.tsx AND PendingCallNavigator). Without this
+  // guard they RACE: whoever reads first gets the route, the loser sees null and
+  // the app falls through to the dashboard (the "tap opens dashboard, not the
+  // chat" bug). This latch makes the FIRST caller the sole reader; every later
+  // caller is a cheap no-op, and all consumers then read the stashed pending
+  // call/chat routes from their stores instead.
+  private initialRouteCaptured = false;
 
   private resolve(): NotifeeModule | null {
     if (this.resolved) return this.notifee;
@@ -2029,9 +2039,17 @@ class NotifeeService {
     }
 
     // ── Body PRESS → open the exact conversation ─────────────────────────
-    // Persist the pending-chat route FIRST so a COLD start (killed app) can
-    // route straight to /chat/[id] even though the deep link below is lost
-    // before expo-router mounts. app/index.tsx consumes it on boot.
+    // UNIFIED ROUTING (Signal-parity, fixes "tap opens dashboard / common chat
+    // list, not the 1:1 thread"): we DO NOT fire a `Linking.openURL` deep link
+    // anymore — that was unreliable (expo-router could miss the scheme/route and
+    // fall through to the dashboard, and it raced the cold-start path). Instead
+    // EVERY tap state writes the target conversation to the pendingChat store:
+    //   • persist  → survives full process death (KILLED cold start); consumed
+    //                by app/index.tsx on boot.
+    //   • setPendingChat → in-memory + notifies subscribers, so the mounted
+    //                PendingChatNavigator routes IMMEDIATELY for a warm /
+    //                background-but-alive tap.
+    // One mechanism, three states, always the correct thread.
     try {
       await persistPendingChat({ conversationId: String(conversationId) });
     } catch {
@@ -2055,13 +2073,6 @@ class NotifeeService {
       await this.refreshGroupSummary(map);
     }
 
-    try {
-      // Deep link straight to the 1:1/group thread. Works for a warm or
-      // background-but-alive app; the persisted route above covers cold start.
-      await Linking.openURL(Linking.createURL(`chat/${conversationId}`));
-    } catch (err) {
-      console.warn("[NotifeeService] Failed to route to chat:", err);
-    }
     return true;
   }
 
@@ -2080,6 +2091,13 @@ class NotifeeService {
    * only returns the launching notification ONCE — a second read returns null.
    */
   async captureInitialCallRoute(): Promise<void> {
+    // ONE-SHOT GUARD: only the first caller actually reads the launching
+    // notification / native action; later callers (the second of
+    // index.tsx + PendingCallNavigator) no-op so they can't race for the
+    // single-use getInitialNotification() and lose (→ dashboard fallthrough).
+    if (this.initialRouteCaptured) return;
+    this.initialRouteCaptured = true;
+
     // FIRST: the native CallStyle status-bar notification path. When the user
     // taps Answer/Decline on the foreground-service (CallRingService) call
     // notification, CallActionActivity records the choice natively

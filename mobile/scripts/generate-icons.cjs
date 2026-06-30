@@ -155,11 +155,26 @@ async function generate() {
   }
   const NOTIF_SIZE = 96; // xxxhdpi 24dp; Android downscales for lower densities
   const NOTIF_ART = Math.round(NOTIF_SIZE * 0.8); // padding inside the icon bounds
+  // SIGNAL-STYLE BADGE: Android tints the small icon from its ALPHA channel only,
+  // compositing it as a SMALL monochrome glyph in the corner of the big avatar
+  // largeIcon. For that to look right (not a featureless tinted square) the
+  // source MUST contribute real transparency. If the brand artwork is an OPAQUE
+  // square the `dest-in` mask below would yield a solid white square. We THRESHOLD
+  // the artwork to a hard alpha mask first (greyscale → normalise → threshold)
+  // so only the logo's bright shape survives as opaque and the background drops
+  // to transparent — producing a clean white-on-transparent silhouette glyph.
   const notifArtBuffer = await sharp(svg)
     .resize(NOTIF_ART, NOTIF_ART, {
       fit: "contain",
       background: { r: 0, g: 0, b: 0, alpha: 0 },
     })
+    .greyscale()
+    .normalise()
+    // Hard alpha threshold: pixels brighter than ~50% become the silhouette,
+    // everything else becomes transparent. This guarantees a crisp glyph even
+    // from an opaque source square (the root cause of "the logo shows the same
+    // size as the avatar instead of a small corner badge").
+    .threshold(128)
     .png()
     .toBuffer();
   // Paint solid white, then mask by the logo's alpha via `dest-in`

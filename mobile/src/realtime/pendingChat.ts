@@ -29,9 +29,39 @@ export type PendingChatRoute = {
 
 let pending: PendingChatRoute | null = null;
 
+// Listeners notified whenever a pending chat route is SET. This lets a mounted
+// navigator (PendingChatNavigator) react IMMEDIATELY to a warm/background-alive
+// notification tap, instead of only checking once on mount. Mirrors the way the
+// call flow reacts, but via an explicit subscription so we never rely on a
+// flaky `Linking.openURL` deep link for chat taps (the root cause of "tapping a
+// message opens the dashboard / the common chat list instead of the thread").
+type PendingChatListener = (route: PendingChatRoute) => void;
+const listeners = new Set<PendingChatListener>();
+
+/**
+ * Subscribe to pending-chat SET events. Returns an unsubscribe function. The
+ * listener fires every time setPendingChat is called with a route (warm taps).
+ */
+export function subscribePendingChat(listener: PendingChatListener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 /** Record a chat route to be navigated to once the app UI is ready. */
 export function setPendingChat(route: PendingChatRoute): void {
   pending = route;
+  // Notify any mounted navigator so it can route immediately (warm/background-
+  // alive). Best-effort: a throwing listener must never break the caller (which
+  // may be the headless Notifee task).
+  for (const l of listeners) {
+    try {
+      l(route);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /** Peek at the pending chat route without clearing it. */
