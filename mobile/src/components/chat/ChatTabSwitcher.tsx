@@ -192,6 +192,9 @@ export default function ChatTabSwitcher({
           )}
         </Pressable>
       </View>
+      {/* Outer node: JS-driven height/margin collapse only. A single Animated
+          node can't mix native + JS drivers, so the native-driven opacity /
+          translateY live on the INNER node below. */}
       <Animated.View
         pointerEvents={searchOpen ? "auto" : "none"}
         style={[
@@ -199,31 +202,37 @@ export default function ChatTabSwitcher({
           {
             height: searchPanelHeight,
             marginTop: searchPanelMarginTop,
-            opacity: progress,
-            transform: [{ translateY: searchTranslateY }],
           },
         ]}
       >
-        <View style={styles.searchField}>
-          <Search size={15} color={theme.textMuted} />
-          <TextInput
-            ref={searchInputRef}
-            value={searchQuery}
-            onChangeText={onSearchQueryChange}
-            placeholder="Search chats"
-            placeholderTextColor={theme.textMuted}
-            style={styles.searchInput}
-            autoCapitalize="none"
-            returnKeyType="search"
-          />
-          {searchQuery.trim() ? (
-            <Pressable onPress={() => onSearchQueryChange("")} hitSlop={8}>
-              <X size={16} color={theme.textSecondary} />
-            </Pressable>
-          ) : (
-            <View style={styles.searchClearSpacer} />
-          )}
-        </View>
+        {/* Inner node: native-driven fade + slide. */}
+        <Animated.View
+          style={{
+            opacity: progress,
+            transform: [{ translateY: searchTranslateY }],
+          }}
+        >
+          <View style={styles.searchField}>
+            <Search size={15} color={theme.textMuted} />
+            <TextInput
+              ref={searchInputRef}
+              value={searchQuery}
+              onChangeText={onSearchQueryChange}
+              placeholder="Search chats"
+              placeholderTextColor={theme.textMuted}
+              style={styles.searchInput}
+              autoCapitalize="none"
+              returnKeyType="search"
+            />
+            {searchQuery.trim() ? (
+              <Pressable onPress={() => onSearchQueryChange("")} hitSlop={8}>
+                <X size={16} color={theme.textSecondary} />
+              </Pressable>
+            ) : (
+              <View style={styles.searchClearSpacer} />
+            )}
+          </View>
+        </Animated.View>
       </Animated.View>
     </View>
   );
