@@ -105,6 +105,39 @@ function httpGetJson<T>(url: string): Promise<T> {
   });
 }
 
+/** GET a URL and return body text. Rejects on non-2xx / timeout. */
+function httpGetText(url: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const https = require("https");
+    const req = https.get(
+      url,
+      {
+        headers: {
+          "User-Agent": "WorkPulse-Desktop",
+          Accept: "text/html,application/xhtml+xml",
+          "Cache-Control": "no-cache",
+        },
+      },
+      (res: import("http").IncomingMessage) => {
+        let body = "";
+        res.on("data", (c: Buffer) => (body += c));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(body);
+          } else {
+            reject(new Error(`HTTP ${res.statusCode}`));
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.setTimeout(10000, () => {
+      req.destroy();
+      reject(new Error("timeout"));
+    });
+  });
+}
+
 /** Compare two semver strings (a.b.c). Returns 1 if a>b, -1 if a<b, 0 equal. */
 function compareSemver(a: string, b: string): number {
   const pa = a
@@ -180,6 +213,36 @@ async function resolveLatestDesktopTagFromGitHub(): Promise<string | null> {
 }
 
 /**
+ * Fallback resolver for environments where api.github.com is blocked/intercepted
+ * but github.com HTML pages are still reachable.
+ */
+async function resolveLatestDesktopTagFromGitHubHtml(): Promise<string | null> {
+  try {
+    const html = await httpGetText(
+      `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`,
+    );
+    // First desktop-tag occurrence on the releases page usually corresponds to
+    // the newest published desktop release.
+    const match = html.match(
+      new RegExp(
+        `/` +
+          `${GITHUB_OWNER}` +
+          `/` +
+          `${GITHUB_REPO}` +
+          `/releases/tag/(v\\d+\\.\\d+\\.\\d+)`,
+      ),
+    );
+    return match?.[1] || null;
+  } catch (err) {
+    console.error(
+      "[updater] Failed to resolve latest desktop tag from GitHub HTML:",
+      (err as Error)?.message,
+    );
+    return null;
+  }
+}
+
+/**
  * Work out which release feed electron-updater should read from. Prefers R2
  * (when OTA_BASE_URL is configured) and falls back to GitHub Releases.
  */
@@ -195,6 +258,13 @@ async function resolveDesktopFeed(): Promise<DesktopFeed | null> {
       url: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${ghTag}/`,
     };
   }
+  const ghHtmlTag = await resolveLatestDesktopTagFromGitHubHtml();
+  if (ghHtmlTag) {
+    return {
+      tag: ghHtmlTag,
+      url: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${ghHtmlTag}/`,
+    };
+  }
   return null;
 }
 
@@ -208,9 +278,7 @@ async function resolveDesktopFeed(): Promise<DesktopFeed | null> {
 async function pointFeedAtLatestDesktopRelease(): Promise<void> {
   const feed = await resolveDesktopFeed();
   if (!feed) {
-    // Could not resolve — leave electron-updater on its configured provider.
-    // We'll still surface a clean error if the check fails.
-    return;
+    throw new Error("Unable to resolve desktop release feed");
   }
   autoUpdater.setFeedURL({
     provider: "generic",
