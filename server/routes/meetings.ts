@@ -8,6 +8,7 @@ const { notifyByEmail } = require("../utils/mailer");
 const redis = require("../redis");
 const { requireTenant, requireFeature } = require("../middleware/tenant");
 const { provisionBroadcast } = require("../utils/hlsBroadcast");
+const { pushNotifications } = require("../services/pushNotifications");
 // Phase 3 — Permission Presets. Single source of truth for
 // "can this user perform this action on this meeting?"
 const meetingPerms = require("../utils/meetingPermissions");
@@ -300,7 +301,15 @@ router.get("/:code", async (req: Request, res: Response) => {
 // ─── Create meeting ─────────────────────────────────────────────────────────
 router.post("/", async (req: Request, res: Response) => {
     try {
-        const { title, description, required_participant_ids, optional_participant_ids, participant_ids, calendar_event_id, settings, start_time, end_time, conversation_id } = req.body;
+        const { title, description, required_participant_ids, optional_participant_ids, participant_ids, calendar_event_id, settings, start_time, end_time, conversation_id, huddle } = req.body;
+        // A "huddle" is an instant group CALL bound to an existing group
+        // conversation. It reuses the proven meeting mesh as the transport but
+        // is NOT a user-visible "Meeting": no "Meeting: …" conversation rename,
+        // no meeting-created card, no calendar artifact, and — crucially — it
+        // RINGS every group member with `call_incoming` (Signal-style group
+        // call) instead of posting a passive invite. A huddle REQUIRES an
+        // existing group conversation_id.
+        const isHuddle = huddle === true && conversation_id != null && conversation_id !== "";
         if (!title || !title.trim()) return res.status(400).json({ error: "title is required" });
         if (title.trim().length > 200) return res.status(400).json({ error: "Title too long (max 200 chars)" });
         if (!req.userOrgId) return res.status(403).json({ error: "You must belong to an organization to create meetings" });
@@ -389,9 +398,9 @@ router.post("/", async (req: Request, res: Response) => {
             }
             const meetingSettings = { muteOnJoin: false, allowScreenShare: true, ...incomingSettings };
             const meeting = (await client.query(
-                `INSERT INTO meetings (org_id, title, description, meeting_code, created_by, conversation_id, calendar_event_id, settings)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-                [req.userOrgId, title.trim(), description || null, code, req.userId, conv.id, calendar_event_id || null, JSON.stringify(meetingSettings)]
+                `INSERT INTO meetings (org_id, title, description, meeting_code, created_by, conversation_id, calendar_event_id, settings, is_huddle)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+                [req.userOrgId, title.trim(), description || null, code, req.userId, conv.id, calendar_event_id || null, JSON.stringify(meetingSettings), isHuddle]
             )).rows[0];
 
             // 4. Add organizer to meeting_participants
@@ -435,6 +444,56 @@ router.post("/", async (req: Request, res: Response) => {
 
         // Get organizer info
         const organizer = (await req.db!.query("SELECT full_name, avatar FROM users WHERE id = $1", [req.userId])).rows[0];
+
+        if (isHuddle) {
+            // ── Instant group CALL (huddle) ────────────────────────────────
+            // Decoupled from the user-visible "Meeting" concept: no
+            // "meeting_created" card and no calendar artifact. Instead we RING
+            // every group member with `call_incoming` (Signal-style group call)
+            // so they get the native incoming-call UI and join the mesh by
+            // navigating to the meeting room. The huddle reuses the proven
+            // meeting `meeting_*` mesh transport under the hood, but the group
+            // stays a pure chat group.
+            const callType = (settings && settings.callType === "video") ? "video" : "voice";
+            const groupName = meeting.title;
+            for (const uid of effectiveInviteeIds) {
+                sendToUser(req.tenantId, uid, "call_incoming", {
+                    callId: meeting.id,
+                    conversationId,
+                    callerId: req.userId,
+                    callerName: organizer?.full_name,
+                    callerAvatar: organizer?.avatar,
+                    callType,
+                    isGroup: true,
+                    groupName,
+                    // Huddle-specific: the meeting code the callee joins to enter
+                    // the n-way mesh. Presence of `meetingCode` distinguishes a
+                    // group huddle ring from a legacy 1:1 `call_incoming`.
+                    meetingCode: code,
+                    meetingId: meeting.id,
+                    isHuddle: true,
+                });
+
+                // Native push so backgrounded / locked / killed members ring too
+                // (parity with the 1:1 call_initiate push path).
+                pushNotifications
+                    .sendCallNotification(req.db!.query, uid, req.tenantId, {
+                        callId: meeting.id,
+                        conversationId,
+                        callerId: req.userId,
+                        callerName: organizer?.full_name || "Unknown",
+                        callerAvatar: organizer?.avatar,
+                        callType,
+                        isGroup: true,
+                        groupName,
+                        meetingCode: code,
+                    })
+                    .catch((err: any) => {
+                        req.log.warn({ err: err?.message, userId: uid, meetingId: meeting.id }, "Failed to send huddle call push notification");
+                    });
+            }
+            return res.json({ ...meeting, conversation_id: conversationId });
+        }
 
         // Insert meeting card message + system message
         await insertSystemMessage(conversationId, req.userId, {

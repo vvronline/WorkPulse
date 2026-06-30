@@ -137,6 +137,7 @@ function handlePushNotification(payload: NotificationPayload, router: any): void
         callerName: data.callerName,
         callerAvatar: data.callerAvatar,
         notificationAction: data.notificationAction,
+        meetingCode: data.meetingCode || undefined,
       },
       router,
     );
@@ -183,6 +184,7 @@ function handleCallNotification(
     callerAvatar?: string;
     isGroup?: boolean;
     notificationAction?: string;
+    meetingCode?: string;
   },
   router: any,
 ): void {
@@ -194,6 +196,21 @@ function handleCallNotification(
       conversationId: callData.conversationId,
     });
     endCallNavigation();
+    return;
+  }
+
+  // Group CALL (huddle): a `meetingCode` means the callee joins the n-way
+  // meeting mesh, not the 1:1 p2p call screen. Claim navigation (so the WS path
+  // doesn't double-push) and route straight to the meeting room.
+  if (callData.meetingCode) {
+    const isAcceptHuddle = callData.notificationAction === "accept_call";
+    if (
+      !beginCallNavigation(callData.callId, callData.conversationId) &&
+      !isAcceptHuddle
+    ) {
+      return;
+    }
+    router.push(`/meeting/${callData.meetingCode}` as never);
     return;
   }
 

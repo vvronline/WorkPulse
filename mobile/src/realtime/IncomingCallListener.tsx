@@ -29,6 +29,22 @@ export default function IncomingCallListener() {
         if (ringingRef.current === d.callId) return;
         if (pathname?.startsWith("/call/")) return;
 
+        // Group CALL (huddle): a `meetingCode` means the callee joins the n-way
+        // meeting mesh, NOT the 1:1 p2p call screen. When the app is active we
+        // navigate straight to the meeting room (Signal-style "join group
+        // call"); when backgrounded the FCM→Notifee full-screen-intent owns the
+        // surface and its tap deep-links into the meeting. We ring/warm here.
+        if (d.meetingCode) {
+          if (AppState.currentState !== "active") {
+            void warmIceConfig();
+            return;
+          }
+          if (pathname?.startsWith(`/meeting/${d.meetingCode}`)) return;
+          ringingRef.current = d.callId;
+          router.push(`/meeting/${d.meetingCode}` as never);
+          return;
+        }
+
         // SIGNAL-ANDROID MODEL — the full-screen-intent CallStyle notification
         // is the SINGLE authoritative incoming-call surface whenever the app is
         // NOT visibly foregrounded. If we ALSO `router.push` the call screen

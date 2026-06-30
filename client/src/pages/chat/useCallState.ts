@@ -97,6 +97,14 @@ export default function useCallState(wsSendRef: WsSendRef) {
     // Pick up a pending accepted call from global notification
     useEffect(() => {
         if (pendingAcceptedCall) {
+            // A group CALL (huddle) carries a `meetingCode` and is handled by the
+            // meeting room (GlobalIncomingCall navigates to /meeting/<code>), NOT
+            // the 1:1 CallOverlay. Skip it here so we never spin up a p2p call
+            // for what is actually an n-way mesh join.
+            if ((pendingAcceptedCall as Record<string, unknown>).meetingCode) {
+                consumePendingCall();
+                return;
+            }
             const call = consumePendingCall() as Record<string, unknown> | null;
             if (call && !callActiveRef.current) {
                 setCallState({

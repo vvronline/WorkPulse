@@ -172,7 +172,7 @@ export default function GlobalIncomingCall() {
 
   if (!globalIncomingCall) return null;
 
-  const { callerName, callerAvatar, callType, isGroup, groupName } =
+  const { callerName, callerAvatar, callType, isGroup, groupName, meetingCode } =
     globalIncomingCall;
   const displayName = isGroup
     ? groupName || "Group Call"
@@ -181,6 +181,14 @@ export default function GlobalIncomingCall() {
   const avatarUrl = callerAvatar || null;
 
   const handleAccept = () => {
+    // Group CALL (huddle): join the n-way meeting mesh by navigating straight
+    // to the meeting room with the join code. The 1:1 path stays on /chat where
+    // the CallOverlay picks up the pending-accepted p2p call.
+    if (meetingCode) {
+      acceptGlobalCall();
+      navigate(`/meeting/${meetingCode}`);
+      return;
+    }
     acceptGlobalCall();
     navigate("/chat");
   };

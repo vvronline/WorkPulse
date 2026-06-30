@@ -2617,7 +2617,7 @@ export function useChatThread() {
 
   function startCall(type: "voice" | "video") {
     if (isGroupConv) {
-      void startGroupMeeting();
+      void startGroupCall(type);
       return;
     }
     router.push({
@@ -2633,11 +2633,18 @@ export function useChatThread() {
     });
   }
 
-  async function startGroupMeeting() {
+  // Start an instant GROUP CALL (huddle). The group stays a pure chat group:
+  // the server creates a hidden huddle (no "Meeting:" rename / no meeting card /
+  // no calendar artifact) bound to THIS conversation and RINGS every member with
+  // `call_incoming` (Signal-style group call). The initiator joins the n-way
+  // mesh by navigating to the meeting room with the returned code.
+  async function startGroupCall(type: "voice" | "video") {
     try {
       const { data } = await createMeeting({
         title: name || "Group call",
         conversation_id: convId,
+        huddle: true,
+        settings: { allowScreenShare: true, callType: type },
       });
       const code = data?.meeting_code;
       if (code) {

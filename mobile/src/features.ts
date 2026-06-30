@@ -1272,8 +1272,11 @@ export function updateCalendarEvent(
 /* ───────────────────────── Meetings ───────────────────────── */
 
 export type MeetingSettings = {
-  muteOnJoin: boolean;
-  allowScreenShare: boolean;
+  muteOnJoin?: boolean;
+  allowScreenShare?: boolean;
+  // Group CALL (huddle): the call modality so the ring on every member shows
+  // the right "Incoming Voice/Video Call" label.
+  callType?: "voice" | "video";
 };
 
 // Create an online meeting (mirrors the web `createMeeting`). Returns the new
@@ -1294,6 +1297,10 @@ export function createMeeting(data: {
   // The meeting card + invites are posted into that conversation and its
   // members become the meeting participants.
   conversation_id?: number;
+  // When true (with conversation_id), this is an instant group CALL (huddle):
+  // the group stays a pure chat group (no "Meeting:" rename / no meeting card /
+  // no calendar artifact) and every member is RUNG via `call_incoming`.
+  huddle?: boolean;
 }) {
   return api.post<{ id: number; meeting_code: string; [k: string]: unknown }>(
     "/meetings",

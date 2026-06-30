@@ -7,7 +7,12 @@ export default function useCallActions(state: ChatState) {
     const { user, wsSend, activeConv, setCallState, callSignalRef, callEndRef } =
         state;
 
-    async function startGroupMeeting() {
+    // Start an instant GROUP CALL (huddle). The group stays a pure chat group:
+    // the server creates a hidden huddle (no "Meeting:" rename / no meeting
+    // card / no calendar artifact) bound to THIS conversation and RINGS every
+    // member with `call_incoming` (Signal-style group call). The initiator joins
+    // the n-way mesh by navigating to the meeting room with the returned code.
+    async function startGroupCall(callType: string) {
         if (!activeConv) return;
         const groupName =
             (activeConv.group_name as string) ||
@@ -17,7 +22,8 @@ export default function useCallActions(state: ChatState) {
             const { data } = await createMeeting({
                 title: groupName,
                 conversation_id: activeConv.id,
-                settings: { allowScreenShare: true },
+                huddle: true,
+                settings: { allowScreenShare: true, callType },
             });
             const code = (data as { meeting_code?: string }).meeting_code;
             if (code) {
@@ -26,7 +32,7 @@ export default function useCallActions(state: ChatState) {
                 alert("Could not start the group call. Please try again.");
             }
         } catch (err) {
-            console.error("Failed to start group meeting:", err);
+            console.error("Failed to start group call:", err);
             alert("Could not start the group call. Please try again.");
         }
     }
@@ -34,7 +40,7 @@ export default function useCallActions(state: ChatState) {
     const initiateCall = (callType: string) => {
         if (!activeConv) return;
         if (activeConv.is_group) {
-            void startGroupMeeting();
+            void startGroupCall(callType);
             return;
         }
 

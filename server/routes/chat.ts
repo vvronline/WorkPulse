@@ -1100,7 +1100,11 @@ router.get("/conversations", auth, async (req: Request, res: Response) => {
                 ON cp2.conversation_id = c.id AND cp2.user_id != $1 AND c.is_group = FALSE
             LEFT JOIN users u ON u.id = cp2.user_id AND c.is_group = FALSE
             LEFT JOIN users self_u ON self_u.id = $1 AND c.is_group = FALSE AND cp2.user_id IS NULL
-            LEFT JOIN meetings mtg ON mtg.conversation_id = c.id
+            -- Only a genuine scheduled/standalone MEETING marks a conversation
+            -- as a "meeting chat". An instant group CALL (huddle) reuses the
+            -- meeting mesh as transport but the conversation must stay a pure
+            -- chat group, so huddles are excluded here (is_huddle = FALSE).
+            LEFT JOIN meetings mtg ON mtg.conversation_id = c.id AND mtg.is_huddle = FALSE
             LEFT JOIN LATERAL (
                 SELECT lm.content, lm.sender_id, lm.created_at, lm.file_url,
                        lm.file_type, lm.file_name, lm.deleted_at,

@@ -41,6 +41,12 @@ export type PendingCallRoute = {
   action?: string;
   /** "1" when the incoming call belongs to a group conversation. */
   isGroup?: string;
+  /**
+   * Group CALL (huddle) join code. When present the callee joins the n-way
+   * meeting mesh by navigating to `/meeting/<meetingCode>` instead of the 1:1
+   * p2p call screen.
+   */
+  meetingCode?: string;
 };
 
 let pending: PendingCallRoute | null = null;
@@ -86,6 +92,7 @@ export function pendingCallFromData(
     autoAnswer: action === "accept_call" || action === "answer" ? "1" : "0",
     action: action === "decline_call" || action === "decline" ? "decline" : undefined,
     isGroup: data.isGroup === "true" || data.isGroup === "1" ? "1" : "0",
+    meetingCode: data.meetingCode || undefined,
   };
 }
 

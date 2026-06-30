@@ -163,6 +163,9 @@ class PushNotificationService {
             callType: "voice" | "video";
             isGroup?: boolean;
             groupName?: string;
+            // Group CALL (huddle) join code. When present the callee joins the
+            // n-way meeting mesh via this code instead of the 1:1 p2p flow.
+            meetingCode?: string;
         },
     ): Promise<{ succeeded: number; failed: number }> {
         if (!this.initialized || !this.app) {
@@ -205,6 +208,7 @@ class PushNotificationService {
                 callType: callData.callType,
                 isGroup: String(callData.isGroup || false),
                 groupName: callData.groupName || "",
+                meetingCode: callData.meetingCode || "",
                 expiresAt: new Date(Date.now() + (callTTLSeconds * 1000)).toISOString(),
                 dedupeKey: `call:${callData.callId}`,
                 callCategory: "incoming-call",

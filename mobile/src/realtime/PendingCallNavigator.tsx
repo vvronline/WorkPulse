@@ -69,6 +69,18 @@ export default function PendingCallNavigator() {
     const route = consumePendingCall();
     if (!route) return;
 
+    // Group CALL (huddle): a `meetingCode` means the callee joins the n-way
+    // meeting mesh, not the 1:1 p2p call screen. Route straight to the meeting
+    // room. The cross-path nav claim still guards against a double push.
+    if (route.meetingCode) {
+      if (!beginCallNavigation(route.callId, route.conversationId)) return;
+      const code = route.meetingCode;
+      const t = setTimeout(() => {
+        router.push(`/meeting/${code}` as never);
+      }, 0);
+      return () => clearTimeout(t);
+    }
+
     // Claim navigation so the websocket / push paths don't also push the
     // fullScreenModal for this same call (double-mount crashes Fabric). If the
     // claim FAILS, index.tsx (or another path) already routed this call as the

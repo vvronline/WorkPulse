@@ -20,6 +20,10 @@ interface IncomingCall {
     callerAvatar?: string;
     isGroup?: boolean;
     groupName?: string;
+    // Group CALL (huddle): when present the callee joins the n-way meeting mesh
+    // via this code (navigates to /meeting/<code>) instead of the 1:1 p2p call.
+    meetingCode?: string;
+    isHuddle?: boolean;
     [key: string]: unknown;
 }
 
@@ -92,6 +96,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
                         callerAvatar: d.callerAvatar,
                         isGroup: d.isGroup,
                         groupName: d.groupName,
+                        meetingCode: d.meetingCode,
+                        isHuddle: d.isHuddle,
                     });
                 }
                 break;

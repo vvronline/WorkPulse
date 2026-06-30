@@ -2675,16 +2675,62 @@ async function handleChatMessage(
     }
 
     const organizer = (
-      await db.query("SELECT full_name FROM users WHERE id = $1", [senderId])
+      await db.query("SELECT full_name, avatar FROM users WHERE id = $1", [
+        senderId,
+      ])
     ).rows[0];
-    sendToUser(tenantId, targetUserId, "meeting_invite", {
-      meetingId,
-      meetingCode: meeting.meeting_code,
-      title: meeting.title,
-      organizerName: organizer?.full_name,
-      conversationId: meeting.conversation_id,
-      isOngoing: true,
-    });
+
+    if (meeting.is_huddle) {
+      // Group CALL (huddle): RING the added member with `call_incoming` so they
+      // get the native incoming-call UI and join the live mesh (Signal-style
+      // "add to call"), instead of a passive meeting invite. Mirrors the
+      // huddle create ring in routes/meetings.ts.
+      const callType =
+        meeting.settings && meeting.settings.callType === "video"
+          ? "video"
+          : "voice";
+      sendToUser(tenantId, targetUserId, "call_incoming", {
+        callId: meeting.id,
+        conversationId: meeting.conversation_id,
+        callerId: senderId,
+        callerName: organizer?.full_name,
+        callerAvatar: organizer?.avatar,
+        callType,
+        isGroup: true,
+        groupName: meeting.title,
+        meetingCode: meeting.meeting_code,
+        meetingId: meeting.id,
+        isHuddle: true,
+        isJoining: true,
+      });
+      pushNotifications
+        .sendCallNotification(db.query as any, targetUserId, tenantId, {
+          callId: meeting.id,
+          conversationId: meeting.conversation_id,
+          callerId: senderId,
+          callerName: organizer?.full_name || "Unknown",
+          callerAvatar: organizer?.avatar,
+          callType: callType as "voice" | "video",
+          isGroup: true,
+          groupName: meeting.title,
+          meetingCode: meeting.meeting_code,
+        })
+        .catch((err: any) => {
+          logger.warn(
+            { err: err.message, userId: targetUserId, meetingId },
+            "Failed to send huddle add-participant push notification",
+          );
+        });
+    } else {
+      sendToUser(tenantId, targetUserId, "meeting_invite", {
+        meetingId,
+        meetingCode: meeting.meeting_code,
+        title: meeting.title,
+        organizerName: organizer?.full_name,
+        conversationId: meeting.conversation_id,
+        isOngoing: true,
+      });
+    }
   } else if (msg.type === "meeting_mute_participant") {
     // Organizer mutes/unmutes a participant. Phase 3 — Permission Presets:
     // route through the shared `meetingPermissions` helper so the 'open'
