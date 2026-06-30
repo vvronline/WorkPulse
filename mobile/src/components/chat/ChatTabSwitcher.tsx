@@ -120,7 +120,12 @@ export default function ChatTabSwitcher({
                 ]}
                 onPress={() => onChange(tab.id)}
               >
-                <View style={styles.tabInner}>
+                <View
+                  style={[
+                    styles.tabInner,
+                    tab.badge && tab.badge > 0 ? styles.tabInnerWithBadge : null,
+                  ]}
+                >
                   {tab.id === "msgs" ? (
                     <MessageSquare size={14} color={iconColor} />
                   ) : tab.id === "meetings" ? (
@@ -224,15 +229,11 @@ const makeStyles = (theme: Theme) =>
       justifyContent: "center",
       paddingHorizontal: 8,
       position: "relative",
+      overflow: "hidden",
     },
     tabActive: {
       backgroundColor: theme.chatSegmentActiveSurface,
       borderColor: theme.chatSegmentActiveBorder,
-      shadowColor: theme.primary,
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.16,
-      shadowRadius: 5,
-      elevation: 2,
     },
     tabPressed: {
       backgroundColor: theme.chatRowPressed,
@@ -242,6 +243,8 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "center",
       gap: 4,
+    },
+    tabInnerWithBadge: {
       paddingRight: 8,
     },
     tabLabel: {
@@ -261,7 +264,7 @@ const makeStyles = (theme: Theme) =>
       borderColor: "transparent",
       alignItems: "center",
       justifyContent: "center",
-      backgroundColor: "rgba(0,0,0,0.16)",
+      backgroundColor: theme.chatHeaderSurface,
     },
     searchBtnActive: {
       backgroundColor: theme.chatSegmentActiveSurface,

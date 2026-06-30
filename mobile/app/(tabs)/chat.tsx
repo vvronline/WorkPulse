@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Pressable,
   RefreshControl,
@@ -52,6 +53,8 @@ import {
   markConversationUnread,
   muteConversation,
   pinConversation,
+  searchChatUsers,
+  startConversation,
   type CallLogEntry,
   type Conversation,
 } from "../../src/features";
@@ -81,6 +84,14 @@ type ListRow =
       icon: "pin" | "star" | "msg";
     }
   | { kind: "conv"; key: string; conv: Conversation };
+
+type SearchUser = {
+  id: number;
+  username: string;
+  full_name: string;
+  email?: string | null;
+  avatar?: string | null;
+};
 
 function timeAgo(iso?: string | null) {
   if (!iso) return "";
@@ -140,6 +151,9 @@ export default function ChatScreen() {
   // Signal-style in-place search: the list stays visible while filtering.
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Per-conversation action menu.
   const [menuConv, setMenuConv] = useState<Conversation | null>(null);
@@ -279,6 +293,28 @@ export default function ChatScreen() {
     }, [load, scheduleRefresh]),
   );
 
+  // Tenant-wide people search (web parity). Runs in the header search mode but
+  // keeps the tab list visible underneath.
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    const q = query.trim();
+    if (!searchOpen || q.length < 2) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    searchTimer.current = setTimeout(() => {
+      searchChatUsers(q)
+        .then((r) => setSearchResults(r.data || []))
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    };
+  }, [query, searchOpen]);
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     load();
@@ -364,6 +400,36 @@ export default function ChatScreen() {
         peerName: display,
       },
     });
+  }
+
+  async function startWithUser(u: SearchUser) {
+    try {
+      const { data } = await startConversation(u.id);
+      const convId =
+        (data as { conversationId?: number; id?: number })?.conversationId ??
+        (data as { conversationId?: number; id?: number })?.id;
+      if (!convId) {
+        Alert.alert("Error", "Could not open this conversation.");
+        return;
+      }
+      setSearchOpen(false);
+      setQuery("");
+      setSearchResults([]);
+      router.push({
+        pathname: "/chat/[id]",
+        params: {
+          id: String(convId),
+          name: u.full_name || u.username,
+          avatar: u.avatar || "",
+          peerId: String(u.id),
+        },
+      });
+    } catch (e: any) {
+      Alert.alert(
+        "Error",
+        e?.response?.data?.error || "Could not open this conversation.",
+      );
+    }
   }
 
   function doPin(c: Conversation) {
@@ -805,6 +871,48 @@ export default function ChatScreen() {
     );
   }
 
+  function renderSearchUsersBlock() {
+    if (!searchOpen || query.trim().length < 2) return null;
+    return (
+      <View style={styles.searchUsersBlock}>
+        <View style={styles.searchUsersHeader}>
+          <Users size={14} color={theme.textMuted} />
+          <Text style={styles.searchUsersTitle}>People</Text>
+        </View>
+        {searching ? (
+          <Text style={styles.searchUsersHint}>Searching…</Text>
+        ) : searchResults.length === 0 ? (
+          <Text style={styles.searchUsersHint}>No users found</Text>
+        ) : (
+          searchResults.map((u) => (
+            <Pressable
+              key={`search-user-${u.id}`}
+              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+              onPress={() => startWithUser(u)}
+            >
+              <ChatAvatar
+                name={u.full_name}
+                avatar={u.avatar}
+                size={48}
+                userStatus={userStatusMap[u.id]}
+              />
+              <View style={styles.body}>
+                <Text style={styles.name} numberOfLines={1}>
+                  {u.full_name}
+                  {u.id === user?.id ? " (You)" : ""}
+                </Text>
+                <Text style={styles.preview} numberOfLines={1}>
+                  @{u.username}
+                  {u.email ? ` · ${u.email}` : ""}
+                </Text>
+              </View>
+            </Pressable>
+          ))
+        )}
+      </View>
+    );
+  }
+
   if (loading) {
     return (
       <View style={[styles.screen, styles.center]}>
@@ -864,7 +972,11 @@ export default function ChatScreen() {
             onSearchQueryChange={setQuery}
             onSearchOpenChange={(open) => {
               setSearchOpen(open);
-              if (!open) setQuery("");
+              if (!open) {
+                setQuery("");
+                setSearchResults([]);
+                setSearching(false);
+              }
             }}
           />
         </View>
@@ -875,6 +987,7 @@ export default function ChatScreen() {
           data={filteredCalls}
           keyExtractor={(c) => String(c.id)}
           contentContainerStyle={styles.list}
+          ListHeaderComponent={renderSearchUsersBlock}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -990,6 +1103,7 @@ export default function ChatScreen() {
             />
           }
         >
+          {renderSearchUsersBlock()}
           {tab === "meetings" ? (
             <View style={styles.empty}>
               <View style={styles.emptyIconWrap}>
@@ -1018,6 +1132,7 @@ export default function ChatScreen() {
           data={listRows}
           keyExtractor={(r) => r.key}
           contentContainerStyle={styles.list}
+          ListHeaderComponent={renderSearchUsersBlock}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -1231,6 +1346,28 @@ const makeStyles = (theme: Theme) =>
       color: theme.textMuted,
       textTransform: "uppercase",
       letterSpacing: 0.5,
+    },
+    searchUsersBlock: { marginBottom: 4 },
+    searchUsersHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingTop: 6,
+      paddingBottom: 8,
+      paddingHorizontal: 4,
+    },
+    searchUsersTitle: {
+      fontSize: 12,
+      color: theme.textMuted,
+      fontWeight: "700",
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+    },
+    searchUsersHint: {
+      color: theme.textMuted,
+      fontSize: 13,
+      paddingVertical: 10,
+      paddingHorizontal: 4,
     },
     row: {
       flexDirection: "row",

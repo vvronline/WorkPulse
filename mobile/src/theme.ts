@@ -102,7 +102,7 @@ export function makeTheme(accent: string = DEFAULT_ACCENT) {
     chatSegmentText: "rgba(255, 255, 255, 0.55)",
     chatSegmentTextActive: "rgba(255, 255, 255, 0.9)",
     chatTabBadgeBg: "#ef6073",
-    chatTabBadgeBorder: "#111111",
+    chatTabBadgeBorder: "rgba(255, 255, 255, 0.18)",
     chatRowSurface: "rgba(255, 255, 255, 0.022)",
     chatRowBorder: "rgba(255, 255, 255, 0.08)",
     chatRowPressed: "rgba(255, 255, 255, 0.05)",
