@@ -829,13 +829,38 @@ export function useMeetingMesh({
   useEffect(() => {
     if (!meetingId || !wantJoin) return;
     let cancelled = false;
+    // CRITICAL ORDERING: subscribe to the socket BEFORE sending `meeting_join`
+    // so the server's immediate `meeting_participant_joined` echo (which carries
+    // our `existingPeers` set) can never arrive before our handler is attached.
+    // Missing that echo was the root cause of "the initiator never joins / never
+    // sees the others" — the group-call creator auto-joins, but if the join was
+    // sent on a not-yet-open socket (the old `socket.send` returned false and the
+    // 300ms poll loop could give up), the server never registered them and never
+    // told the desktop peers about them.
     const off = socket.subscribe(handleWsMessage);
 
-    const sendJoin = () => {
-      if (joinedRef.current) return;
-      const ok = socket.send("meeting_join", { meetingId });
+    (async () => {
+      // Media + ICE were warmed up in the lobby; ensure they're ready anyway.
+      await getMedia();
+      if (cancelled) return;
+      await waitForIceConfig();
+      if (cancelled) return;
+
+      // DETERMINISTIC JOIN: explicitly wait until the realtime socket is OPEN,
+      // then send `meeting_join` with retry/backoff so a slow-opening socket
+      // (cold start, reconnect, app-resume) can't drop the creator's join.
+      await socket.waitUntilConnected(8000);
+      if (cancelled || joinedRef.current) return;
+      const ok = await socket.sendWithRetry(
+        "meeting_join",
+        { meetingId },
+        { timeoutMs: 8000, retryEveryMs: 300 },
+      );
+      if (cancelled) return;
       if (ok) {
         joinedRef.current = true;
+        // Announce our initial mic/cam state once joined so peers render the
+        // correct muted/video-off badges from the first frame.
         setTimeout(() => {
           socket.send("meeting_track_state", {
             meetingId,
@@ -844,21 +869,13 @@ export function useMeetingMesh({
             screenSharing: false,
           });
         }, 300);
-      }
-    };
-
-    (async () => {
-      // Media + ICE were warmed up in the lobby; ensure they're ready anyway.
-      await getMedia();
-      if (cancelled) return;
-      await waitForIceConfig();
-      if (cancelled) return;
-      // Retry the join until the WS is open (mirrors web client's retry loop).
-      const deadline = Date.now() + 8000;
-      sendJoin();
-      while (!joinedRef.current && !cancelled && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 300));
-        sendJoin();
+      } else {
+        // Could not reach the server to join — surface an error instead of
+        // sitting silently on "Connecting…" with no peers (the "initiator not
+        // joined" symptom). The user can retry from the error screen.
+        setMediaError(
+          "Couldn't connect to the call. Check your connection and try again.",
+        );
       }
     })();
 

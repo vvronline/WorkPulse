@@ -2497,6 +2497,54 @@ async function handleChatMessage(
         `UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`,
         [meetingId],
       );
+
+      // HUDDLE RING-CANCEL (Slack/Teams/Signal parity): a "huddle" is a group
+      // CALL whose ring is a `call_incoming` event sent to every invited
+      // member. If the LAST joined participant leaves — most importantly the
+      // initiator backing out BEFORE anyone answered — the callees' devices are
+      // still ringing (they only dismiss on call_ended/rejected/handled). We
+      // must therefore broadcast `call_ended` + push-cancel to every invited
+      // member so the ring stops everywhere. Best-effort.
+      try {
+        const meetingRow = (
+          await db.query(
+            "SELECT id, is_huddle, conversation_id FROM meetings WHERE id = $1",
+            [meetingId],
+          )
+        ).rows[0];
+        if (meetingRow?.is_huddle) {
+          const invited = (
+            await db.query(
+              `SELECT user_id FROM meeting_participants WHERE meeting_id = $1`,
+              [meetingId],
+            )
+          ).rows;
+          for (const p of invited) {
+            sendToUser(tenantId, p.user_id, "call_ended", {
+              callId: meetingRow.id,
+              conversationId: meetingRow.conversation_id,
+              reason: "cancelled",
+            });
+            pushNotifications
+              .sendCallCancellation(db.query as any, p.user_id, tenantId, {
+                callId: meetingRow.id,
+                conversationId: meetingRow.conversation_id,
+                reason: "cancelled",
+              })
+              .catch((err: any) =>
+                logger.warn(
+                  { err: err?.message, userId: p.user_id, meetingId },
+                  "huddle ring-cancel push (meeting_leave) failed",
+                ),
+              );
+          }
+        }
+      } catch (err: any) {
+        logger.warn(
+          { err: err?.message, meetingId },
+          "huddle ring-cancel on meeting_leave failed",
+        );
+      }
     }
 
     // Status service v2: clear in_meeting on THIS device only. Other
@@ -2563,8 +2611,47 @@ async function handleChatMessage(
       });
     }
 
-    // System message in conversation
-    if (meeting.conversation_id) {
+    // HUDDLE RING-CANCEL (Slack/Teams/Signal parity): the host ended a group
+    // CALL. Any invited member still ringing (never answered) must have their
+    // ring dismissed — broadcast `call_ended` + push-cancel to every invited
+    // member. Best-effort.
+    if (meeting.is_huddle) {
+      try {
+        const invited = (
+          await db.query(
+            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1`,
+            [meetingId],
+          )
+        ).rows;
+        for (const p of invited) {
+          sendToUser(tenantId, p.user_id, "call_ended", {
+            callId: meeting.id,
+            conversationId: meeting.conversation_id,
+            reason: "ended",
+          });
+          pushNotifications
+            .sendCallCancellation(db.query as any, p.user_id, tenantId, {
+              callId: meeting.id,
+              conversationId: meeting.conversation_id,
+              reason: "ended",
+            })
+            .catch((err: any) =>
+              logger.warn(
+                { err: err?.message, userId: p.user_id, meetingId },
+                "huddle ring-cancel push (meeting_end) failed",
+              ),
+            );
+        }
+      } catch (err: any) {
+        logger.warn(
+          { err: err?.message, meetingId },
+          "huddle ring-cancel on meeting_end failed",
+        );
+      }
+    }
+
+    // System message in conversation. Huddles never post a meeting system row.
+    if (meeting.conversation_id && !meeting.is_huddle) {
       const sysMsg = (
         await db.query(
           `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)

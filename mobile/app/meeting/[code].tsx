@@ -490,7 +490,7 @@ export default function MeetingScreen() {
         <ControlButton
           theme={theme}
           danger
-          label="Leave"
+          label={isHuddle ? "End" : "Leave"}
           onPress={handleLeave}
           icon={<PhoneOff size={24} color="#fff" />}
         />
