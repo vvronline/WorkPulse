@@ -119,6 +119,10 @@ export default function RealtimeSoundListener() {
         return;
       }
       if (msg.type === "meeting_started" || msg.type === "meeting_restarted") {
+        // A huddle is a group CALL, not a meeting — its (legacy) start event
+        // must not play the meeting alert tone. Defensive guard; the server no
+        // longer emits meeting_started for huddles.
+        if ((d as any).isHuddle) return;
         if (Number(d.startedBy) === Number(user.id)) return;
         void playTone("mention");
         return;

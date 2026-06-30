@@ -2648,7 +2648,10 @@ export function useChatThread() {
       });
       const code = data?.meeting_code;
       if (code) {
-        router.push(`/meeting/${code}` as never);
+        // Huddle auto-join (no meeting lobby) + audio-only for a voice call.
+        router.push(
+          `/meeting/${code}?huddle=1&callType=${type}` as never,
+        );
       } else {
         alert("Call failed", "Could not start the group call. Please try again.");
       }

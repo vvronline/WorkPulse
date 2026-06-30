@@ -75,8 +75,10 @@ export default function PendingCallNavigator() {
     if (route.meetingCode) {
       if (!beginCallNavigation(route.callId, route.conversationId)) return;
       const code = route.meetingCode;
+      // Huddle auto-join (no meeting lobby) + audio-only for a voice call.
+      const ct = route.callType === "video" ? "video" : "voice";
       const t = setTimeout(() => {
-        router.push(`/meeting/${code}` as never);
+        router.push(`/meeting/${code}?huddle=1&callType=${ct}` as never);
       }, 0);
       return () => clearTimeout(t);
     }

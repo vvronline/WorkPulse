@@ -70,7 +70,19 @@ export default function MeetingScreen() {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const router = useRouter();
   const { user } = useAuth();
-  const { code } = useLocalSearchParams<{ code: string }>();
+  const { code, huddle, callType } = useLocalSearchParams<{
+    code: string;
+    huddle?: string;
+    callType?: string;
+  }>();
+
+  // Group CALL (huddle) mode: when entered from an incoming-call ring / start
+  // group call, we skip the meeting lobby entirely and auto-join the mesh —
+  // and for a VOICE call we join audio-only (camera off) so a voice call never
+  // lights up the camera. This decouples the group CALL UX from the meeting UX
+  // (Slack-huddle / Teams-call parity).
+  const isHuddle = huddle === "1" || huddle === "true";
+  const huddleVideoOff = isHuddle && callType !== "video";
 
   const [meetingId, setMeetingId] = useState<number | null>(null);
   const [title, setTitle] = useState("Meeting");
@@ -141,7 +153,9 @@ export default function MeetingScreen() {
     meetingId,
     selfId: user?.id ?? null,
     initialMuted: false,
-    initialVideoOff: false,
+    initialVideoOff: huddleVideoOff,
+    // Huddles auto-join (no pre-join lobby); regular meetings show the lobby.
+    autoJoin: isHuddle,
   });
 
   // Listen for raised-hand broadcasts so we can show the hand badge on tiles

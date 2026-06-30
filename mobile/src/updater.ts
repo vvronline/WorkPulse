@@ -209,8 +209,13 @@ async function checkGitHubForMobileUpdate(
     }
 
     const releases = (await res.json()) as GitHubRelease[];
+    // NOTE: we intentionally do NOT filter out `prerelease` releases. The mobile
+    // release workflow has historically published `mobile-v*` releases flagged
+    // as prereleases; excluding them here silently stranded devices on an older
+    // version ("you are on the latest version" even when a newer tag exists).
+    // We only skip drafts (genuinely unpublished) and tags we can't parse.
     const mobileReleases = (releases || [])
-      .filter((r) => !r.draft && !r.prerelease && r.tag_name)
+      .filter((r) => !r.draft && r.tag_name)
       .map((r) => ({ ...r, version: tagToVersion(r.tag_name as string) }))
       .filter((r) => r.version != null) as Array<
       GitHubRelease & { version: string }

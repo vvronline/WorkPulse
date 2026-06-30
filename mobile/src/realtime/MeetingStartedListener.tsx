@@ -70,6 +70,11 @@ export default function MeetingStartedListener() {
         msg.data
       ) {
         const d = msg.data as any;
+        // Defensive: a huddle is a group CALL, not a meeting — it must never
+        // surface a "Meeting started" card. The server no longer emits
+        // meeting_started for huddles, but guard here too in case an old
+        // server build is in play.
+        if (d.isHuddle) return;
         // Never show the card to the person who started the meeting.
         if (d.startedBy != null && d.startedBy === user.id) return;
         showNotification({

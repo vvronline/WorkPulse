@@ -27,7 +27,10 @@ export default function useCallActions(state: ChatState) {
             });
             const code = (data as { meeting_code?: string }).meeting_code;
             if (code) {
-                window.location.assign(`/meeting/${code}`);
+                // Auto-join the group CALL directly — NO meeting lobby/pre-screen.
+                // /huddle/<code> joins the mesh (audio-only for a voice call) and
+                // redirects into the in-call room, matching the 1:1 call UX.
+                window.location.assign(`/huddle/${code}`);
             } else {
                 alert("Could not start the group call. Please try again.");
             }

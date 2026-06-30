@@ -41,7 +41,11 @@ export default function IncomingCallListener() {
           }
           if (pathname?.startsWith(`/meeting/${d.meetingCode}`)) return;
           ringingRef.current = d.callId;
-          router.push(`/meeting/${d.meetingCode}` as never);
+          // Huddle auto-join (no meeting lobby) + audio-only for a voice call.
+          const ct = d.callType === "video" ? "video" : "voice";
+          router.push(
+            `/meeting/${d.meetingCode}?huddle=1&callType=${ct}` as never,
+          );
           return;
         }
 

@@ -210,7 +210,11 @@ function handleCallNotification(
     ) {
       return;
     }
-    router.push(`/meeting/${callData.meetingCode}` as never);
+    // Huddle auto-join (no meeting lobby) + audio-only for a voice call.
+    const ct = callData.callType === "video" ? "video" : "voice";
+    router.push(
+      `/meeting/${callData.meetingCode}?huddle=1&callType=${ct}` as never,
+    );
     return;
   }
 

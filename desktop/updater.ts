@@ -185,18 +185,23 @@ interface GitHubRelease {
 }
 
 /**
- * Resolve the latest DESKTOP release tag from the GitHub releases API. Only
- * considers published, non-prerelease releases whose tag is `vX.Y.Z` (desktop),
- * explicitly skipping `mobile-vX.Y.Z` releases. Works for a public repo without
- * any auth token. Returns null on failure.
+ * Resolve the latest DESKTOP release tag from the GitHub releases API. Considers
+ * any published (non-draft) release whose tag is `vX.Y.Z` (desktop) — including
+ * prereleases, so a stray prerelease flag never strands installed apps — and
+ * explicitly skips `mobile-vX.Y.Z` releases. Works for a public repo without any
+ * auth token. Returns null on failure.
  */
 async function resolveLatestDesktopTagFromGitHub(): Promise<string | null> {
   try {
     const releases = await httpGetJson<GitHubRelease[]>(
       `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=30`,
     );
+    // NOTE: we intentionally do NOT filter out `prerelease` releases here. A
+    // release accidentally flagged as a prerelease would otherwise be skipped,
+    // silently stranding installed apps on an older version. We only skip drafts
+    // (genuinely unpublished) and non-desktop tags below.
     const desktopTags = (releases || [])
-      .filter((r) => !r.draft && !r.prerelease && r.tag_name)
+      .filter((r) => !r.draft && r.tag_name)
       .map((r) => r.tag_name as string)
       // Desktop tags look like "v1.6.95"; ignore "mobile-v..." and anything else.
       .filter((t) => /^v\d+\.\d+\.\d+$/.test(t));

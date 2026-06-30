@@ -49,6 +49,7 @@ import {
 
 // Lazy-load pages that are NOT part of keep-alive (meetings use dynamic params)
 const MeetingJoin = lazy(() => import("./pages/MeetingJoin"));
+const HuddleAutoJoin = lazy(() => import("./pages/HuddleAutoJoin"));
 const SprintInsights = lazy(() => import("./pages/SprintInsights"));
 const PublicNote = lazy(() => import("./pages/PublicNote"));
 const CallPipPage = lazy(() => import("./pages/CallPipPage"));
@@ -186,6 +187,18 @@ function AppRoutes() {
               element={
                 <ProtectedRoute>
                   <MeetingJoin />
+                </ProtectedRoute>
+              }
+            />
+            {/* Instant group CALL (huddle) auto-join — no lobby pre-screen.
+              Caller (after startGroupCall) and callee (after accepting the
+              incoming-call ring) both land here; it joins the mesh audio-only
+              for a voice call and redirects straight to the in-call room. */}
+            <Route
+              path="/huddle/:code"
+              element={
+                <ProtectedRoute>
+                  <HuddleAutoJoin />
                 </ProtectedRoute>
               }
             />

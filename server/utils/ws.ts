@@ -2302,7 +2302,13 @@ async function handleChatMessage(
       );
     }
 
-    if (isFirstStart || isRestart || isFirstJoinActive) {
+    // Huddles (instant group CALLS) are decoupled from the user-visible
+    // "Meeting" concept: they must NOT emit `meeting_started` /
+    // `meeting_restarted` cards, persistent notifications, or a
+    // `meeting_joined` system message into the chat. The group stays a pure
+    // chat group and the call rings via `call_incoming` only. The mesh
+    // transport (peer discovery via `meeting_participant_joined`) is reused.
+    if (!meeting.is_huddle && (isFirstStart || isRestart || isFirstJoinActive)) {
       // Notify all invited participants that the meeting has started/restarted
       const allInvited = (
         await db.query(
@@ -2387,8 +2393,10 @@ async function handleChatMessage(
       });
     }
 
-    // System message in conversation (skip on PiP rejoin to avoid duplicates)
-    if (meeting.conversation_id && !wasAlreadyJoined) {
+    // System message in conversation (skip on PiP rejoin to avoid duplicates).
+    // Huddles never post a `meeting_joined` system row — a group CALL is not a
+    // meeting and must not leave meeting artifacts in the chat thread.
+    if (meeting.conversation_id && !wasAlreadyJoined && !meeting.is_huddle) {
       const sysMsg = (
         await db.query(
           `INSERT INTO messages (conversation_id, sender_id, content, format_type, metadata)

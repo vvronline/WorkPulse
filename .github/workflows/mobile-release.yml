@@ -340,7 +340,7 @@ jobs:
               -f tag_name="mobile-v${VERSION}" \
               -f name="Mobile v${VERSION}" \
               -F draft=true \
-              -F prerelease=true \
+              -F prerelease=false \
               --jq '.id')
             echo "Created release id=${RELEASE_ID}"
           fi
@@ -434,7 +434,7 @@ jobs:
               "repos/${{ github.repository }}/releases/${RELEASE_ID}" \
               -f tag_name="mobile-v${VERSION}" \
               -f name="Mobile v${VERSION}" \
-              -F prerelease=true \
+              -F prerelease=false \
               -F draft=false; then
             echo "Published release mobile-v${VERSION} (id=${RELEASE_ID})"
             exit 0

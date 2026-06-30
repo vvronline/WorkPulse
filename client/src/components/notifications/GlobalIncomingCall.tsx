@@ -181,12 +181,13 @@ export default function GlobalIncomingCall() {
   const avatarUrl = callerAvatar || null;
 
   const handleAccept = () => {
-    // Group CALL (huddle): join the n-way meeting mesh by navigating straight
-    // to the meeting room with the join code. The 1:1 path stays on /chat where
-    // the CallOverlay picks up the pending-accepted p2p call.
+    // Group CALL (huddle): auto-join the n-way mesh via /huddle/<code> — NO
+    // meeting lobby/pre-screen ("Join meeting" was the bug). It joins audio-only
+    // for a voice call and drops straight into the in-call room. The 1:1 path
+    // stays on /chat where the CallOverlay picks up the pending-accepted p2p call.
     if (meetingCode) {
       acceptGlobalCall();
-      navigate(`/meeting/${meetingCode}`);
+      navigate(`/huddle/${meetingCode}`);
       return;
     }
     acceptGlobalCall();
