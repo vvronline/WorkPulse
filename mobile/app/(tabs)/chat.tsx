@@ -1301,9 +1301,8 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "space-between",
       paddingHorizontal: 16,
-      paddingTop: 14,
-      paddingBottom: 10,
-      minHeight: 60,
+      paddingTop: 8,
+      paddingBottom: 6,
     },
     heading: {
       fontSize: 24,
@@ -1332,13 +1331,14 @@ const makeStyles = (theme: Theme) =>
       shadowRadius: 10,
       elevation: 6,
     },
-    list: { paddingHorizontal: 16, paddingBottom: 90, gap: 2 },
+    list: { paddingHorizontal: 8, paddingBottom: 90 },
     section: {
       flexDirection: "row",
       alignItems: "center",
       gap: 5,
-      paddingTop: 14,
+      paddingTop: 12,
       paddingBottom: 4,
+      paddingHorizontal: 8,
     },
     sectionText: {
       fontSize: 12,
@@ -1369,17 +1369,16 @@ const makeStyles = (theme: Theme) =>
       paddingVertical: 10,
       paddingHorizontal: 4,
     },
+    // Flat, borderless Signal-style row: avatar · name+snippet · time/unread.
+    // No card border/background — just a full-width row with a subtle press
+    // and selected tint, tighter vertical rhythm.
     row: {
       flexDirection: "row",
       alignItems: "center",
       gap: 12,
-      paddingVertical: 10,
+      paddingVertical: 9,
       paddingHorizontal: 10,
-      marginBottom: 6,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: theme.chatRowBorder,
-      backgroundColor: theme.chatRowSurface,
+      borderRadius: 12,
     },
     // Icon avatar for meeting / group rows (Signal-style group glyph).
     iconAvatar: {
@@ -1394,8 +1393,6 @@ const makeStyles = (theme: Theme) =>
     // Selected-row tint + the leading checkbox column in selection mode.
     rowSelected: {
       backgroundColor: theme.chatRowSelected,
-      borderColor: theme.chatRowSelectedBorder,
-      borderRadius: 14,
     },
     selectMark: { width: 26, alignItems: "center", justifyContent: "center" },
     // Signal-style selection action bar (replaces the header in selection mode).

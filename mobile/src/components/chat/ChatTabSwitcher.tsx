@@ -47,7 +47,11 @@ export default function ChatTabSwitcher({
 }) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+  // `progress` drives native-driver visuals (opacity / transform). `layout`
+  // drives the JS-driven height + margin collapse — they MUST be separate
+  // Animated.Values because a single node can't mix native and layout drivers.
   const progress = useRef(new Animated.Value(searchOpen ? 1 : 0)).current;
+  const layout = useRef(new Animated.Value(searchOpen ? 1 : 0)).current;
   const searchInputRef = useRef<TextInput | null>(null);
 
   const tabs = useMemo<TabMeta[]>(
@@ -63,13 +67,23 @@ export default function ChatTabSwitcher({
   );
 
   useEffect(() => {
-    Animated.timing(progress, {
-      toValue: searchOpen ? 1 : 0,
-      duration: searchOpen ? 220 : 180,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [progress, searchOpen]);
+    Animated.parallel([
+      Animated.timing(progress, {
+        toValue: searchOpen ? 1 : 0,
+        duration: searchOpen ? 220 : 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      // Height/margin can't run on the native driver — animate on JS so the
+      // panel physically collapses (no invisible band) when search is closed.
+      Animated.timing(layout, {
+        toValue: searchOpen ? 1 : 0,
+        duration: searchOpen ? 220 : 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }),
+    ]).start();
+  }, [progress, layout, searchOpen]);
 
   useEffect(() => {
     if (!searchOpen) {
@@ -91,6 +105,17 @@ export default function ChatTabSwitcher({
   const searchTranslateY = progress.interpolate({
     inputRange: [0, 1],
     outputRange: [-8, 0],
+  });
+  // Collapse the search panel's height (and its top margin) when closed so it
+  // never occupies an invisible band that pushes the conversation list down.
+  // The field is ~42px tall; the panel adds an 8px top margin when expanded.
+  const searchPanelHeight = layout.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 42],
+  });
+  const searchPanelMarginTop = layout.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 8],
   });
 
   return (
@@ -172,6 +197,8 @@ export default function ChatTabSwitcher({
         style={[
           styles.searchPanel,
           {
+            height: searchPanelHeight,
+            marginTop: searchPanelMarginTop,
             opacity: progress,
             transform: [{ translateY: searchTranslateY }],
           },
@@ -271,7 +298,7 @@ const makeStyles = (theme: Theme) =>
       borderColor: theme.chatSegmentActiveBorder,
     },
     searchPanel: {
-      marginTop: 8,
+      overflow: "hidden",
     },
     searchField: {
       flexDirection: "row",
