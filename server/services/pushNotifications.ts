@@ -523,6 +523,14 @@ class PushNotificationService {
             // Server-authoritative total unread/alert count for the launcher
             // badge (defaults to 1 when omitted).
             badgeCount?: number;
+            // Optional avatar of the user who triggered this alert (the "actor"
+            // — e.g. the assigner of a task, the approver of a leave request).
+            // When present the mobile client renders it as the notification's
+            // circular largeIcon (chat-avatar parity); when absent the client
+            // falls back to the org branding logo, and the app-logo silhouette
+            // is always the status-bar smallIcon.
+            actorAvatar?: string;
+            actorName?: string;
         },
     ): Promise<{ succeeded: number; failed: number }> {
         if (!this.initialized || !this.app) {
@@ -555,6 +563,13 @@ class PushNotificationService {
                 body: notificationData.body,
                 badgeCount: String(badge),
                 dedupeKey: `notif:${notificationData.notificationId}`,
+                // Carry the actor's avatar/name so the mobile client can render
+                // the triggering user's circular avatar as the notification
+                // largeIcon (chat-avatar parity). Empty when there is no actor —
+                // the client then falls back to the org branding logo, and the
+                // app-logo silhouette is always the status-bar smallIcon.
+                actorAvatar: notificationData.actorAvatar || "",
+                actorName: notificationData.actorName || "",
             }, tenantId),
             // Keep webpush rendering via the optional notification block below by
             // exposing title/body to sendToDevices.

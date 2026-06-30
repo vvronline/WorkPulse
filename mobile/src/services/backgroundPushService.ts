@@ -263,14 +263,30 @@ class BackgroundPushService {
     // Message / general notification. Use Notifee for reliable status-bar
     // delivery in the background/terminated state (expo-notifications is
     // unreliable from a headless task). Fall back to expo-notifications only
-    // when Notifee is unavailable. This single branch handles BOTH chat
-    // messages (type=chat_message) AND general alerts (type=notification:
-    // leave approved, task assigned, mentions, …) — both now arrive DATA-ONLY
-    // from the server so they reach here in every app state, including
-    // foreground (where RN Firebase's onMessage does not auto-display them).
+    // when Notifee is unavailable. Both chat messages AND general alerts now
+    // arrive DATA-ONLY from the server so they reach here in every app state,
+    // including foreground (where RN Firebase's onMessage does not auto-display
+    // them).
+    //
+    // CHAT vs GENERAL-ALERT split: a chat message (it has a conversationId /
+    // messageId, or type === "chat_message") renders via displayMessage — the
+    // Signal-style MessagingStyle thread with the SENDER's circular avatar
+    // largeIcon + Reply/Mark-read actions. Everything else (task assigned, leave
+    // approved, mention, meeting started, …) renders via displayAlert — the same
+    // chat-avatar treatment (the ACTOR's circular avatar largeIcon, org-logo
+    // fallback) + the app-logo silhouette smallIcon, but on the dedicated
+    // "notifications" channel and without the chat-only Reply action.
     if (!suppressForOpenConversation) {
+      const isChatMessage =
+        data.type === "chat_message" ||
+        data.type === "message" ||
+        Boolean(data.conversationId || data.messageId);
       if (notifeeService.isAvailable()) {
-        await notifeeService.displayMessage(payload);
+        if (isChatMessage) {
+          await notifeeService.displayMessage(payload);
+        } else {
+          await notifeeService.displayAlert(payload);
+        }
       } else {
         await this.presentDataNotification(payload);
       }

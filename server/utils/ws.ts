@@ -3547,6 +3547,13 @@ async function notifyUser(
   title: string,
   body: string,
   linkTaskId?: number | null,
+  // Optional id of the user who TRIGGERED this notification (the "actor" — e.g.
+  // the task assigner, the leave approver). When supplied we look up their
+  // avatar/name and forward it to the push so the mobile client can render the
+  // actor's circular avatar as the notification largeIcon (chat-avatar parity);
+  // otherwise the client falls back to the org branding logo. The app-logo
+  // silhouette is always the status-bar smallIcon.
+  actorId?: number | null,
 ): Promise<void> {
   try {
     const sql = linkTaskId
@@ -3567,6 +3574,26 @@ async function notifyUser(
         is_read: false,
       });
 
+      // Best-effort: resolve the actor's avatar/name so the push can show their
+      // circular avatar as the notification largeIcon. A missing actor (or a
+      // failed lookup) simply leaves the fields empty and the client falls back
+      // to the org branding logo.
+      let actorAvatar = "";
+      let actorName = "";
+      if (actorId) {
+        try {
+          const actor = (
+            await db.query("SELECT full_name, avatar FROM users WHERE id = $1", [
+              actorId,
+            ])
+          ).rows[0];
+          actorAvatar = actor?.avatar || "";
+          actorName = actor?.full_name || "";
+        } catch {
+          /* best-effort — leave actor fields empty */
+        }
+      }
+
       // Send push notification for important alerts
       pushNotifications
         .sendNotificationAlert(db.query as any, userId, tenantId || null, {
@@ -3574,6 +3601,8 @@ async function notifyUser(
           title,
           body,
           type,
+          actorAvatar,
+          actorName,
         })
         .catch((err: any) => {
           logger.warn(

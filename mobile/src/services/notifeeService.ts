@@ -101,6 +101,11 @@ function ringtoneResourceForTone(toneId: string): string {
 // incoming-call notification while still surfacing the full-screen call UI.
 const CALL_SILENT_CHANNEL_ID = "calls_silent_v2";
 const MESSAGE_CHANNEL_ID = "messages_v2";
+// General app-notification channel (task assigned, leave approved, mentions,
+// meeting started, …). Separate from messages so the user can independently
+// control its importance/sound, and so these alerts render with the SAME
+// chat-avatar largeIcon + app-logo smallIcon treatment as messages.
+const NOTIFICATION_CHANNEL_ID = "notifications_v2";
 
 // Stable group KEY shared by every per-conversation message notification and the
 // group SUMMARY below. Android collapses all children that share this key under
@@ -557,6 +562,61 @@ class NotifeeService {
     }
   }
 
+  /**
+   * Creates (or recreates) the dedicated "notifications" channel used for
+   * general app alerts (task assigned, leave approved, mention, meeting started,
+   * …). Kept in its OWN isolated try/catch (mirroring createMessageChannel) so a
+   * failure here can never abort the other channels, and so displayAlert can
+   * recreate it on demand. HIGH importance so the alert surfaces as a heads-up
+   * banner with the actor's avatar largeIcon + app-logo smallIcon.
+   */
+  private async createNotificationChannel(): Promise<boolean> {
+    const notifee = this.resolve();
+    if (!notifee || Platform.OS !== "android") return false;
+    const vibrationPattern = safeVibrationPattern(MESSAGE_VIBRATION_PATTERN);
+    try {
+      await notifee.createChannel({
+        id: NOTIFICATION_CHANNEL_ID,
+        name: "Notifications",
+        description: "General app alerts",
+        importance: this.AndroidImportance.HIGH ?? 4,
+        sound: "default",
+        vibration: true,
+        ...(vibrationPattern ? { vibrationPattern } : {}),
+        lights: true,
+        lightColor: "#FF6B6B",
+      });
+      return true;
+    } catch (e) {
+      console.warn(
+        "[NotifeeService] failed to create notifications channel:",
+        e,
+      );
+      // LAST-DITCH: retry WITHOUT the vibration pattern so a pattern-validation
+      // failure can never leave the channel uncreated (which would silently
+      // drop every general alert).
+      try {
+        await notifee.createChannel({
+          id: NOTIFICATION_CHANNEL_ID,
+          name: "Notifications",
+          description: "General app alerts",
+          importance: this.AndroidImportance.HIGH ?? 4,
+          sound: "default",
+          vibration: true,
+          lights: true,
+          lightColor: "#FF6B6B",
+        });
+        return true;
+      } catch (e2) {
+        console.warn(
+          "[NotifeeService] notifications channel retry (no vibration) also failed:",
+          e2,
+        );
+        return false;
+      }
+    }
+  }
+
   async ensureChannels(): Promise<void> {
     const notifee = this.resolve();
     if (!notifee || Platform.OS !== "android") return;
@@ -645,6 +705,11 @@ class NotifeeService {
     // The MESSAGES channel — created in its own isolated path so it survives any
     // calls-channel failure above (the root-cause fix).
     const messageOk = await this.createMessageChannel();
+
+    // The general NOTIFICATIONS channel (task/leave/mention/meeting alerts) —
+    // also in its own isolated path. Non-critical to the messages-channel latch
+    // below: a transient failure here is retried via displayAlert's self-heal.
+    await this.createNotificationChannel();
 
     // Only latch `channelsEnsured` once the critical messages channel exists so
     // a transient failure (e.g. mid-boot) is retried on the next call rather
@@ -1435,6 +1500,151 @@ class NotifeeService {
       } catch (err) {
         // Best-effort: the notification was already delivered in step 1.
         console.warn("[NotifeeService] large-icon attach skipped:", err);
+      }
+    }
+  }
+
+  /**
+   * Displays a general APP-ALERT status-bar notification (task assigned, leave
+   * approved, mention, meeting started, …) with the SAME chat-avatar treatment
+   * as messages: the triggering user's CIRCULAR avatar as the largeIcon and the
+   * app-logo silhouette as the status-bar smallIcon.
+   *
+   * Mirrors displayMessage's DELIVERY-FIRST, AVATAR-SECOND strategy: the alert
+   * is POSTED IMMEDIATELY with no avatar (so it ALWAYS surfaces in every app
+   * state, including the short-lived killed/headless FCM task), then the actor's
+   * avatar largeIcon is fetched BEST-EFFORT with a hard timeout and re-applied to
+   * the SAME notification id once it resolves. When there is no actor avatar we
+   * fall back to the org branding logo (cached to SecureStore by the
+   * ThemeProvider), so the large icon is always meaningful.
+   */
+  async displayAlert(payload: NotificationPayload): Promise<void> {
+    const notifee = this.resolve();
+    if (!notifee) return;
+    const data = payload.data || {};
+    const title = payload.title || data.title || "Notification";
+    const body = payload.body || data.body || "";
+    if (!title && !body) return;
+
+    await this.ensureChannels();
+
+    // STABLE per-notification id so a re-post (avatar attach) updates the SAME
+    // status-bar entry in place rather than stacking a duplicate.
+    const notificationId = data.notificationId
+      ? `wp-notif-${data.notificationId}`
+      : undefined;
+
+    const badgeCount = Number(data.badgeCount);
+    const hasBadge = Number.isFinite(badgeCount) && badgeCount >= 0;
+
+    // Build the base Android options ONCE so the initial (no-avatar) post and the
+    // later avatar-update post stay in sync. Same smallIcon (app-logo silhouette)
+    // + circular largeIcon treatment as the message notification.
+    const baseAndroid = (largeIconOpts: Record<string, unknown>) => ({
+      channelId: NOTIFICATION_CHANNEL_ID,
+      importance: this.AndroidImportance.HIGH ?? 4,
+      visibility: this.AndroidVisibility.PRIVATE ?? 0,
+      pressAction: { id: "default", launchActivity: "default" },
+      sound: "default",
+      // App-logo silhouette in the status bar (same constraint as messages: a
+      // notification with no resolvable small icon is dropped silently).
+      smallIcon: MESSAGE_SMALL_ICON,
+      ...(hasBadge ? { badgeCount } : {}),
+      // Actor avatar (or org-logo fallback) as the circular largeIcon.
+      ...largeIconOpts,
+      // Expandable body so longer alerts are fully readable.
+      style: { type: this.AndroidStyle.BIGTEXT ?? 1, text: body },
+    });
+
+    const postNotification = async (
+      largeIconOpts: Record<string, unknown>,
+    ): Promise<void> => {
+      try {
+        await notifee.displayNotification({
+          ...(notificationId ? { id: notificationId } : {}),
+          title,
+          body,
+          data: { ...data } as Record<string, string>,
+          android: baseAndroid(largeIconOpts),
+        });
+      } catch (err) {
+        // SELF-HEAL: recreate the channel and retry; final fallback is the
+        // always-present "default" channel so the alert ALWAYS surfaces.
+        console.warn(
+          "[NotifeeService] alert display failed; recreating channel + retrying:",
+          err,
+        );
+        try {
+          await this.createNotificationChannel();
+          await notifee.displayNotification({
+            ...(notificationId ? { id: notificationId } : {}),
+            title,
+            body,
+            data: { ...data } as Record<string, string>,
+            android: {
+              channelId: NOTIFICATION_CHANNEL_ID,
+              importance: this.AndroidImportance.HIGH ?? 4,
+              pressAction: { id: "default", launchActivity: "default" },
+              sound: "default",
+              smallIcon: MESSAGE_SMALL_ICON,
+              ...largeIconOpts,
+              ...(hasBadge ? { badgeCount } : {}),
+            },
+          });
+        } catch (err2) {
+          try {
+            await notifee.displayNotification({
+              ...(notificationId ? { id: notificationId } : {}),
+              title,
+              body,
+              data: { ...data } as Record<string, string>,
+              android: {
+                channelId: "default",
+                importance: this.AndroidImportance.HIGH ?? 4,
+                pressAction: { id: "default", launchActivity: "default" },
+                sound: "default",
+                smallIcon: MESSAGE_SMALL_ICON,
+                ...largeIconOpts,
+              },
+            });
+          } catch (err3) {
+            console.warn("[NotifeeService] Failed to display alert:", err3);
+          }
+        }
+      }
+    };
+
+    // Post NOW without the avatar so the alert is guaranteed to appear.
+    await postNotification({});
+
+    // Attach the large icon BEST-EFFORT: actor avatar first, else org logo.
+    const LARGE_ICON_TIMEOUT_MS = 3500;
+    let largeIconUrl: string | null = uploadUrl(data.actorAvatar || "");
+    if (!largeIconUrl) {
+      try {
+        const cachedLogo = await SecureStore.getItemAsync(BRAND_LOGO_CACHE_KEY);
+        largeIconUrl = uploadUrl(cachedLogo || "");
+      } catch {
+        // best-effort — leave the already-posted notification as-is
+      }
+    }
+
+    if (largeIconUrl) {
+      try {
+        const localUri = await Promise.race<string | null>([
+          this.fetchAvatarToFile(largeIconUrl),
+          new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), LARGE_ICON_TIMEOUT_MS),
+          ),
+        ]);
+        if (localUri) {
+          await postNotification({
+            largeIcon: localUri,
+            circularLargeIcon: true,
+          });
+        }
+      } catch (err) {
+        console.warn("[NotifeeService] alert large-icon attach skipped:", err);
       }
     }
   }
