@@ -175,19 +175,30 @@ export function useMeetingMesh({
       noiseSuppression: true,
       autoGainControl: true,
     };
-    const profiles: any[] = [
-      {
-        audio,
-        video: {
-          facingMode: "user",
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { ideal: 24, max: 30 },
-        },
-      },
-      { audio, video: true },
-      { audio, video: false },
-    ];
+    // VOICE-CALL / AUDIO-ONLY PATH: when joining with video OFF (a voice
+    // huddle, or a device whose camera is disabled by device policy/MDM —
+    // logcat: "Camera device could not be opened due to a device policy"),
+    // do NOT request the camera at all. Requesting video then would (a)
+    // needlessly light the camera for a voice call and (b) stall/fail on a
+    // policy-blocked device. We go straight to an audio-only constraint so the
+    // join is fast and reliable.
+    const profiles: any[] = videoOffRef.current
+      ? [{ audio, video: false }]
+      : [
+          {
+            audio,
+            video: {
+              facingMode: "user",
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              frameRate: { ideal: 24, max: 30 },
+            },
+          },
+          { audio, video: true },
+          // Final fallback: audio-only (covers camera-policy-blocked devices so
+          // the user can still join the call with their mic).
+          { audio, video: false },
+        ];
     for (const constraints of profiles) {
       try {
         const stream = (await mediaDevices.getUserMedia(

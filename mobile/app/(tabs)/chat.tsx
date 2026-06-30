@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
@@ -33,7 +31,6 @@ import {
   PhoneMissed,
   PhoneOutgoing,
   Pin,
-  Search,
   Star,
   Trash2,
   Users,
@@ -55,8 +52,6 @@ import {
   markConversationUnread,
   muteConversation,
   pinConversation,
-  searchChatUsers,
-  startConversation,
   type CallLogEntry,
   type Conversation,
 } from "../../src/features";
@@ -72,10 +67,6 @@ import ChatAvatar from "../../src/components/ChatAvatar";
 import GroupCompositeAvatar from "../../src/components/GroupCompositeAvatar";
 import ChatTabSwitcher from "../../src/components/chat/ChatTabSwitcher";
 import ConfirmDialog from "../../src/components/ConfirmDialog";
-import {
-  useKeyboardInset,
-  scrollFocusedIntoView,
-} from "../../src/hooks/useKeyboardInset";
 
 type Tab = "msgs" | "meetings" | "calls";
 
@@ -90,13 +81,6 @@ type ListRow =
       icon: "pin" | "star" | "msg";
     }
   | { kind: "conv"; key: string; conv: Conversation };
-
-type SearchUser = {
-  id: number;
-  username: string;
-  full_name: string;
-  avatar?: string | null;
-};
 
 function timeAgo(iso?: string | null) {
   if (!iso) return "";
@@ -135,7 +119,6 @@ export default function ChatScreen() {
   // Meetings chat is gated behind the `meetings` plan feature (mirrors the web
   // ChatSidebar, which only renders the Meetings tab when it's enabled).
   const meetingsEnabled = userHasFeature(user, "meetings");
-  const kbInset = useKeyboardInset();
   // Seed the conversation list from the on-device cache SYNCHRONOUSLY so the
   // list paints instantly (Signal-style) instead of blocking on a spinner.
   // `load()` revalidates in the background. The spinner only shows on a true
@@ -154,12 +137,9 @@ export default function ChatScreen() {
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openedFromLaunchParamRef = useRef<string | null>(null);
 
-  // Search (people) — mirrors web ≥2-char threshold.
-  const [showSearch, setShowSearch] = useState(false);
+  // Signal-style in-place search: the list stays visible while filtering.
+  const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchUser[]>([]);
-  const [searching, setSearching] = useState(false);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Per-conversation action menu.
   const [menuConv, setMenuConv] = useState<Conversation | null>(null);
@@ -299,27 +279,6 @@ export default function ChatScreen() {
     }, [load, scheduleRefresh]),
   );
 
-  // Debounced people search.
-  useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    const q = query.trim();
-    if (q.length < 2) {
-      setResults([]);
-      setSearching(false);
-      return;
-    }
-    setSearching(true);
-    searchTimer.current = setTimeout(() => {
-      searchChatUsers(q)
-        .then((r) => setResults(r.data || []))
-        .catch(() => setResults([]))
-        .finally(() => setSearching(false));
-    }, 300);
-    return () => {
-      if (searchTimer.current) clearTimeout(searchTimer.current);
-    };
-  }, [query]);
-
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     load();
@@ -407,45 +366,6 @@ export default function ChatScreen() {
     });
   }
 
-  async function startWithUser(u: SearchUser) {
-    try {
-      const { data } = await startConversation(u.id);
-      // The server returns { conversationId }. Accept the legacy { id } shape
-      // too, defensively — reading only `id` here was the bug that made every
-      // search-result tap fail with "Could not open this conversation".
-      const convId =
-        (data as { conversationId?: number; id?: number })?.conversationId ??
-        (data as { conversationId?: number; id?: number })?.id;
-      if (!convId) {
-        Alert.alert("Error", "Could not open this conversation.");
-        return;
-      }
-      // Close the search UI first, then navigate on the next tick. Navigating
-      // while the search ScrollView (keyboardShouldPersistTaps) is still
-      // mounted could drop the press / race the route push, which is why
-      // tapping a search result sometimes did nothing.
-      setShowSearch(false);
-      setQuery("");
-      setResults([]);
-      setTimeout(() => {
-        router.push({
-          pathname: "/chat/[id]",
-          params: {
-            id: String(convId),
-            name: u.full_name || u.username,
-            avatar: u.avatar || "",
-            peerId: String(u.id),
-          },
-        });
-      }, 0);
-    } catch (e: any) {
-      Alert.alert(
-        "Error",
-        e?.response?.data?.error || "Could not open this conversation.",
-      );
-    }
-  }
-
   function doPin(c: Conversation) {
     setMenuConv(null);
     pinConversation(c.id)
@@ -490,15 +410,57 @@ export default function ChatScreen() {
     action.then(load).catch(() => {});
   }
 
-  // Derived lists (mirror web ChatSidebar grouping).
-  const regular = items.filter((c) => !c.is_meeting_chat);
-  const meetingConvs = items.filter((c) => c.is_meeting_chat);
+  const normalizedQuery = query.trim().toLowerCase();
+  const isFiltering = normalizedQuery.length > 0;
+  const allMeetingConvs = items.filter((c) => c.is_meeting_chat);
+  const matchesConversation = useCallback(
+    (c: Conversation) => {
+      if (!isFiltering) return true;
+      const haystack = [
+        convName(c),
+        c.other_username || "",
+        c.last_message || "",
+        c.group_name || "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(normalizedQuery);
+    },
+    [isFiltering, normalizedQuery],
+  );
+
+  // Derived lists (mirror web ChatSidebar grouping), filtered in-place.
+  const regular = items.filter((c) => !c.is_meeting_chat && matchesConversation(c));
+  const meetingConvs = allMeetingConvs.filter(matchesConversation);
   const pinned = regular.filter((c) => c.is_pinned);
   const favourites = regular.filter((c) => c.is_favourite && !c.is_pinned);
   const others = regular.filter((c) => !c.is_pinned && !c.is_favourite);
+  const filteredCalls = useMemo(() => {
+    if (!isFiltering) return calls;
+    return calls.filter((entry) => {
+      const outgoing = entry.caller_id === user?.id;
+      const display = entry.is_group
+        ? entry.group_name || "Group"
+        : outgoing
+          ? entry.other_name || "Unknown"
+          : entry.caller_name || "Unknown";
+      const haystack = [
+        display,
+        entry.status || "",
+        entry.call_type || "",
+        outgoing ? "outgoing" : "incoming",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(normalizedQuery);
+    });
+  }, [calls, isFiltering, normalizedQuery, user?.id]);
 
   const totalUnread = items.reduce((s, c) => s + (c.unread_count || 0), 0);
-  const meetingUnread = meetingConvs.reduce((s, c) => s + (c.unread_count || 0), 0);
+  const meetingUnread = allMeetingConvs.reduce(
+    (s, c) => s + (c.unread_count || 0),
+    0,
+  );
 
   // ── Signal-style multi-select helpers ──
   const exitSelection = useCallback(() => {
@@ -526,10 +488,10 @@ export default function ChatScreen() {
 
   // The full set of selectable ids for the ACTIVE tab — used by "Select all".
   const selectableIds = useMemo<number[]>(() => {
-    if (tab === "calls") return calls.map((c) => c.id);
+    if (tab === "calls") return filteredCalls.map((c) => c.id);
     if (tab === "meetings") return meetingConvs.map((c) => c.id);
     return regular.map((c) => c.id);
-  }, [tab, calls, meetingConvs, regular]);
+  }, [tab, filteredCalls, meetingConvs, regular]);
 
   const allSelected =
     selectableIds.length > 0 && selectedIds.size === selectableIds.length;
@@ -570,12 +532,12 @@ export default function ChatScreen() {
     }
   }, [selectedIds, tab, exitSelection, load, loadCalls]);
 
-  // Leaving a tab or opening search cancels any in-progress selection so the
+  // Leaving a tab or changing search mode cancels any in-progress selection so the
   // selection bar never lingers over the wrong list.
   useEffect(() => {
     if (selectionMode) exitSelection();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, showSearch]);
+  }, [tab, searchOpen]);
 
   // Flatten the active tab's grouped conversations into a single typed row
   // array for the virtualized FlashList (section headers + conversation rows).
@@ -853,11 +815,8 @@ export default function ChatScreen() {
 
   return (
     <View style={styles.screen}>
-      {/* Header row: when searching it becomes a full-width search bar; otherwise
-          it holds the org-tinted Chat/Meet/Calls segmented control on the left
-          and the Search icon on the right — all in a single padded row (mirrors
-          the web client's chat header). The "new chat" icon is intentionally
-          omitted here; the bottom FAB already opens /chat/new. */}
+      {/* Header row: Chat/Meet/Calls rail with embedded search trigger and an
+          animated in-place search field (Signal-style list retention). */}
       {selectionMode ? (
         // Signal-style selection action bar: close (X) + count on the left,
         // Select-all + Delete actions on the right.
@@ -892,94 +851,28 @@ export default function ChatScreen() {
           </Pressable>
         </View>
       ) : (
-      <View style={styles.header}>
-        {showSearch ? (
-          <View style={styles.searchBar}>
-            <Search size={16} color={theme.textMuted} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search people…"
-              placeholderTextColor={theme.textMuted}
-              value={query}
-              onChangeText={setQuery}
-              onFocus={scrollFocusedIntoView}
-              autoFocus
-              autoCapitalize="none"
-            />
-            <Pressable
-              onPress={() => {
-                setShowSearch(false);
-                setQuery("");
-              }}
-              hitSlop={8}
-            >
-              <X size={18} color={theme.textSecondary} />
-            </Pressable>
-          </View>
-        ) : (
-          <>
-            <ChatTabSwitcher
-              activeTab={tab}
-              meetingsEnabled={meetingsEnabled}
-              totalUnread={totalUnread}
-              meetingUnread={meetingUnread}
-              style={styles.segmentGroup}
-              onChange={setTab}
-            />
-            <Pressable
-              style={styles.headerIcon}
-              onPress={() => setShowSearch(true)}
-            >
-              <Search size={20} color={theme.textSecondary} />
-            </Pressable>
-          </>
-        )}
-      </View>
+        <View style={styles.header}>
+          <ChatTabSwitcher
+            activeTab={tab}
+            meetingsEnabled={meetingsEnabled}
+            totalUnread={totalUnread}
+            meetingUnread={meetingUnread}
+            searchOpen={searchOpen}
+            searchQuery={query}
+            style={styles.segmentGroup}
+            onChange={setTab}
+            onSearchQueryChange={setQuery}
+            onSearchOpenChange={(open) => {
+              setSearchOpen(open);
+              if (!open) setQuery("");
+            }}
+          />
+        </View>
       )}
 
-      {/* Search results */}
-      {showSearch ? (
-        <ScrollView
-          contentContainerStyle={[styles.list, { paddingBottom: 32 + kbInset }]}
-          keyboardShouldPersistTaps="handled"
-        >
-          {query.trim().length < 2 ? (
-            <Text style={styles.hint}>
-              Type at least 2 characters to search.
-            </Text>
-          ) : searching ? (
-            <Text style={styles.hint}>Searching…</Text>
-          ) : results.length === 0 ? (
-            <Text style={styles.hint}>No users found</Text>
-          ) : (
-            results.map((u) => (
-              <Pressable
-                key={u.id}
-                style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-                onPress={() => startWithUser(u)}
-              >
-                <ChatAvatar
-                  name={u.full_name}
-                  avatar={u.avatar}
-                  size={48}
-                  userStatus={userStatusMap[u.id]}
-                />
-                <View style={styles.body}>
-                  <Text style={styles.name} numberOfLines={1}>
-                    {u.full_name}
-                    {u.id === user?.id ? " (You)" : ""}
-                  </Text>
-                  <Text style={styles.preview} numberOfLines={1}>
-                    @{u.username}
-                  </Text>
-                </View>
-              </Pressable>
-            ))
-          )}
-        </ScrollView>
-      ) : tab === "calls" ? (
+      {tab === "calls" ? (
         <FlashList
-          data={calls}
+          data={filteredCalls}
           keyExtractor={(c) => String(c.id)}
           contentContainerStyle={styles.list}
           refreshControl={
@@ -1079,7 +972,9 @@ export default function ChatScreen() {
               <View style={styles.emptyIconWrap}>
                 <Phone size={36} color={theme.textSecondary} />
               </View>
-              <Text style={styles.emptyText}>No calls yet</Text>
+              <Text style={styles.emptyText}>
+                {isFiltering ? "No matching calls" : "No calls yet"}
+              </Text>
             </View>
           }
         />
@@ -1100,14 +995,18 @@ export default function ChatScreen() {
               <View style={styles.emptyIconWrap}>
                 <Video size={36} color={theme.textSecondary} />
               </View>
-              <Text style={styles.emptyText}>No meeting chats yet</Text>
+              <Text style={styles.emptyText}>
+                {isFiltering ? "No matching meeting chats" : "No meeting chats yet"}
+              </Text>
             </View>
           ) : (
             <View style={styles.empty}>
               <View style={styles.emptyIconWrap}>
                 <MessagesSquare size={36} color={theme.textSecondary} />
               </View>
-              <Text style={styles.emptyText}>No conversations yet</Text>
+              <Text style={styles.emptyText}>
+                {isFiltering ? "No matching chats" : "No conversations yet"}
+              </Text>
             </View>
           )}
         </ScrollView>
@@ -1134,7 +1033,7 @@ export default function ChatScreen() {
         />
       )}
 
-      {!showSearch && !selectionMode ? (
+      {!searchOpen && !selectionMode ? (
         <Pressable style={styles.fab} onPress={() => router.push("/chat/new")}>
           <MessagesSquare size={22} color="#fff" />
         </Pressable>
@@ -1297,37 +1196,8 @@ const makeStyles = (theme: Theme) =>
       color: theme.text,
       letterSpacing: -0.5,
     },
-    headerIcon: {
-      width: 40,
-      height: 40,
-      borderRadius: 14,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: theme.chatHeaderSurface,
-      borderWidth: 1,
-      borderColor: theme.chatSegmentBorder,
-    },
-    searchBar: {
-      flex: 1,
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-      backgroundColor: theme.inputBg,
-      borderWidth: 1,
-      borderColor: theme.inputBorder,
-      borderRadius: 14,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-    },
-    searchInput: {
-      flex: 1,
-      color: theme.text,
-      fontSize: 15,
-      paddingVertical: 0,
-    },
     segmentGroup: {
       flex: 1,
-      marginRight: 10,
     },
     fab: {
       position: "absolute",
@@ -1458,7 +1328,6 @@ const makeStyles = (theme: Theme) =>
       borderColor: theme.chatRowBorder,
     },
     emptyText: { color: theme.textMuted, fontSize: 14 },
-    hint: { color: theme.textMuted, fontSize: 13, paddingVertical: 16 },
     // Signal-style bottom action sheet.
     sheetOverlay: {
       flex: 1,

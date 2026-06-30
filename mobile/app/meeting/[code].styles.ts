@@ -124,18 +124,27 @@ export const makeStyles = (theme: Theme) =>
     waitingText: { color: "rgba(255,255,255,0.6)", fontSize: 14 },
     controls: {
       flexDirection: "row",
+      // WRAP so all controls (mute/video/flip/hand/chat/more/END) are ALWAYS
+      // visible on narrow phones. Previously this was a single non-wrapping row
+      // with 7×56px buttons + 22px gaps (~524px) which overflowed a ~360–411px
+      // screen and clipped the last button (End) off the right edge — the
+      // "no End/Leave button" bug. Wrapping + tighter spacing keeps every
+      // control on-screen (Teams/Slack-style two-row control bar when needed).
+      flexWrap: "wrap",
       justifyContent: "center",
       alignItems: "flex-start",
-      gap: 22,
+      rowGap: 12,
+      columnGap: 14,
       paddingVertical: 14,
       paddingBottom: 20,
+      paddingHorizontal: 8,
       backgroundColor: "rgba(0,0,0,0.3)",
     },
-    ctrlWrap: { alignItems: "center", gap: 6 },
+    ctrlWrap: { alignItems: "center", gap: 6, width: 64 },
     ctrl: {
-      width: 56,
-      height: 56,
-      borderRadius: 28,
+      width: 52,
+      height: 52,
+      borderRadius: 26,
       backgroundColor: "rgba(255,255,255,0.16)",
       alignItems: "center",
       justifyContent: "center",
@@ -404,4 +413,5 @@ export const makeStyles = (theme: Theme) =>
     participantAvatarText: { color: "#fff", fontSize: 15, fontWeight: "700" },
     participantName: { color: theme.text, fontSize: 15, flex: 1 },
   });
+
 
