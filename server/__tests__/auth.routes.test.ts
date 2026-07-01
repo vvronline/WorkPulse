@@ -116,17 +116,25 @@ describe("POST /api/auth/register", () => {
         expect(res.body.error).toMatch(/already registered/i);
     });
 
-    test("returns 400 when no tenant context and not bootstrap", async () => {
-        mockQuery
-            .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // user_directory miss
-            .mockResolvedValueOnce({ rows: [{ count: "1" }], rowCount: 1 }) // platform_users count > 0
-            .mockResolvedValueOnce({ rows: [{ count: "1" }], rowCount: 1 }); // tenants count > 0
+    test("returns 403 when no tenant context and not bootstrap", async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // user_directory miss
+        // Bootstrap transaction finds existing platform users / tenants → returns null
+        mockTransaction.mockImplementationOnce(async (fn: any) => {
+            const client = {
+                query: jest
+                    .fn()
+                    .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // pg_advisory_xact_lock
+                    .mockResolvedValueOnce({ rows: [{ count: "1" }], rowCount: 1 }) // platform_users count > 0
+                    .mockResolvedValueOnce({ rows: [{ count: "1" }], rowCount: 1 }), // tenants count > 0
+            };
+            return fn(client);
+        });
         const res = await request(app)
             .post("/api/auth/register")
             .set(CSRF)
             .send({ username: "newuser", password: "Password1!", full_name: "New User", email: "new@example.com" });
-        expect(res.status).toBe(400);
-        expect(res.body.error).toMatch(/organization domain|invite/i);
+        expect(res.status).toBe(403);
+        expect(res.body.error).toMatch(/self-registration is disabled/i);
     });
 
     test("bootstraps platform_admin when no users exist", async () => {
