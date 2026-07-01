@@ -143,6 +143,41 @@
 
 ---
 
+## Phase 7: Clarification Follow-Ups (2026-07-01 session)
+
+**Purpose**: Implement the decisions recorded in the spec's Clarifications session that are
+not yet covered by T001–T044. All tasks below are NEW and not-started.
+
+**Prerequisites**: Phases 1–2 complete (they are). These build on the already-shipped stack.
+
+### Ring TTL = 30 seconds (US1)
+
+- [X] T045 ✅ COMPLETE Set `expiresAt = createdAt + 30s` on the outgoing call push payload in `server/services/pushNotifications.ts` (align with `IncomingCallInvite.expiresAt` in data-model)
+- [X] T046 ✅ COMPLETE Enforce 30s ring auto-expiry — mark the `call_logs` row `missed` and broadcast `call_ended` + push-cancel to all callee devices when the ring window elapses — in `server/utils/ws.ts` (reuse the existing stale-call sweep; tighten window to 30s)
+- [X] T047 [P] [US1] ✅ COMPLETE Add server test asserting a call auto-transitions to `missed` and dismisses on all devices after the 30s TTL in `server/__tests__/ws.callActionIdempotency.test.ts`
+- [X] T048 [US1] ✅ COMPLETE Dismiss the native CallKeep/Notifee incoming-call UI when a `call_ended`/expiry frame arrives after TTL in `mobile/src/services/nativeCallService.ts`
+
+### Lock-screen content visibility toggle (FR-010, cross-cutting)
+
+- [X] T049 [P] ✅ COMPLETE Add `hideSensitiveContent` (boolean, default false) to the notification-prefs schema and GET/PUT handlers in `server/routes/profile.ts`
+- [X] T050 ✅ COMPLETE Honor `hideSensitiveContent` when building call/message pushes — omit `callerName`/`callerAvatar`/message preview from OS-rendered content when enabled — in `server/services/pushNotifications.ts`
+- [X] T051 [P] ✅ COMPLETE Render generic lock-screen content ("Incoming call" / "New message") and set Android channel `visibility` to `PRIVATE/SECRET` when the pref is enabled in `mobile/src/services/notifeeService.ts`
+- [X] T052 ✅ COMPLETE Add a "Hide sensitive content on lock screen" toggle in the mobile notification settings UI in `mobile/app/profile.tsx`
+- [X] T053 [P] ✅ COMPLETE Extend the mobile notification-prefs type + API with `hideSensitiveContent` in `mobile/src/features.ts`
+- [X] T054 [P] ✅ COMPLETE Add server tests for lock-screen visibility behavior (content shown by default; suppressed when pref enabled) in `server/__tests__/pushNotifications.callPayload.test.ts` and `server/__tests__/pushNotifications.messagePayload.test.ts`
+
+### Combined launcher badge (US2)
+
+- [X] T055 [P] [US2] ✅ COMPLETE Verify the launcher badge equals unread chat messages + unread in-app notifications (combined), adding an assertion if missing, in `mobile/src/realtime/__tests__/chatUnreadEvents.test.ts`
+
+### First-write-wins multi-device answer (US3)
+
+- [X] T056 [P] [US3] ✅ COMPLETE Add server test: two simultaneous `call_accept` frames from the same callee's devices → first applies the transition, the second is a no-op and receives `call_handled_elsewhere` (first-write-wins) in `server/__tests__/ws.callActionIdempotency.test.ts`
+
+**Checkpoint**: Clarification decisions (30s TTL, lock-screen toggle, combined badge, first-write-wins) are implemented and covered by tests.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -153,6 +188,7 @@
 - **Phase 4 (US2)**: Depends on Phase 2; can run in parallel with US1 after foundational completion.
 - **Phase 5 (US3)**: Depends on Phase 2 and should start after US1 signaling changes (T020-T021) land.
 - **Phase 6 (Polish)**: Depends on completion of target user stories.
+- **Phase 7 (Clarification Follow-Ups)**: Depends on Phases 1–2 (complete). Ring-TTL tasks (T045–T048) extend US1; lock-screen tasks (T049–T054) are cross-cutting; badge (T055) extends US2; first-write-wins test (T056) extends US3.
 
 ### User Story Dependencies
 
@@ -195,6 +231,19 @@ Run in parallel:
 - T033 reconnect call_accept integration tests
 - T034 duplicate invite de-duplication tests
 - T035 mobile retry/backoff unit tests
+```
+
+### Phase 7 (Clarification Follow-Ups)
+
+```text
+Run in parallel (independent files):
+- T047 ring-TTL expiry server test
+- T049 server notification-prefs schema (hideSensitiveContent)
+- T051 mobile notifee generic lock-screen render
+- T053 mobile notification-prefs type + API
+- T054 server lock-screen visibility tests
+- T055 combined-badge assertion test
+- T056 first-write-wins multi-device answer test
 ```
 
 ---

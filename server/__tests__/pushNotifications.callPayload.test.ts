@@ -181,4 +181,105 @@ describe("pushNotifications.sendCallNotification", () => {
         expect(result.failed).toBe(0);
         expect(sendEachForMulticast).not.toHaveBeenCalled();
     });
+
+    test("T054: SC1 - Default: caller name and avatar included in payload when hideSensitiveContent not set", async () => {
+        const mockQuery = jest.fn()
+            .mockResolvedValueOnce({ rows: [{ device_token: "token1" }] })  // getDeviceTokens
+            .mockResolvedValueOnce({ rows: [{ notification_prefs: {} }] });   // fetch prefs (empty = default)
+
+        await pushNotifications.sendCallNotification(
+            mockQuery,
+            1,
+            1,
+            {
+                callId: 300,
+                conversationId: 30,
+                callerId: 5,
+                callerName: "Diana",
+                callerAvatar: "https://cdn.example.test/diana.png",
+                callType: "voice",
+            },
+        );
+
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        expect(sent.data).toHaveProperty("callerName", "Diana");
+        expect(sent.data).toHaveProperty("callerAvatar", "https://cdn.example.test/diana.png");
+    });
+
+    test("T054: SC2 - Lock-screen hidden: caller name and avatar omitted when hideSensitiveContent=true", async () => {
+        const mockQuery = jest.fn()
+            .mockResolvedValueOnce({ rows: [{ device_token: "token1" }] })  // getDeviceTokens
+            .mockResolvedValueOnce({ rows: [{ notification_prefs: { hideSensitiveContent: true } }] }); // fetch prefs
+
+        await pushNotifications.sendCallNotification(
+            mockQuery,
+            1,
+            1,
+            {
+                callId: 301,
+                conversationId: 31,
+                callerId: 6,
+                callerName: "Emma",
+                callerAvatar: "https://cdn.example.test/emma.png",
+                callType: "voice",
+            },
+        );
+
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        expect(sent.data).not.toHaveProperty("callerName");
+        expect(sent.data).not.toHaveProperty("callerAvatar");
+        // Generic body and title should be used instead
+        expect(sent.data.body).toBe("Tap to answer");
+        expect(sent.data.title).toBe("Incoming Voice Call");
+    });
+
+    test("T054: SC3 - Lock-screen hidden: body shows generic text when hideSensitiveContent=true", async () => {
+        const mockQuery = jest.fn()
+            .mockResolvedValueOnce({ rows: [{ device_token: "token1" }] })  // getDeviceTokens
+            .mockResolvedValueOnce({ rows: [{ notification_prefs: { hideSensitiveContent: true } }] }); // fetch prefs
+
+        await pushNotifications.sendCallNotification(
+            mockQuery,
+            1,
+            1,
+            {
+                callId: 302,
+                conversationId: 32,
+                callerId: 7,
+                callerName: "Frank",
+                callType: "video",
+            },
+        );
+
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        expect(sent.data.body).toBe("Tap to answer");
+        expect(sent.data.title).toBe("Incoming Video Call");
+    });
+
+    test("T054: SC4 - Lock-screen hidden: payload still includes required fields for routing/dedup", async () => {
+        const mockQuery = jest.fn()
+            .mockResolvedValueOnce({ rows: [{ device_token: "token1" }] })  // getDeviceTokens
+            .mockResolvedValueOnce({ rows: [{ notification_prefs: { hideSensitiveContent: true } }] }); // fetch prefs
+
+        await pushNotifications.sendCallNotification(
+            mockQuery,
+            1,
+            1,
+            {
+                callId: 303,
+                conversationId: 33,
+                callerId: 8,
+                callerName: "Grace",
+                callType: "voice",
+            },
+        );
+
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        expect(sent.data).toHaveProperty("callId", "303");
+        expect(sent.data).toHaveProperty("conversationId", "33");
+        expect(sent.data).toHaveProperty("callerId", "8");
+        expect(sent.data).toHaveProperty("dedupeKey", "call:303");
+        expect(sent.data).toHaveProperty("expiresAt");
+        expect(sent.data).toHaveProperty("type", "incoming_call");
+    });
 });

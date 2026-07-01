@@ -6,6 +6,7 @@ import { useAuth } from "../auth/AuthContext";
 import { beginCallNavigation, endCallNavigation } from "./callRouting";
 import { clearPersistedPendingCall } from "./pendingCall";
 import { notifeeService } from "../services/notifeeService";
+import { nativeCallService } from "../services/nativeCallService";
 import { warmIceConfig } from "../features";
 
 /**
@@ -102,6 +103,12 @@ export default function IncomingCallListener() {
           d.callId != null ? String(d.callId) : undefined,
           d.conversationId != null ? String(d.conversationId) : undefined,
         );
+        // Also dismiss the native CallKeep incoming-call UI when call ends
+        // (T048: ring TTL expiry or other call termination). Safe to call even if
+        // native UI was never shown or already dismissed.
+        if (d.callId != null && d.conversationId != null) {
+          nativeCallService.dismissIncomingCall(d.callId, d.conversationId).catch(() => {});
+        }
         clearPersistedPendingCall().catch(() => {});
       }
     });

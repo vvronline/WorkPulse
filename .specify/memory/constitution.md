@@ -1,23 +1,34 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: (none) → 1.0.0
-Constitution created from scratch by inspecting the WorkPulse codebase.
+Version change: 1.0.0 → 1.1.0
+Deep project analysis on 2026-07-01 by GitHub Copilot (Claude Sonnet 4.6).
+
+Version bump rationale: MINOR — new Principle VII (Mobile Platform Reliability) added;
+Technology Stack table materially expanded with mobile + TypeScript migration facts;
+server stats corrected (45 test suites, 30+ route modules); formalized WS utilities added.
+
+Modified principles:
+- Principle III: Real-Time Reliability — added wsValidate requirement for WS input validation
+- (All others: wording/rationale refinements only, no semantic change)
 
 Added sections:
-- Core Principles (6 principles derived from codebase patterns and ADRs)
-- Technology Stack Constraints
-- Development Workflow
-- Governance
+- Principle VII: Mobile Platform Reliability (new; covers FCM/APNs, CallKeep/ConnectionService,
+  background notification handling, mobile-specific idempotency)
+
+Removed sections:
+- None
 
 Templates requiring updates:
-- .specify/templates/plan-template.md ✅ Constitution Check gates align with principles
+- .specify/templates/plan-template.md ✅ Constitution Check now includes Principle VII row
 - .specify/templates/spec-template.md ✅ No structural changes required
-- .specify/templates/tasks-template.md ✅ Task phases reflect principle-driven categories
+- .specify/templates/tasks-template.md ✅ Task phases already reflect principle-driven categories
 
 Follow-up TODOs:
-- TODO(RATIFICATION_DATE): Confirm exact project start date; using 2026-05-20 (earliest ADR date)
+- TODO(RATIFICATION_DATE): Still unconfirmed; retaining 2026-05-20 (earliest ADR date)
 -->
+
+
 
 # WorkPulse Constitution
 
@@ -65,7 +76,10 @@ WebSocket handlers, presence state machines, and call/meeting signalling MUST be
 designed for reconnect safety. Requirements:
 
 - All WS message handlers MUST be idempotent: receiving the same message twice MUST
-  produce the same final state.
+  produce the same final state (enforced via `server/utils/wsIdempotency.ts`).
+- All WS message payloads MUST be validated against a typed schema using
+  `server/utils/wsValidate.ts` before handler logic executes; silent invalid-input
+  drops are forbidden — validation failures MUST be logged with context.
 - Presence, call status, and meeting state MUST flow through single-responsibility
   services (e.g., `StatusService`); multiple uncoordinated writers to the same column
   are forbidden (see ADR-0001).
@@ -73,10 +87,15 @@ designed for reconnect safety. Requirements:
   (sessions, participants, etc.).
 - Any stateful transition (connect, disconnect, join, leave, status change) MUST be
   persisted to an audit table.
+- WS handler performance MUST be observable via `server/utils/wsMetrics.ts`; any
+  handler exceeding the 5-second soft timeout MUST surface as a `WS_HANDLER_TIMEOUT`
+  log event (see ADR-005).
 
 **Rationale**: Network flaps and browser reloads are routine. Non-idempotent handlers
 produce ghost state that is impossible to diagnose in production (documented in
-ADR-0001 with 14 reproducible bugs).
+ADR-0001 with 14 reproducible bugs). Schema validation and handler metrics
+(ADR-007, ADR-009) close the remaining attack surfaces where bad input silently
+corrupts state or hangs the event loop.
 
 ### IV. Test Coverage for Critical Paths
 
@@ -93,9 +112,10 @@ Requirements:
 - Tests MUST run in CI and block merges on failure; skipping tests requires a written
   justification in the PR.
 
-**Rationale**: WorkPulse has 20 server test suites reflecting hard-won coverage of
-complex business rules (leave accrual, sprint rollover, payroll export). Regressions in
-these areas are expensive to discover in production.
+**Rationale**: WorkPulse has 45 server test suites reflecting hard-won coverage of
+complex business rules (leave accrual, sprint rollover, payroll export, WS idempotency,
+push payload contracts). Regressions in these areas are expensive to discover in
+production.
 
 ### V. Observability & Structured Logging
 
@@ -129,9 +149,39 @@ Prefer the simplest solution that satisfies the requirement. Requirements:
 - YAGNI: do not implement speculative generality; if a requirement is not in the current
   spec, it MUST NOT be built.
 
-**Rationale**: WorkPulse already spans 17 API routes, 20 test suites, WebRTC, BullMQ,
-Redis, and a desktop Electron shell. Accidental complexity compounds quickly. Every line
-of code is a maintenance liability.
+**Rationale**: WorkPulse already spans 30+ API routes, 45 test suites, WebRTC, BullMQ,
+Redis, a desktop Electron shell, and a React Native mobile app. Accidental complexity
+compounds quickly. Every line of code is a maintenance liability.
+
+### VII. Mobile Platform Reliability
+
+The WorkPulse mobile app (React Native + Expo SDK 56) MUST behave correctly across all
+three app lifecycle states: foreground, background, and terminated. Requirements:
+
+- Push notification delivery for incoming calls MUST use FCM (Android) and APNs (iOS)
+  via `@react-native-firebase/messaging`; a call notification MUST render a native
+  call-UI (CallKeep / ConnectionService) that works from lock-screen and the home screen.
+- Push notification dispatch on the server MUST be idempotent and tenant-scoped; push
+  tokens MUST be stored per-device and purged on logout or token rotation.
+- Background message handlers (`setBackgroundMessageHandler`) MUST be registered at
+  the app root before any navigation renders; they MUST not rely on React state.
+- The WebSocket connection remains the canonical channel for call signalling and media
+  negotiation; push notifications are the delivery mechanism for waking a backgrounded or
+  terminated app only. No duplicate signalling channel may be introduced.
+- `expo-secure-store` (or `react-native-mmkv` for non-sensitive session caches) MUST
+  be used for on-device persistence; no sensitive data (tokens, credentials) may be
+  stored in `AsyncStorage`.
+- New mobile screens MUST be added under the Expo Router file-system routing convention
+  (`mobile/app/`); direct `React Navigation` imperative stack usage is forbidden for
+  new screens.
+- Mobile TypeScript MUST pass `tsc --noEmit` without errors; implicit `any` is
+  forbidden in new code.
+
+**Rationale**: The mobile app is a shipping production client (v1.1.94) used by
+employees on Android 13+ and iOS 16+. Native call-UI reliability is a hard requirement:
+a missed incoming call is a critical UX failure. The FCM/APNs + CallKeep pipeline
+(ADR referenced in specs/20260617-024245-call-notification-parity) is the only path
+that satisfies OS-level behaviour requirements for background-terminated apps.
 
 ## Technology Stack Constraints
 
@@ -142,19 +192,30 @@ constitution amendment:
 |---|---|
 | Frontend framework | React 18 + Vite 7 + React Router v6 |
 | Styling | CSS Modules + global CSS variables; no CSS-in-JS, no SCSS |
-| Backend framework | Node.js + Express 5 |
+| Backend framework | Node.js + Express 5 (TypeScript); all server files MUST be `.ts` |
 | Primary database | PostgreSQL (pg pool) |
 | Cache / queue broker | Redis (ioredis) — optional, graceful fallback required |
 | Real-time transport | Native `ws` WebSocket library; no Socket.io |
+| WS validation | `server/utils/wsValidate.ts` — all WS handlers MUST use it |
+| WS idempotency | `server/utils/wsIdempotency.ts` — all mutable WS handlers MUST use it |
+| WS observability | `server/utils/wsMetrics.ts` — wrap every WS handler dispatch |
 | Auth token storage | HttpOnly cookies (JWT); no localStorage |
-| Structured logging | Pino |
-| Server testing | Jest + Supertest |
+| Structured logging | Pino (`server/utils/logger.ts`) |
+| Server testing | Jest + Supertest (45 suites in `server/__tests__/`) |
 | Client testing | Vitest + React Testing Library |
+| Mobile framework | React Native 0.85.3 + Expo SDK 56 + Expo Router (file-system routing) |
+| Mobile state | Zustand 5 (global) + TanStack Query 5 (server state) |
+| Mobile persistence | `expo-secure-store` (sensitive) / `react-native-mmkv` (cache) |
+| Mobile push | Firebase Messaging (`@react-native-firebase/messaging`) — FCM + APNs |
+| Mobile call UI | `react-native-callkeep` (CallKeep / ConnectionService) |
+| Mobile notifications | `@notifee/react-native` for Android full-screen call UX |
+| Mobile media | `react-native-webrtc` for WebRTC; `expo-audio` for in-call audio |
 | Containerisation | Docker + docker-compose; production on Railway |
 | Desktop shell | Electron (desktop/ directory) |
+| API routes | 30+ TypeScript route modules under `server/routes/` |
 
 New dependencies MUST be justified in the PR description with: purpose, bundle-size
-impact (client), and maintenance health (last release, open issues).
+impact (client/mobile), and maintenance health (last release, open issues).
 
 ## Development Workflow
 
@@ -171,6 +232,13 @@ impact (client), and maintenance health (last release, open issues).
   integration tests.
 - **Secrets management**: No secrets, API keys, or credentials in source code or commit
   history; use environment variables loaded from `.env` (gitignored).
+- **Mobile builds**: Mobile releases MUST go through EAS Build (`eas build`); local bare
+  builds are for development only. `google-services.json` and APNs credentials MUST be
+  managed via EAS Secrets, never committed to source.
+- **Mobile versioning**: `mobile/package.json#version` and `app.config.ts` `buildNumber`/
+  `versionCode` MUST be kept in sync; bump MUST accompany every EAS submission.
+- **Expo SDK upgrades**: Upgrading Expo SDK is a constitution-grade stack change and
+  MUST be backed by an ADR listing all affected `expo-*` package version locks.
 
 ## Governance
 
@@ -187,4 +255,4 @@ All PRs and code reviews MUST verify compliance with the principles above. Compl
 additions MUST be justified against Principle VI. Use `ARCHITECTURE.md` for runtime
 development guidance on the full module map.
 
-**Version**: 1.0.0 | **Ratified**: 2026-05-20 | **Last Amended**: 2026-05-29
+**Version**: 1.1.0 | **Ratified**: 2026-05-20 | **Last Amended**: 2026-07-01

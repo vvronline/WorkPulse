@@ -81,11 +81,13 @@ class PushNotificationService {
     ): void {
         const presentFields =
             notificationType === "call"
-                ? ["type", "callId", "conversationId", "callerId", "callerName", "callerAvatar", "dedupeKey", "expiresAt", "sentAt"]
-                : ["type", "conversationId", "messageId", "senderId", "senderName", "senderAvatar", "dedupeKey", "sentAt"];
+                ? ["type", "callId", "conversationId", "callerId", "dedupeKey", "expiresAt", "sentAt"]
+                : ["type", "conversationId", "messageId", "senderId", "dedupeKey", "sentAt"];
+        // For calls, callerName/callerAvatar are required only if hideSensitiveContent is false (i.e., when they are present in the payload).
+        // For messages, senderName/senderAvatar are always required (message preview is always shown in the current implementation).
         const nonEmptyFields =
             notificationType === "call"
-                ? ["type", "callId", "conversationId", "callerId", "callerName", "dedupeKey", "expiresAt", "sentAt"]
+                ? ["type", "callId", "conversationId", "callerId", "dedupeKey", "expiresAt", "sentAt"]
                 : ["type", "conversationId", "messageId", "senderId", "senderName", "dedupeKey", "sentAt"];
 
         const missing = presentFields.filter((field) => !(field in data));
@@ -219,8 +221,23 @@ class PushNotificationService {
             return { succeeded: 0, failed: 0 };
         }
 
+        // T050: Fetch user's notification prefs to check if sensitive content should be hidden
+        let hideSensitiveContent = false;
+        try {
+            const prefRow = (await query(
+                "SELECT notification_prefs FROM users WHERE id = $1",
+                [userId],
+            )).rows[0];
+            const prefs = prefRow?.notification_prefs || {};
+            hideSensitiveContent = Boolean(prefs.hideSensitiveContent);
+        } catch (err) {
+            logger.warn({ err: (err as Error).message, userId }, "Failed to fetch notification prefs; defaulting hideSensitiveContent to false");
+        }
+
+        // When hideSensitiveContent is true, show generic content on lock screen
+        const displayName = hideSensitiveContent ? "Incoming call" : callData.callerName;
         const title = callData.callType === "video" ? "Incoming Video Call" : "Incoming Voice Call";
-        const body = `${callData.callerName} is calling...`;
+        const body = hideSensitiveContent ? "Tap to answer" : `${callData.callerName} is calling...`;
         const callTTLSeconds = Number(process.env.PUSH_CALL_TTL_SECONDS || 30);
 
         // IMPORTANT: Incoming-call pushes are DATA-ONLY (no top-level
@@ -240,8 +257,11 @@ class PushNotificationService {
                 callId: String(callData.callId),
                 conversationId: String(callData.conversationId),
                 callerId: String(callData.callerId),
-                callerName: callData.callerName || "",
-                callerAvatar: callData.callerAvatar || "",
+                // Omit sensitive data (caller name/avatar) if hideSensitiveContent is true
+                ...(hideSensitiveContent ? {} : {
+                    callerName: callData.callerName || "",
+                    callerAvatar: callData.callerAvatar || "",
+                }),
                 callType: callData.callType,
                 isGroup: String(callData.isGroup || false),
                 groupName: callData.groupName || "",

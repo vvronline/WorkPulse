@@ -43,6 +43,38 @@
 - **Alternatives considered**:
   - Silent failure with logs only: rejected; poor user recoverability.
 
+## Decision 7: Ring TTL fixed at 30 seconds (clarification 2026-07-01)
+
+- **Decision**: The incoming-call invite rings for 30 seconds, then auto-transitions to `missed` and dismisses the native UI on all of the callee's devices.
+- **Rationale**: Matches Teams-style expectation and the existing server stale-call sweep window; short enough to avoid stuck ringing, long enough for a locked device to react.
+- **Alternatives considered**:
+  - 45s (existing sweep default): acceptable but longer than product target.
+  - Per-tenant configurable: rejected as premature (YAGNI, Principle VI).
+
+## Decision 8: First-write-wins for simultaneous multi-device answer (clarification 2026-07-01)
+
+- **Decision**: The first `call_accept` to reach the server applies the `answered` transition via the existing `withIdempotentCallAction` guard; other devices of the same callee receive `call_handled_elsewhere` and dismiss.
+- **Rationale**: Reuses the already-implemented atomic call-action idempotency; no new coordination protocol needed.
+- **Alternatives considered**:
+  - Most-recently-active device wins: rejected; requires extra device-activity tracking with no user benefit.
+  - Multi-device merge/join: rejected; out of scope for 1:1 call parity.
+
+## Decision 9: Lock-screen content shown by default with per-user hide toggle (clarification 2026-07-01, FR-010)
+
+- **Decision**: Caller name and message preview render on the lock screen by default; a per-user `hideSensitiveContent` preference switches to generic content ("Incoming call" / "New message") via Android channel `visibility` and iOS content-preview suppression.
+- **Rationale**: Matches WhatsApp/Teams defaults and the existing implementation (call pushes already carry caller name/avatar) while preserving a privacy escape hatch.
+- **Alternatives considered**:
+  - Always hide: rejected; degrades default UX.
+  - Always show (no toggle): rejected; no privacy control for shared/visible devices.
+
+## Decision 10: Launcher badge counts combined unread (clarification 2026-07-01)
+
+- **Decision**: The badge value is `unread chat messages + unread in-app notifications`, reconciled against the server's authoritative totals — matching the existing mobile `TopBar` computation.
+- **Rationale**: Users expect the launcher dot to reflect everything needing attention; codifies current behavior and prevents divergence tests from ambiguity.
+- **Alternatives considered**:
+  - Messages-only badge: rejected; hides mentions/task/approval notifications.
+  - Notifications-only badge: rejected; hides unread chats (the primary use case).
+
 ## End-to-end validation notes (2026-06-17)
 
 ### Automated validation

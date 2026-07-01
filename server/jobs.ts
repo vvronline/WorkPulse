@@ -35,11 +35,13 @@ let workers: any[] = [];
 let fallbackIntervals: NodeJS.Timeout[] = [];
 
 // How long an unanswered call may keep `ringing` before the server force-ends
-// it as "missed". Mirrors the caller's client-side no-answer timeout (~35s) but
-// is the authoritative backstop: it fires even when every client died mid-ring
-// (app killed, network dropped), so an abandoned call can never sit ringing
-// forever and the callee's ring UI / native push is always dismissed.
-const STALE_RINGING_TTL_SECS = 45;
+// it as "missed". Set to 30 seconds to match the ring push TTL and ensure calls
+// are auto-expired consistent with the incoming-call push window (clarification
+// session 2026-07-01). This is the authoritative backstop: it fires even when
+// every client died mid-ring (app killed, network dropped), so an abandoned call
+// can never sit ringing forever and the callee's ring UI / native push is always
+// dismissed.
+const STALE_RINGING_TTL_SECS = 30;
 const STALE_CALL_SWEEP_MS = 20 * 1000;
 // Hard backstop for ABANDONED answered calls. A normal call ends via the WS
 // `call_end` transition; but if every client dies mid-call (app killed, network

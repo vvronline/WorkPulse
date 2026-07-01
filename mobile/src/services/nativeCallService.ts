@@ -131,6 +131,23 @@ class NativeCallService {
     );
   }
 
+  /**
+   * Dismiss the native incoming-call UI when a call_ended/expiry frame arrives.
+   * Typically called by the WebSocket listener when a `call_ended` event is received
+   * after the ring TTL expires (T048: Clarification Follow-Up).
+   * Safe to call even if the call was already dismissed or never shown.
+   */
+  async dismissIncomingCall(callId: number, conversationId: number): Promise<void> {
+    const uuid = this.callUuid(callId, conversationId);
+    this.payloadByUuid.delete(uuid);
+    if (!this.callKeep || !this.nativeEnabled) return;
+    try {
+      this.callKeep.endCall?.(uuid);
+    } catch (err) {
+      console.warn("[nativeCallService] Failed to dismiss incoming call:", err);
+    }
+  }
+
   async handleAction(
     action: NativeAction,
     payload: NotificationPayload["data"],

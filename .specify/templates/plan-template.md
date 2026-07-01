@@ -46,14 +46,18 @@ Verify each principle from `.specify/memory/constitution.md` before proceeding:
       no client-supplied tenant override; any cross-tenant access has an ADR.
 - [ ] **II. Security-First** — JWT in HttpOnly cookies; RBAC enforced in middleware;
       rate limiting on public endpoints; passwords bcrypt-hashed; uploads authenticated.
-- [ ] **III. Real-Time Reliability** — WS handlers idempotent; state transitions flow
-      through single-responsibility services; no duplicate session/participant rows on reconnect.
+- [ ] **III. Real-Time Reliability** — WS handlers idempotent (`wsIdempotency.ts`);
+      WS payloads validated (`wsValidate.ts`); handler performance measured (`wsMetrics.ts`);
+      state transitions through single-responsibility services; no duplicate rows on reconnect.
 - [ ] **IV. Test Coverage** — Happy-path + primary error-case integration test for new
       routes; unit tests for new stateful services; client tests for data-mutation components.
 - [ ] **V. Observability** — Pino used for all server logging; significant domain events
       emit structured log + audit row; errors logged with context fields.
 - [ ] **VI. Simplicity** — No speculative features; no orphaned abstractions; Redis
       fallback handled; new deps justified in PR.
+- [ ] **VII. Mobile Platform Reliability** — (if mobile feature) Push via FCM/APNs;
+      native call UI via CallKeep; background handlers registered at app root; no sensitive
+      data in AsyncStorage; Expo Router file-system routing for new screens; `tsc` clean.
 
 ## Project Structure
 

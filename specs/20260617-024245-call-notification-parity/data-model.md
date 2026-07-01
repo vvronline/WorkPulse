@@ -32,7 +32,7 @@
 - `callerAvatar` (string | empty)
 - `callType` (`voice` | `video`, required)
 - `tenantId` (number | null, required)
-- `expiresAt` (timestamp, required)
+- `expiresAt` (timestamp, required) — set to `createdAt + 30 seconds` (ring TTL per clarification 2026-07-01)
 - `status` (`ringing` | `answered` | `rejected` | `missed` | `expired`)
 
 **Relationships**:
@@ -43,6 +43,8 @@
 - Only participants can transition invite state
 - Expired invite cannot move to answered
 - Deduplicate repeated push/action events by `callId + action + userId`
+- Ring TTL is 30 seconds; on expiry the invite auto-transitions to `missed` and the native call UI is dismissed on ALL of the callee's devices
+- **First-write-wins**: when multiple devices of the same callee answer, only the first `call_accept` to reach the server applies the `answered` transition; later ones are idempotent no-ops and their devices receive `call_handled_elsewhere`
 
 ## Entity: NativeCallActionEvent
 
@@ -73,28 +75,47 @@
 **Fields**:
 - `userId` (number, required)
 - `tenantId` (number | null, required)
-- `serverUnreadTotal` (number, required)
+- `serverUnreadTotal` (number, required) — combined total: unread chat messages + unread in-app notifications (clarification 2026-07-01)
 - `deviceBadgeCount` (number, required)
 - `lastSyncedAt` (timestamp, required)
 
 **Relationships**:
-- Derived from per-conversation unread counts (`messages`, `message_reads`, Redis cache)
+- Derived from per-conversation unread counts (`messages`, `message_reads`, Redis cache) PLUS unread `notifications` rows
 
 **Validation Rules**:
 - Never set negative counts
 - Sync from authoritative server totals after read events and app foreground transitions
+- Badge = unread messages + unread notifications; both sources reconcile to the same combined value the `TopBar` displays
+
+## Entity: LockScreenVisibilityPreference
+
+**Purpose**: Per-user control over whether sensitive push content (caller name, message preview) renders on the lock screen (FR-010, clarification 2026-07-01).
+
+**Fields**:
+- `userId` (number, required)
+- `tenantId` (number | null, required)
+- `hideSensitiveContent` (boolean, required, default `false`)
+
+**Relationships**:
+- One per `User`; stored with the user's existing notification preferences
+
+**Validation Rules**:
+- Default is `false` (content shown, WhatsApp/Teams-style)
+- When `true`, server/client render generic content only ("Incoming call" / "New message") via Android channel `visibility=private/secret` and iOS content-preview suppression
+- Preference is device-independent (applies to all of the user's devices)
 
 ## State Transitions
 
 ### Call Invite State
 `ringing -> answered -> ended`  
 `ringing -> rejected`  
-`ringing -> missed/expired`
+`ringing -> missed/expired` (auto-fires when the 30s ring TTL elapses with no answer)
 
 Invalid transitions (must be rejected/idempotent no-op):
 - `answered -> ringing`
 - `rejected -> answered`
 - `expired -> answered`
+- second `ringing -> answered` from a different device of the same callee (first-write-wins; the loser becomes a no-op + `call_handled_elsewhere`)
 
 ### Badge Sync State
 `stale -> syncing -> synced`  

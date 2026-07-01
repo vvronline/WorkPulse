@@ -1493,6 +1493,7 @@ export type NotificationPrefs = {
   muteAll?: boolean;
   playWhenFocused?: boolean;
   playOnSend?: boolean;
+  hideSensitiveContent?: boolean;
 };
 
 export function getNotificationPrefs() {
@@ -2318,3 +2319,58 @@ export function saveMyBankDetails(data: {
 }) {
   return api.post<{ message: string }>("/compensation/my-bank-details", data);
 }
+
+/* ───────────────────────── Global Search ───────────────────────── */
+
+/**
+ * Task result returned by GET /api/search?q=...
+ * Mirrors server/routes/search.ts task rows.
+ */
+export type GlobalSearchTask = {
+  id: number;
+  title: string;
+  description?: string | null;
+  status: string;
+  priority: string;
+  date?: string | null;
+  due_date?: string | null;
+  sprint_id?: number | null;
+  /** Server-generated highlighted excerpt (ts_headline). */
+  snippet?: string | null;
+};
+
+/** User result returned by global search. */
+export type GlobalSearchUser = {
+  id: number;
+  full_name: string;
+  username?: string | null;
+  avatar?: string | null;
+  role?: string | null;
+  department_name?: string | null;
+};
+
+/** Note page snippet returned by global search. */
+export type GlobalSearchNote = {
+  id: string;
+  title?: string | null;
+  snippet?: string | null;
+  updatedAt?: string | null;
+};
+
+export type GlobalSearchResults = {
+  tasks: GlobalSearchTask[];
+  users: GlobalSearchUser[];
+  notes: GlobalSearchNote[];
+  /** Audit-log hits (hr_admin+ only; empty array for lower roles). */
+  logs: unknown[];
+};
+
+/**
+ * Full-text global search across tasks, notes, users, and audit logs.
+ * Mirrors GET /api/search?q=<term>. Minimum query length: 2 chars.
+ * Results are Redis-cached server-side for 60s per user+query.
+ */
+export function globalSearch(q: string) {
+  return api.get<GlobalSearchResults>("/search", { params: { q } });
+}
+

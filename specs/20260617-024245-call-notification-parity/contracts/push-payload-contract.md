@@ -24,10 +24,11 @@ Defines server -> mobile push payload contract used by FCM/APNs for incoming cal
 ### Delivery requirements
 - High priority delivery
 - Collapse key: `call-{callId}`
-- TTL: short-lived (e.g. 30s)
+- TTL: 30 seconds (ring window; matches `IncomingCallInvite.expiresAt = createdAt + 30s`)
 - Channel/category:
   - Android channel: `default` (guaranteed), optional specialized runtime channel
   - iOS category: `incoming-call`
+- Lock-screen visibility: honors the target user's `hideSensitiveContent` preference (FR-010) — when enabled the payload omits `callerName`/`callerAvatar` from any OS-rendered content and the client posts a generic "Incoming call"
 
 ## Message Payload (data fields)
 
@@ -46,7 +47,8 @@ Defines server -> mobile push payload contract used by FCM/APNs for incoming cal
 ### Delivery requirements
 - High priority delivery
 - Collapse key: `msg-{messageId}`
-- Badge hint may be set, but server unread API remains authoritative
+- Badge hint may be set, but server unread API remains authoritative (badge = combined unread messages + notifications)
+- Lock-screen visibility: honors the target user's `hideSensitiveContent` preference (FR-010) — when enabled the client renders a generic "New message" without sender name/preview
 
 ## Validation Rules
 

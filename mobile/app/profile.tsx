@@ -1146,6 +1146,29 @@ function NotificationSoundsModal({
                 />
               </View>
             </Pressable>
+            <Pressable
+              style={styles.toggleRow}
+              onPress={() =>
+                update({ hideSensitiveContent: !prefs.hideSensitiveContent })
+              }
+            >
+              <Text style={styles.actionText}>
+                Hide sensitive content on lock screen
+              </Text>
+              <View
+                style={[
+                  styles.switch,
+                  prefs.hideSensitiveContent && styles.switchOn,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.knob,
+                    prefs.hideSensitiveContent && styles.knobOn,
+                  ]}
+                />
+              </View>
+            </Pressable>
           </View>
 
           <Pressable

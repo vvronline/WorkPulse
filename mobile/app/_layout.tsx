@@ -76,6 +76,10 @@ function ThemedStack() {
       <Stack.Screen name="login" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen
+        name="search"
+        options={{ ...headerScreen, title: "Search" }}
+      />
+      <Stack.Screen
         name="notifications"
         options={{ ...headerScreen, title: "Notifications" }}
       />

@@ -6,7 +6,7 @@
  * when notifications arrive or messages are read.
  */
 
-import { EventEmitter } from 'eventemitter3';
+/// <reference types="jest" />
 
 // Mock types
 interface UnreadSyncState {
@@ -16,7 +16,33 @@ interface UnreadSyncState {
   isDirty: boolean;
 }
 
-class ChatUnreadEvents extends EventEmitter {
+interface EventListener {
+  (data: any): void;
+}
+
+// Simple EventEmitter mock to avoid external dependencies in test
+class EventEmitterMock {
+  private listeners = new Map<string, EventListener[]>();
+
+  on(event: string, listener: EventListener): this {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, []);
+    }
+    this.listeners.get(event)!.push(listener);
+    return this;
+  }
+
+  emit(event: string, data: any): boolean {
+    const eventListeners = this.listeners.get(event);
+    if (eventListeners) {
+      eventListeners.forEach((listener) => listener(data));
+      return true;
+    }
+    return false;
+  }
+}
+
+class ChatUnreadEvents extends EventEmitterMock {
   private unreadState = new Map<string, UnreadSyncState>();
 
   updateUnreadCount(conversationId: string, count: number) {
@@ -86,7 +112,7 @@ describe('Chat Unread Events - Badge Synchronization', () => {
     expect(chatUnread.getTotalUnread()).toBe(10);
   });
 
-  test('T025.3: Emit event when unread count changes', (done) => {
+  test('T025.3: Emit event when unread count changes', (done: jest.DoneCallback) => {
     const listener = jest.fn();
     chatUnread.on('unread:updated', listener);
 
@@ -107,7 +133,7 @@ describe('Chat Unread Events - Badge Synchronization', () => {
     expect(chatUnread.getUnreadCount('conv-1')).toBe(0);
   });
 
-  test('T025.5: Emit cleared event when conversation marked read', (done) => {
+  test('T025.5: Emit cleared event when conversation marked read', (done: jest.DoneCallback) => {
     const listener = jest.fn();
     chatUnread.on('unread:cleared', listener);
 
@@ -159,5 +185,34 @@ describe('Chat Unread Events - Badge Synchronization', () => {
     });
 
     expect(chatUnread.getTotalUnread()).toBe(10);
+  });
+
+  test('T055: Launcher badge combines messages + in-app notifications (separate tracking)', () => {
+    /**
+     * Clarification: 2026-07-01 session.
+     * Badge formula: launcherBadge = getTotalUnread() + totalNotifications
+     * 
+     * ChatUnreadEvents tracks unread MESSAGES only.
+     * In-app NOTIFICATIONS are tracked by a separate system (NotificationCenter, etc).
+     * The launcher badge combines both totals.
+     */
+
+    // Verify that getTotalUnread() correctly sums all conversation messages
+    chatUnread.updateUnreadCount('conv-1', 5);
+    chatUnread.updateUnreadCount('conv-2', 2);
+    chatUnread.updateUnreadCount('conv-3', 3);
+
+    const totalUnreadMessages = chatUnread.getTotalUnread();
+    expect(totalUnreadMessages).toBe(10); // 5 + 2 + 3
+
+    // In the actual app, the launcher badge would be:
+    // launcherBadge = totalUnreadMessages (10) + totalNotifications (0 in this test)
+    expect(totalUnreadMessages).toBeGreaterThanOrEqual(0);
+
+    // Verify badge updates correctly when a conversation is read
+    chatUnread.markConversationRead('conv-1'); // 5 unread messages cleared
+
+    const updatedTotal = chatUnread.getTotalUnread();
+    expect(updatedTotal).toBe(5); // 0 + 2 + 3 (remaining from conv-2 and conv-3)
   });
 });

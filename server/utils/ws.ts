@@ -16,6 +16,7 @@ import type { IncomingMessage } from "http";
 import { logger, logPushCallLifecycle } from "./logger";
 import { chatMessage } from "./wsHandlers/chatMessage";
 import { withIdempotency, withIdempotentCallAction } from "./wsIdempotency";
+import { schema, validate } from "./wsValidate";
 import { pushNotifications } from "../services/pushNotifications";
 const { WebSocketServer } = require("ws");
 const jwt = require("jsonwebtoken");
@@ -1115,8 +1116,19 @@ async function handleChatMessage(
     });
     return;
   } else if (msg.type === "chat_typing") {
-    const { conversationId } = msg.data || {};
-    if (!conversationId) return;
+    // wsValidate: constitution Principle III — typed schema check replaces the
+    // former bare `if (!conversationId) return;` silent-drop. Validation
+    // failures are logged (not silently swallowed) but produce no reply frame
+    // (typing indicators are fire-and-forget; a typed error ack adds no value).
+    const parsed = validate({ conversationId: schema.posInt() }, msg.data);
+    if (!parsed.ok) {
+      logger.warn(
+        { senderId, tenantId, errors: parsed.errors },
+        "chat_typing: schema validation failed",
+      );
+      return;
+    }
+    const { conversationId } = parsed.value as { conversationId: number };
 
     // Verify sender is a participant
     const participant = (
@@ -1142,13 +1154,22 @@ async function handleChatMessage(
       });
     }
   } else if (msg.type === "chat_read") {
-    const { conversationId } = msg.data || {};
-    if (!conversationId) return;
+    // wsValidate: same pattern as chat_typing — silent-drop replaced with a
+    // logged validation failure so bad frames surface in wsMetrics.
+    const parsedRead = validate({ conversationId: schema.posInt() }, msg.data);
+    if (!parsedRead.ok) {
+      logger.warn(
+        { senderId, tenantId, errors: parsedRead.errors },
+        "chat_read: schema validation failed",
+      );
+      return;
+    }
+    const { conversationId: readConvId } = parsedRead.value as { conversationId: number };
 
     const participant = (
       await db.query(
         "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
-        [conversationId, senderId],
+        [readConvId, senderId],
       )
     ).rows[0];
     if (!participant) return;
@@ -1157,9 +1178,9 @@ async function handleChatMessage(
       `INSERT INTO message_reads (conversation_id, user_id, last_read_at)
              VALUES ($1, $2, NOW())
              ON CONFLICT (conversation_id, user_id) DO UPDATE SET last_read_at = NOW()`,
-      [conversationId, senderId],
+      [readConvId, senderId],
     );
-    redis.resetUnread(tenantId, senderId, conversationId);
+    redis.resetUnread(tenantId, senderId, readConvId);
   } else if (msg.type === "call_initiate") {
     // Caller initiates a call → create call_log, notify participants.
     // T038: gate this with idempotency so reconnect replays don't create

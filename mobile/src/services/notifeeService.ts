@@ -890,6 +890,10 @@ class NotifeeService {
    * what surfaces the WhatsApp/Teams-style incoming-call screen over the lock
    * screen even when the app is terminated. Includes Answer/Decline actions
    * handled by the background/foreground event handlers below.
+   * 
+   * T051: Respects the lock-screen content visibility preference. When the server
+   * omitted callerName/callerAvatar (due to hideSensitiveContent=true), sets
+   * Android channel visibility to PRIVATE/SECRET to suppress the lock-screen content.
    */
   async displayIncomingCall(data: NotificationPayload["data"]): Promise<void> {
     if (!data?.callId || !data?.conversationId) return;
@@ -946,6 +950,14 @@ class NotifeeService {
         : "Incoming Voice Call");
     const body = data.body || `${data.callerName || "Someone"} is calling...`;
     const id = callNotificationId(data.callId, data.conversationId);
+
+    // T051: Detect if sensitive content is hidden by checking if callerName is present.
+    // When the server omitted callerName/callerAvatar (hideSensitiveContent=true),
+    // set Android visibility to PRIVATE so the lock-screen suppresses the content.
+    const hidingSensitiveContent = !data.callerName && !data.callerAvatar;
+    const androidVisibility = hidingSensitiveContent
+      ? this.AndroidVisibility.PRIVATE ?? 0  // PRIVATE = 0
+      : this.AndroidVisibility.PUBLIC ?? 1;   // PUBLIC = 1
 
     // Honour the user's `muteAll` preference even in the killed/headless state.
     // The prefs are persisted to SecureStore while the app is alive (see
@@ -1018,7 +1030,7 @@ class NotifeeService {
           channelId: effectiveChannelId,
           category: this.AndroidCategory.CALL ?? "call",
           importance: this.AndroidImportance.HIGH ?? 4,
-          visibility: this.AndroidVisibility.PUBLIC ?? 1,
+          visibility: androidVisibility,
           // Full-screen intent: launches the app's main activity full-screen
           // over the lock screen even when terminated.
           fullScreenAction: {

@@ -1,12 +1,22 @@
 # Implementation Plan: Native Incoming Call & Notification Parity
 
-**Branch**: `20260617-024245-call-notification-parity` | **Date**: 2026-06-17 | **Spec**: `specs/20260617-024245-call-notification-parity/spec.md`
+**Branch**: `20260617-024245-call-notification-parity` | **Date**: 2026-07-01 | **Spec**: `specs/20260617-024245-call-notification-parity/spec.md`
 
 **Input**: Feature specification from `specs/20260617-024245-call-notification-parity/spec.md`
 
 ## Summary
 
 Implement a native call-notification pipeline (CallKeep/ConnectionService + FCM/APNs background handling) so incoming calls can be shown and answered from OS UI when app is backgrounded/terminated, while preserving current websocket-based media negotiation. In parallel, harden message notification status-bar delivery and launcher badge synchronization using server-authoritative unread counts and resilient client sync hooks.
+
+## Clarifications Applied (2026-07-01 session)
+
+The spec's Clarifications session resolved 5 decisions now baked into this plan:
+
+1. **Ring TTL = 30 seconds** — `IncomingCallInvite.expiresAt = createdAt + 30s`; on expiry the invite is auto-marked missed and the native UI is dismissed on all devices.
+2. **Simultaneous multi-device answer = first-write-wins** — the first `call_accept` to reach the server applies the transition (existing `withIdempotentCallAction`); losers get `call_handled_elsewhere`.
+3. **Lock-screen content = shown by default + per-user hide toggle** — new FR-010; drives push payload + Android channel `visibility` / iOS content-preview settings.
+4. **Launcher badge = combined** — unread chat messages + unread in-app notifications (matches existing `TopBar` behavior).
+5. **Supported devices = Android 13+ / iOS 16+** — already the plan's target platform; now bounds the success-criteria test matrix.
 
 ## Technical Context
 
@@ -16,8 +26,8 @@ Implement a native call-notification pipeline (CallKeep/ConnectionService + FCM/
 
 **Primary Dependencies**:
 - Existing: `expo-notifications`, `react-native-webrtc`, websocket signaling (`mobile/src/realtime/socket.ts`, `server/utils/ws.ts`)
-- New (planned): `react-native-callkeep`, `@react-native-firebase/messaging`
-- Optional: `@notifee/react-native` for Android full-screen call UX polish
+- Already installed (per `mobile/package.json`): `react-native-callkeep` ^4.3.14, `@react-native-firebase/app` + `@react-native-firebase/messaging` ^22.4.0, `@notifee/react-native` ^9.1.8, `react-native-incall-manager` ^4.2.1
+- Building on the existing implemented stack — no new dependency additions required for this plan.
 
 **Storage**:
 - PostgreSQL tables reused: `device_tokens`, `call_logs`, `messages`, `message_reads`
@@ -56,7 +66,8 @@ Implement a native call-notification pipeline (CallKeep/ConnectionService + FCM/
 - [x] **III. Real-Time Reliability** — Plan enforces idempotent call action processing and reconnect-safe retries.
 - [x] **IV. Test Coverage** — Plan includes server integration + handler unit coverage for new stateful paths.
 - [x] **V. Observability** — Add structured logs for push dispatch, native action callbacks, retry/failure states.
-- [x] **VI. Simplicity** — Minimal new dependencies (CallKeep + FCM messaging) justified by mandatory OS-level behavior requirement.
+- [x] **VI. Simplicity** — Reuses the already-installed native stack (CallKeep + Firebase Messaging + Notifee); no new dependencies added by this plan.
+- [x] **VII. Mobile Platform Reliability** — FCM/APNs via `@react-native-firebase/messaging`; native call UI via CallKeep/ConnectionService; background handler registered at app root (`mobile/index.js`); tokens in `expo-secure-store`; new screens use Expo Router; `tsc --noEmit` clean.
 
 ## Project Structure
 
@@ -124,9 +135,15 @@ server/
 - [x] **IV. Test Coverage** — Contract + integration tests defined in quickstart and contracts.
 - [x] **V. Observability** — Contract requires structured log keys for every state transition.
 - [x] **VI. Simplicity** — No speculative features (group-call expansion, PSTN bridging) included.
+- [x] **VII. Mobile Platform Reliability** — Design keeps the WebSocket as the canonical signaling channel (push is wake-up only); lock-screen privacy toggle (FR-010) respects OS visibility settings; no sensitive data leaves `expo-secure-store`.
 
 ## Complexity Tracking
 
+No outstanding constitution violations. The native dependencies (`react-native-callkeep`,
+`@react-native-firebase/messaging`, `@notifee/react-native`) are already present in
+`mobile/package.json` and in use, so this plan introduces no new complexity — it wires
+the existing implemented stack to the clarified requirements.
+
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| New native dependencies (`react-native-callkeep`, Firebase Messaging) | Required for true OS-level answer-from-lock-screen behavior | Expo notifications + JS-only handlers cannot guarantee terminated-state call UI parity |
+| _(none — building on already-installed stack)_ | — | — |

@@ -1,18 +1,18 @@
 # Quickstart - Native Incoming Call & Notification Parity
 
-## 1. Install planned dependencies
+## 1. Dependencies (already installed)
 
-From repository root:
+The native call/push stack is already present in `mobile/package.json` — no install step is
+required when building on the existing implemented stack. For reference, the packages are:
 
 ```powershell
+# Already in mobile/package.json (verify only):
+#   react-native-callkeep ^4.3.14
+#   @react-native-firebase/app + @react-native-firebase/messaging ^22.4.0
+#   @notifee/react-native ^9.1.8
+#   react-native-incall-manager ^4.2.1
 Set-Location D:\Learnings\WorkPulse\mobile
-npm install react-native-callkeep @react-native-firebase/app @react-native-firebase/messaging
-```
-
-Optional Android UX enhancement:
-
-```powershell
-npm install @notifee/react-native
+npm ls react-native-callkeep @react-native-firebase/messaging @notifee/react-native
 ```
 
 ## 2. Generate native projects (Expo custom workflow)
