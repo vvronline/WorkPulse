@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   UserPlus,
   Upload,
-  Link as LinkIcon,
   ArrowLeft,
   ArrowRight,
   Check,
@@ -11,7 +10,6 @@ import {
   Download,
   AlertTriangle,
   FileText,
-  Trash2,
   Plus,
 } from "lucide-react";
 import {
@@ -21,19 +19,19 @@ import {
   getCurrentOrg,
   getOrgDepartments,
   getOrgTeams,
-  createInviteCode,
 } from "../../api";
 import { ROLES, ROLE_LABELS } from "./constants";
 import s from "./UserManagement.module.css";
 import w from "./AddPeopleWizard.module.css";
 
 /**
- * AddPeopleWizard — unified flow that merges Create User + Import Users +
- * Invite Code generation into a single 3-step wizard:
+ * AddPeopleWizard — admin-only flow to add users to the organization via a
+ * single 3-step wizard. Self-serve registration / invite links are
+ * intentionally omitted: only an admin can add members.
  *
- *   Step 1: Choose method (single / bulk paste / file upload / invite link)
+ *   Step 1: Choose method (single / bulk paste / file upload)
  *   Step 2: Provide data + review defaults (org, dept, team)
- *   Step 3: Send / generate, show results
+ *   Step 3: Send, show results
  *
  * Props:
  *   userRole             – current admin role
@@ -64,12 +62,6 @@ const METHODS: Method[] = [
     title: "Upload a file",
     desc: "CSV or JSON file (up to 200 users per batch).",
     icon: Upload,
-  },
-  {
-    key: "invite",
-    title: "Generate invite link",
-    desc: "Share a code or self-serve registration link.",
-    icon: LinkIcon,
   },
 ];
 
@@ -176,12 +168,6 @@ export default function AddPeopleWizard({
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  // ─── Invite code form ──
-  const [inviteForm, setInviteForm] = useState({
-    max_uses: "",
-    expires_days: "7",
-  });
-  const [generatedCode, setGeneratedCode] = useState<any>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
   // ─── Helpers ──────────────────────────────────────────────────────────
@@ -196,7 +182,6 @@ export default function AddPeopleWizard({
     setParsedRows([]);
     setParseErrors([]);
     setFile(null);
-    setGeneratedCode(null);
   };
 
   /** Parse pasted text — accepts TSV/CSV with optional header row. */
@@ -386,17 +371,6 @@ export default function AddPeopleWizard({
             onCompleted?.(`Added ${(r.data as any).imported} user(s)`);
           break;
         }
-        case "invite": {
-          const payload: any = { role: defaults.role };
-          if (inviteForm.max_uses)
-            payload.max_uses = Number(inviteForm.max_uses);
-          if (inviteForm.expires_days)
-            payload.expires_days = Number(inviteForm.expires_days);
-          const r = await createInviteCode(payload);
-          setGeneratedCode(r.data);
-          setResult({ kind: "invite", code: (r.data as any).code });
-          break;
-        }
         default:
           break;
       }
@@ -471,12 +445,9 @@ export default function AddPeopleWizard({
     <div className={w.defaults}>
       <h4 className={w.h4}>Defaults</h4>
       <p className={w.helpText}>
-        {method === "single" && "Set the role and assignment for this user."}
-        {method !== "single" &&
-          method !== "invite" &&
-          "Apply these defaults when a row doesn't specify them."}
-        {method === "invite" &&
-          "New users registering with this code will be assigned these defaults."}
+        {method === "single"
+          ? "Set the role and assignment for this user."
+          : "Apply these defaults when a row doesn't specify them."}
       </p>
       <div className={w.fieldGrid}>
         <div className={w.field}>
@@ -517,48 +488,44 @@ export default function AddPeopleWizard({
             </select>
           </div>
         )}
-        {method !== "invite" && (
-          <>
-            <div className={w.field}>
-              <label>Department</label>
-              <select
-                value={defaults.department_id}
-                onChange={(e) =>
-                  setDefaults((d) => ({
-                    ...d,
-                    department_id: e.target.value,
-                    team_id: "",
-                  }))
-                }
-                disabled={userRole === "platform_admin" && !defaults.org_id}
-              >
-                <option value="">— None —</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className={w.field}>
-              <label>Team</label>
-              <select
-                value={defaults.team_id}
-                onChange={(e) =>
-                  setDefaults((d) => ({ ...d, team_id: e.target.value }))
-                }
-                disabled={userRole === "platform_admin" && !defaults.org_id}
-              >
-                <option value="">— None —</option>
-                {filteredTeams.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </>
-        )}
+        <div className={w.field}>
+          <label>Department</label>
+          <select
+            value={defaults.department_id}
+            onChange={(e) =>
+              setDefaults((d) => ({
+                ...d,
+                department_id: e.target.value,
+                team_id: "",
+              }))
+            }
+            disabled={userRole === "platform_admin" && !defaults.org_id}
+          >
+            <option value="">— None —</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className={w.field}>
+          <label>Team</label>
+          <select
+            value={defaults.team_id}
+            onChange={(e) =>
+              setDefaults((d) => ({ ...d, team_id: e.target.value }))
+            }
+            disabled={userRole === "platform_admin" && !defaults.org_id}
+          >
+            <option value="">— None —</option>
+            {filteredTeams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
     </div>
   );
@@ -718,44 +685,6 @@ export default function AddPeopleWizard({
       );
     }
 
-    if (method === "invite") {
-      return (
-        <>
-          <h3 className={w.h3}>Invite link options</h3>
-          <p className={w.helpText}>
-            Generate a self-serve registration code. Anyone with the code can
-            register and join your organization with the configured role.
-          </p>
-          <div className={w.fieldGrid}>
-            <div className={w.field}>
-              <label>Max uses (0 = unlimited)</label>
-              <input
-                type="number"
-                min="0"
-                value={inviteForm.max_uses}
-                onChange={(e) =>
-                  setInviteForm({ ...inviteForm, max_uses: e.target.value })
-                }
-                placeholder="Unlimited"
-              />
-            </div>
-            <div className={w.field}>
-              <label>Expires in (days)</label>
-              <input
-                type="number"
-                min="1"
-                value={inviteForm.expires_days}
-                onChange={(e) =>
-                  setInviteForm({ ...inviteForm, expires_days: e.target.value })
-                }
-                placeholder="Never"
-              />
-            </div>
-          </div>
-          {renderDefaults()}
-        </>
-      );
-    }
     return null;
   };
 
@@ -786,19 +715,6 @@ export default function AddPeopleWizard({
           {method === "file" && (
             <p className={w.helpText}>
               Upload <strong>{file?.name}</strong> for processing?
-            </p>
-          )}
-          {method === "invite" && (
-            <p className={w.helpText}>
-              Generate an invite code for the{" "}
-              <strong>{ROLE_LABELS[defaults.role]}</strong> role
-              {inviteForm.max_uses
-                ? ` with max ${inviteForm.max_uses} uses`
-                : " with unlimited uses"}
-              {inviteForm.expires_days
-                ? `, expiring in ${inviteForm.expires_days} day${inviteForm.expires_days === "1" ? "" : "s"}`
-                : ", never expiring"}
-              ?
             </p>
           )}
         </div>
@@ -912,41 +828,6 @@ export default function AddPeopleWizard({
       );
     }
 
-    // Invite result
-    if (result.kind === "invite" && generatedCode) {
-      const link = `${window.location.origin}/register?invite=${generatedCode.code}`;
-      return (
-        <div className={w.successState}>
-          <Check size={32} color="var(--success)" />
-          <h3 className={w.h3}>Invite code generated</h3>
-          <div className={w.codeBox}>
-            <div className={w.codeRow}>
-              <span className={w.codeLabel}>Code</span>
-              <code className={w.codeVal}>{generatedCode.code}</code>
-              <button
-                className={`${s.btn} ${s.secondary}`}
-                onClick={() => copy(generatedCode.code, "code")}
-              >
-                {copied === "code" ? <Check size={14} /> : <Copy size={14} />}
-              </button>
-            </div>
-            <div className={w.codeRow}>
-              <span className={w.codeLabel}>Link</span>
-              <code className={w.codeVal} style={{ fontSize: "0.78rem" }}>
-                {link}
-              </code>
-              <button
-                className={`${s.btn} ${s.secondary}`}
-                onClick={() => copy(link, "link")}
-              >
-                {copied === "link" ? <Check size={14} /> : <Copy size={14} />}
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
     return null;
   };
 
@@ -964,7 +845,6 @@ export default function AddPeopleWizard({
       }
       if (method === "paste") return parsedRows.length > 0;
       if (method === "file") return !!file;
-      if (method === "invite") return true;
     }
     return false;
   })();
@@ -1026,11 +906,7 @@ export default function AddPeopleWizard({
         )}
         {step === 3 && !result && (
           <button className={s.btn} onClick={submit} disabled={busy}>
-            {busy
-              ? "Working…"
-              : method === "invite"
-                ? "Generate code"
-                : "Submit"}
+            {busy ? "Working…" : "Submit"}
           </button>
         )}
       </div>

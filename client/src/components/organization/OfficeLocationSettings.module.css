@@ -102,6 +102,11 @@
     font-size: 0.82rem;
 }
 
+.locNote {
+    color: var(--success, #10b981);
+    font-size: 0.82rem;
+}
+
 .mapHint {
     display: inline-flex;
     align-items: center;
@@ -457,8 +462,17 @@
     line-height: 1.35;
 }
 
-.searchItem:hover {
+.searchItem:hover,
+.searchItemActive {
     background: var(--bg-hover);
+}
+
+/* Keyboard-highlighted result — a touch stronger than hover so it reads as
+   "this is what Enter will pick". */
+.searchItemActive {
+    background: var(--accent-light, rgba(35, 131, 226, 0.14));
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
 }
 
 .searchItemIcon {

@@ -47,10 +47,11 @@ describe("Login page", () => {
         expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
     });
 
-    test("renders register and forgot password links", () => {
+    test("renders forgot password link and no self-serve register link", () => {
         renderLogin();
-        expect(screen.getByText(/register/i)).toBeInTheDocument();
         expect(screen.getByText(/forgot password/i)).toBeInTheDocument();
+        // Self-serve registration was removed — users are added by an admin only.
+        expect(screen.queryByText(/register/i)).not.toBeInTheDocument();
     });
 
     test("calls login API on form submit", async () => {

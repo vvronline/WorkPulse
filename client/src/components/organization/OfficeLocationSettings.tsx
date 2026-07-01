@@ -16,7 +16,12 @@ import {
     Trash2,
 } from "lucide-react";
 import { updateOrgSettings } from "../../api";
-import { getCurrentPosition, geolocationErrorMessage, getWifiInfo } from "../../utils/geolocation";
+import {
+    getCurrentPosition,
+    geolocationErrorMessage,
+    getWifiInfo,
+    reverseGeocode,
+} from "../../utils/geolocation";
 import s from "./OfficeLocationSettings.module.css";
 
 // Leaflet's default marker icon URLs are broken when bundled by Vite/Webpack,
@@ -152,6 +157,13 @@ export default function OfficeLocationSettings({ org, onUpdate }: OfficeLocation
     const [busy, setBusy] = useState(false);
     const [toast, setToast] = useState<{ kind: string; text: string } | null>(null);
     const [gpsErr, setGpsErr] = useState<string | null>(null);
+    // "Use my current location" progress + a short-lived success note so the
+    // admin sees the fix accuracy after the button resolves.
+    const [locating, setLocating] = useState(false);
+    const [locNote, setLocNote] = useState<string | null>(null);
+    // Abort any in-flight reverse-geocode when a newer pick supersedes it, so
+    // an older (slower) lookup can't clobber the address of a newer location.
+    const reverseAbortRef = useRef<AbortController | null>(null);
 
     // Office Wi-Fi BSSID allow-list (Stage 7: Wi-Fi-first attendance).
     // Each entry: { bssid, label, ssid?, added_by?, added_at? }
@@ -302,9 +314,13 @@ export default function OfficeLocationSettings({ org, onUpdate }: OfficeLocation
     const [searching, setSearching] = useState(false);
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchErr, setSearchErr] = useState<string | null>(null);
+    // Index of the keyboard-highlighted result (-1 = none). Enables ↑/↓/Enter
+    // navigation of the results dropdown.
+    const [activeIndex, setActiveIndex] = useState(-1);
     const searchAbortRef = useRef<AbortController | null>(null);
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const searchBoxRef = useRef<HTMLDivElement | null>(null);
+    const searchListRef = useRef<HTMLUListElement | null>(null);
 
     // Debounced Nominatim lookup. Polite usage: small delay + abort on retype.
     useEffect(() => {
@@ -333,6 +349,7 @@ export default function OfficeLocationSettings({ org, onUpdate }: OfficeLocation
                 if (!res.ok) throw new Error("search_failed");
                 const data = await res.json();
                 setSearchResults(Array.isArray(data) ? data : []);
+                setActiveIndex(-1);
                 setSearchOpen(true);
             } catch (err: any) {
                 if (err.name !== "AbortError") {
@@ -363,11 +380,39 @@ export default function OfficeLocationSettings({ org, onUpdate }: OfficeLocation
         const la = Number(r.lat);
         const lo = Number(r.lon);
         if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
-        setLat(Number(la.toFixed(6)));
-        setLng(Number(lo.toFixed(6)));
+        const roundedLat = Number(la.toFixed(6));
+        const roundedLng = Number(lo.toFixed(6));
+        setLat(roundedLat);
+        setLng(roundedLng);
         if (r.display_name) setAddress(r.display_name);
         setSearchQuery(r.display_name || searchQuery);
         setSearchOpen(false);
+        setActiveIndex(-1);
+    }
+
+    // Keyboard navigation for the results dropdown: ↑/↓ move the highlight,
+    // Enter selects the highlighted (or first) result, Escape closes it.
+    function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+        if (!searchOpen || searchResults.length === 0) {
+            if (e.key === "Escape") setSearchOpen(false);
+            return;
+        }
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setActiveIndex((i) => (i + 1) % searchResults.length);
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setActiveIndex((i) => (i <= 0 ? searchResults.length - 1 : i - 1));
+        } else if (e.key === "Enter") {
+            e.preventDefault();
+            const idx = activeIndex >= 0 ? activeIndex : 0;
+            const chosen = searchResults[idx];
+            if (chosen) pickSearchResult(chosen);
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            setSearchOpen(false);
+            setActiveIndex(-1);
+        }
     }
 
     function clearSearch() {
@@ -375,6 +420,33 @@ export default function OfficeLocationSettings({ org, onUpdate }: OfficeLocation
         setSearchResults([]);
         setSearchOpen(false);
         setSearchErr(null);
+        setActiveIndex(-1);
+    }
+
+    /**
+     * Apply a freshly-picked location (from "use my location" or a map click):
+     * store the rounded coords, then reverse-geocode to fill the exact office
+     * address + search box so the pin and the human-readable address stay in
+     * sync however the location was chosen. Aborts any older lookup so a slow
+     * response can't overwrite a newer pick.
+     */
+    async function applyPickedLocation(rawLat: number, rawLng: number) {
+        const roundedLat = Number(rawLat.toFixed(6));
+        const roundedLng = Number(rawLng.toFixed(6));
+        setLat(roundedLat);
+        setLng(roundedLng);
+
+        if (reverseAbortRef.current) reverseAbortRef.current.abort();
+        const ac = new AbortController();
+        reverseAbortRef.current = ac;
+        const resolved = await reverseGeocode(roundedLat, roundedLng, {
+            signal: ac.signal,
+        });
+        if (ac.signal.aborted) return;
+        if (resolved) {
+            setAddress(resolved);
+            setSearchQuery(resolved);
+        }
     }
 
     // Fall back to a sensible default centre (Mumbai) when nothing is set yet.
@@ -383,12 +455,23 @@ export default function OfficeLocationSettings({ org, onUpdate }: OfficeLocation
 
     async function handleUseMyLocation() {
         setGpsErr(null);
+        setLocNote(null);
+        setLocating(true);
         try {
             const pos = await getCurrentPosition();
-            setLat(Number(pos.latitude.toFixed(6)));
-            setLng(Number(pos.longitude.toFixed(6)));
+            await applyPickedLocation(pos.latitude, pos.longitude);
+            setLocNote(
+                `Location set (±${Math.round(pos.accuracy)} m). Address filled from the pin — adjust if needed.`
+            );
         } catch (err: any) {
-            setGpsErr(geolocationErrorMessage(err?.code));
+            setGpsErr(
+                geolocationErrorMessage(err?.code, {
+                    accuracy: err?.accuracy,
+                    source: err?.source,
+                })
+            );
+        } finally {
+            setLocating(false);
         }
     }
 
@@ -696,9 +779,17 @@ export default function OfficeLocationSettings({ org, onUpdate }: OfficeLocation
                         placeholder="Search for a place or address (e.g. Tech Park Pune)"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={handleSearchKeyDown}
                         onFocus={() => {
                             if (searchResults.length > 0) setSearchOpen(true);
                         }}
+                        role="combobox"
+                        aria-expanded={searchOpen}
+                        aria-controls="office-search-results"
+                        aria-autocomplete="list"
+                        aria-activedescendant={
+                            activeIndex >= 0 ? `office-search-opt-${activeIndex}` : undefined
+                        }
                     />
                     {searching && <Loader2 size={14} className={`${s.searchSpin} ${s.spin}`} />}
                     {!!searchQuery && !searching && (
@@ -712,12 +803,21 @@ export default function OfficeLocationSettings({ org, onUpdate }: OfficeLocation
                         </button>
                     )}
                     {searchOpen && (searchResults.length > 0 || searchErr) && (
-                        <ul className={s.searchDropdown}>
+                        <ul
+                            className={s.searchDropdown}
+                            ref={searchListRef}
+                            id="office-search-results"
+                            role="listbox"
+                        >
                             {searchErr && <li className={s.searchError}>{searchErr}</li>}
-                            {searchResults.map((r) => (
+                            {searchResults.map((r, idx) => (
                                 <li
                                     key={r.place_id}
-                                    className={s.searchItem}
+                                    id={`office-search-opt-${idx}`}
+                                    role="option"
+                                    aria-selected={idx === activeIndex}
+                                    className={`${s.searchItem} ${idx === activeIndex ? s.searchItemActive : ""}`}
+                                    onMouseEnter={() => setActiveIndex(idx)}
                                     onClick={() => pickSearchResult(r)}
                                 >
                                     <MapPin size={12} className={s.searchItemIcon} />
@@ -737,10 +837,20 @@ export default function OfficeLocationSettings({ org, onUpdate }: OfficeLocation
                     type="button"
                     className="btn btn-secondary btn-sm"
                     onClick={handleUseMyLocation}
+                    disabled={locating}
                 >
-                    <Crosshair size={14} /> Use my current location
+                    {locating ? (
+                        <>
+                            <Loader2 size={14} className={s.spin} /> Locating…
+                        </>
+                    ) : (
+                        <>
+                            <Crosshair size={14} /> Use my current location
+                        </>
+                    )}
                 </button>
                 {gpsErr && <span className={s.gpsErr}>{gpsErr}</span>}
+                {!gpsErr && locNote && <span className={s.locNote}>{locNote}</span>}
                 <span className={s.mapHint}>
                     <MapPin size={14} /> Click the map to set the office location
                 </span>
@@ -761,8 +871,9 @@ export default function OfficeLocationSettings({ org, onUpdate }: OfficeLocation
                     <ResizeFixer />
                     <ClickHandler
                         onPick={(la, lo) => {
-                            setLat(Number(la.toFixed(6)));
-                            setLng(Number(lo.toFixed(6)));
+                            setGpsErr(null);
+                            setLocNote(null);
+                            void applyPickedLocation(la, lo);
                         }}
                     />
                     {hasLocation && <Recenter lat={lat!} lng={lng!} />}

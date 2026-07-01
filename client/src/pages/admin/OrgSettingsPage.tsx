@@ -9,7 +9,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Settings as SettingsIcon,
   Palette,
-  ShieldCheck,
   UserCog,
   Mail,
   MapPin,
@@ -17,7 +16,6 @@ import {
 import { getCurrentOrg } from "../../api";
 import OrgGeneralSettings from "../../components/organization/OrgSettings";
 import OfficeLocationSettings from "../../components/organization/OfficeLocationSettings";
-import OrgRegistrationSettings from "./OrgSettings";
 import OrgRoleLabels from "./OrgRoleLabels";
 import BrandingSection from "./BrandingSection";
 import EmailTemplatesSection from "./EmailTemplatesSection";
@@ -44,7 +42,7 @@ interface OrgSettingsPageProps {
  *
  * Sections:
  *   - General        (timezone, work hours, fiscal year, presence rules)
- *   - Registration   (mode + invite codes — gated to super_admin / platform_admin)
+ *   - Attendance     (office location + face/geofence verification)
  *   - Roles          (role labels and permission levels)
  *   - Branding       (logo + accent colour)
  *   - Email templates (per-event subject/body customisation)
@@ -87,9 +85,6 @@ export default function OrgSettingsPage({ userRole }: OrgSettingsPageProps) {
       { id: "general", label: "General", icon: SettingsIcon },
       ...(canEditAttendance
         ? [{ id: "attendance", label: "Attendance Verification", icon: MapPin }]
-        : []),
-      ...(isSuper
-        ? [{ id: "registration", label: "Registration", icon: ShieldCheck }]
         : []),
       { id: "roles", label: "Roles", icon: UserCog },
       { id: "branding", label: "Branding", icon: Palette },
@@ -206,31 +201,6 @@ export default function OrgSettingsPage({ userRole }: OrgSettingsPageProps) {
             </header>
             <div className={s.sectionBody}>
               <OfficeLocationSettings org={org} onUpdate={silentRefetch} />
-            </div>
-          </section>
-        )}
-
-        {isSuper && (
-          <section
-            id="registration"
-            data-section-id="registration"
-            ref={(el) => {
-              sectionRefs.current.registration = el;
-            }}
-            className={s.section}
-          >
-            <header className={s.sectionHead}>
-              <ShieldCheck size={18} className={s.sectionIcon} />
-              <div>
-                <h2 className={s.sectionTitle}>Registration</h2>
-                <p className={s.sectionDesc}>
-                  Control how new users join — open registration, invite-only,
-                  or closed. Generate and manage invite codes.
-                </p>
-              </div>
-            </header>
-            <div className={s.sectionBody}>
-              <OrgRegistrationSettings />
             </div>
           </section>
         )}

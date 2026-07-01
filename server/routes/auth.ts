@@ -206,47 +206,60 @@ router.post("/register", async (req: Request, res: Response) => {
         let tenantId = req.tenant?.id || null;
         let tenantRecord: any = req.tenant;
 
-        // Default domain: resolve tenant from invite or tenant_slug
-        if (!req.tenant) {
-            if (tenant_slug) {
-                const tRes = await masterQuery("SELECT * FROM tenants WHERE slug = $1 AND status = $2", [tenant_slug, "active"]);
-                tenantRecord = tRes.rows[0];
-                if (!tenantRecord) return res.status(400).json({ error: "Organization not found." });
-                tenantId = tenantRecord.id;
-                const poolEntry = await getTenantPool(tenantRecord.db_name, tenantRecord.db_host);
-                db = { query: poolEntry.query, transaction: poolEntry.transaction };
-            } else {
-                // No tenant context — check if first-ever user (platform_admin bootstrap)
-                // Use advisory lock to prevent race condition where two concurrent requests
-                // both see zero counts and both create a platform_admin
-                const bootstrapResult = await masterTransaction(async (client: any) => {
-                    await client.query("SELECT pg_advisory_xact_lock(1)"); // lock #1 = bootstrap
-                    const platCount = (await client.query("SELECT COUNT(*) FROM platform_users")).rows[0].count;
-                    const tenantCount = (await client.query("SELECT COUNT(*) FROM tenants")).rows[0].count;
-                    if (parseInt(platCount) === 0 && parseInt(tenantCount) === 0) {
-                        const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-                        const result = await client.query(
-                            "INSERT INTO platform_users (username, password, full_name, email) VALUES ($1,$2,$3,$4) RETURNING id",
-                            [username, hash, full_name, email]
-                        );
-                        return result.rows[0];
-                    }
-                    return null;
-                });
-                if (bootstrapResult) {
-                    const sid = await createSession(bootstrapResult.id, req.headers["user-agent"], { query: masterQuery }, null);
-                    const token = jwt.sign(
-                        { id: bootstrapResult.id, username, tv: 0, sid, tenant_id: null, platform: true },
-                        process.env.JWT_SECRET,
-                        { expiresIn: "8h" }
+        // ── Self-registration is disabled ──
+        //
+        // Members are added exclusively by an admin (Admin → People → Add
+        // people). The ONLY exception is the first-ever platform-admin
+        // bootstrap on a brand-new install (no platform users AND no tenants
+        // exist yet) — without it there would be no way to create the first
+        // admin, locking everyone out. That single path is preserved below;
+        // every other registration attempt (tenant domain, invite code, or
+        // tenant_slug self-signup) is rejected with 403.
+        const SELF_REG_DISABLED_MSG =
+            "Self-registration is disabled. Please contact your administrator to have an account created for you.";
+
+        if (req.tenant) {
+            // Custom-domain / tenant-context registration — always blocked.
+            return res.status(403).json({ error: SELF_REG_DISABLED_MSG });
+        }
+
+        if (tenant_slug) {
+            // Default-domain self-signup targeting a specific org — blocked.
+            return res.status(403).json({ error: SELF_REG_DISABLED_MSG });
+        }
+
+        // No tenant context — the only allowed path: first-ever platform_admin
+        // bootstrap. Use an advisory lock to prevent a race where two
+        // concurrent requests both see zero counts and both create an admin.
+        {
+            const bootstrapResult = await masterTransaction(async (client: any) => {
+                await client.query("SELECT pg_advisory_xact_lock(1)"); // lock #1 = bootstrap
+                const platCount = (await client.query("SELECT COUNT(*) FROM platform_users")).rows[0].count;
+                const tenantCount = (await client.query("SELECT COUNT(*) FROM tenants")).rows[0].count;
+                if (parseInt(platCount) === 0 && parseInt(tenantCount) === 0) {
+                    const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+                    const result = await client.query(
+                        "INSERT INTO platform_users (username, password, full_name, email) VALUES ($1,$2,$3,$4) RETURNING id",
+                        [username, hash, full_name, email]
                     );
-                    res.cookie("token", token, cookieOptions(req));
-                    return res.json({
-                        user: { id: bootstrapResult.id, username, full_name, email, avatar: null, role: "platform_admin", org_id: null }
-                    });
+                    return result.rows[0];
                 }
-                return res.status(400).json({ error: "Please register from your organization domain or use an invite link." });
+                return null;
+            });
+            if (bootstrapResult) {
+                const sid = await createSession(bootstrapResult.id, req.headers["user-agent"], { query: masterQuery }, null);
+                const token = jwt.sign(
+                    { id: bootstrapResult.id, username, tv: 0, sid, tenant_id: null, platform: true },
+                    process.env.JWT_SECRET,
+                    { expiresIn: "8h" }
+                );
+                res.cookie("token", token, cookieOptions(req));
+                return res.json({
+                    user: { id: bootstrapResult.id, username, full_name, email, avatar: null, role: "platform_admin", org_id: null }
+                });
             }
+            // Platform admin(s) / tenants already exist → self-registration is off.
+            return res.status(403).json({ error: SELF_REG_DISABLED_MSG });
         }
 
         // ── Registration mode check ──

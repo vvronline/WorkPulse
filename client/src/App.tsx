@@ -12,7 +12,6 @@ import { ROLE_LEVEL } from "./constants";
 import { ThemeProvider } from "./ThemeContext";
 import { WorkStateProvider } from "./WorkStateContext";
 import Login from "./pages/Login";
-import Register from "./pages/Register";
 import ChangePassword from "./pages/ChangePassword";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
@@ -149,14 +148,6 @@ function AppRoutes() {
               element={
                 <PublicRoute>
                   <Login />
-                </PublicRoute>
-              }
-            />
-            <Route
-              path="/register"
-              element={
-                <PublicRoute>
-                  <Register />
                 </PublicRoute>
               }
             />

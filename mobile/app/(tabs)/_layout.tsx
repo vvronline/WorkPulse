@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import * as Notifications from "expo-notifications";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Calendar,
   Clock,
@@ -74,6 +75,10 @@ function TabBarButton({
 export default function TabsLayout() {
   const theme = useTheme();
   const { user, loading } = useAuth();
+  // Bottom safe-area inset (home indicator / gesture nav bar). Mirrors how
+  // Signal-Android respects the system window insets so the tab bar isn't
+  // crammed flush against the bottom edge of the screen.
+  const insets = useSafeAreaInsets();
   // Plan/feature gating — mirrors the web MobileTabBar which only renders the
   // Calendar/Tasks/Chat tabs when the tenant's plan enables them. A disabled
   // tab is hidden with `href: null` (same mechanism used for `leaves`).
@@ -202,9 +207,12 @@ export default function TabsLayout() {
         tabBarStyle: {
           backgroundColor: theme.bgSecondary,
           borderTopColor: theme.border,
-          height: 60,
+          // Grow the bar to include the bottom safe-area inset so it clears the
+          // home indicator / gesture nav bar instead of sitting flush against
+          // the screen edge (matches Signal-Android's inset-aware bars).
+          height: 60 + insets.bottom,
           paddingTop: 6,
-          paddingBottom: 8,
+          paddingBottom: 8 + insets.bottom,
         },
         tabBarLabelStyle: { fontSize: 11, fontWeight: "500" },
       }}

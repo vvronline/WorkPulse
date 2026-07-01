@@ -360,6 +360,35 @@ export async function getOfficeSignals(opts: PositionOptions = {}): Promise<Offi
     return { wifi, location: locRes.loc, locError: locRes.err };
 }
 
+/**
+ * Reverse-geocode a lat/lng pair into a human-readable address using the
+ * free OpenStreetMap Nominatim service (no API key required). Returns the
+ * `display_name` string on success, or `null` when the lookup fails / the
+ * caller aborts. Polite usage: single request, honours the abort signal.
+ */
+export async function reverseGeocode(
+    lat: number,
+    lng: number,
+    opts: { signal?: AbortSignal } = {},
+): Promise<string | null> {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    try {
+        const url = `https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&lat=${encodeURIComponent(
+            String(lat),
+        )}&lon=${encodeURIComponent(String(lng))}`;
+        const res = await fetch(url, {
+            signal: opts.signal,
+            headers: { Accept: "application/json" },
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        const name = data?.display_name;
+        return typeof name === "string" && name.trim() ? name.trim() : null;
+    } catch {
+        return null;
+    }
+}
+
 /** Human-friendly message for a getCurrentPosition error code. */
 export function geolocationErrorMessage(
     code: string,

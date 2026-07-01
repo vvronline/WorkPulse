@@ -266,9 +266,6 @@ export default function Login() {
             </button>
           </>
         )}
-        <div className={s["auth-switch"]}>
-          Don't have an account? <Link to="/register">Register</Link>
-        </div>
       </div>
     </div>
   );
