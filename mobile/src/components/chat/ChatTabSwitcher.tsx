@@ -204,7 +204,10 @@ export default function ChatTabSwitcher({
             </Pressable>
           </View>
         </Animated.View>
-        <Animated.View style={{ opacity: triggerOpacity }}>
+        <Animated.View
+          pointerEvents={searchOpen ? "none" : "auto"}
+          style={{ opacity: triggerOpacity }}
+        >
           <Pressable
             style={({ pressed }) => [
               styles.searchBtn,
