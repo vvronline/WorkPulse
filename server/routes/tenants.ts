@@ -1680,7 +1680,6 @@ router.post("/:id/users", async (req: Request, res: Response) => {
         if (!tenant || tenant.status !== "active") {
             return res.status(404).json({ error: "Tenant not found or not active" });
         }
-        if (!ensureDefaultTenant(tenant, res)) return;
 
         const { username, password, full_name, email, role } = req.body;
         if (!username || !password || !full_name || !email) {
@@ -1691,6 +1690,22 @@ router.post("/:id/users", async (req: Request, res: Response) => {
         if (pwError) return res.status(400).json({ error: pwError });
         const usernameError = validateUsername(username);
         if (usernameError) return res.status(400).json({ error: usernameError });
+
+        const db = await getTenantPool(tenant.db_name, tenant.db_host);
+
+        // Default-tenant guard, with a bootstrap exception: platform admins may
+        // create the INITIAL tenant administrator for a brand-new non-default
+        // tenant during onboarding. Once the tenant has its own (non-platform)
+        // user, further row-level user management is gated behind the
+        // consent-based impersonation flow (see NON_DEFAULT_USER_DATA_MSG).
+        if (!tenant.is_default) {
+            const existing = await db.query(
+                "SELECT 1 FROM users WHERE role <> 'platform_admin' LIMIT 1"
+            );
+            if (existing.rows[0]) {
+                return res.status(403).json({ error: NON_DEFAULT_USER_DATA_MSG, code: "TENANT_USER_DATA_RESTRICTED" });
+            }
+        }
 
         // Check global uniqueness
         const dirCheck = await masterQuery(
@@ -1709,7 +1724,6 @@ router.post("/:id/users", async (req: Request, res: Response) => {
             }
         }
 
-        const db = await getTenantPool(tenant.db_name, tenant.db_host);
         const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
         const validRole = ["super_admin", "hr_admin", "manager", "team_lead", "employee"].includes(role) ? role : "employee";
 

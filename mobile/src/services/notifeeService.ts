@@ -1773,6 +1773,12 @@ class NotifeeService {
               data: {
                 conversationId: String(singleConversationId),
                 type: "chat_message",
+                // Carry a stable dedupeKey so a KILLED-state summary tap yields a
+                // fully-formed, routable payload (the cold-start dispatcher and
+                // payload validators expect a colon-delimited dedupeKey). Without
+                // it, getInitialNotification() returning THIS summary was routed
+                // to the dashboard instead of the 1:1 thread.
+                dedupeKey: `chat:${singleConversationId}`,
               } as Record<string, string>,
             }
           : {}),

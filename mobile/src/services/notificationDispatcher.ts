@@ -297,14 +297,6 @@ class NotificationDispatcherService {
       return null;
     }
 
-    if (!payload.dedupeKey) {
-      notificationLogger.warn('missing_dedupeKey_in_payload', {
-        source: 'dispatch',
-        conversationId: payload.conversationId,
-      });
-      return null;
-    }
-
     if (pressActionId === 'reply' || pressActionId === 'mark_read') {
       notificationLogger.info('initial_notification_action_not_routable', {
         source: 'dispatch',
@@ -332,13 +324,43 @@ class NotificationDispatcherService {
       return null;
     }
 
+    // KILLED-STATE GROUP-SUMMARY FIX: when the app is killed, Android frequently
+    // returns the message GROUP SUMMARY (not the tapped child) from
+    // getInitialNotification(). For a single active conversation that summary
+    // carries only { conversationId, type: "chat_message" } — it has NO
+    // dedupeKey (and no messageId). Previously we hard-required dedupeKey here
+    // and returned null, so the cold-start tap fell through to the dashboard /
+    // chat list instead of opening the exact 1:1 thread. dedupeKey is only used
+    // for logging/idempotency — routing genuinely needs only the conversationId
+    // plus a message/call intent (validated above). Synthesize a stable fallback
+    // key from the ids so a summary tap still deep-links to the right thread.
+    const dedupeKey: string =
+      payload.dedupeKey ||
+      (isCall
+        ? `call:${payload.callId ?? payload.conversationId}`
+        : payload.messageId
+          ? `msg:${payload.messageId}`
+          : `chat:${payload.conversationId}`);
+    if (!payload.dedupeKey) {
+      notificationLogger.warn('synthesized_dedupeKey_for_payload', {
+        source: 'dispatch',
+        conversationId: payload.conversationId,
+        dedupeKey,
+        metadata: {
+          reason: 'missing_dedupeKey',
+          type: payload.type,
+          sourceState,
+        },
+      });
+    }
+
     return {
       type: isCall ? 'call' : 'message',
       conversationId: String(payload.conversationId),
       messageId: payload.messageId,
       callId: payload.callId,
       timestamp: Date.now(),
-      dedupeKey: payload.dedupeKey,
+      dedupeKey,
       sourceState,
     };
   }
