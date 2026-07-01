@@ -27,6 +27,11 @@ export type PendingChatRoute = {
   conversationId: string;
   dedupeKey?: string;
   messageId?: string;
+  // When set (from a KILLED-state GROUP-SUMMARY tap with 2+ unread chats,
+  // where Android can't tell which child was tapped), consumers route to the
+  // CHAT LIST instead of a specific thread — never the dashboard. A concrete
+  // `conversationId` still opens the exact thread when this is absent.
+  openChatList?: boolean;
 };
 
 let pending: PendingChatRoute | null = null;
@@ -127,7 +132,9 @@ export async function loadPersistedPendingChat(): Promise<PendingChatRoute | nul
     const fresh =
       typeof parsed?.timestamp === "number" &&
       Date.now() - parsed.timestamp <= PERSISTED_CHAT_TTL_MS;
-    if (!fresh || !parsed.conversationId) {
+    // Honour an `openChatList` route even without a concrete conversationId —
+    // it intentionally targets the chat LIST (a 2+ unread summary tap).
+    if (!fresh || (!parsed.conversationId && !parsed.openChatList)) {
       await clearPersistedPendingChat();
       return null;
     }

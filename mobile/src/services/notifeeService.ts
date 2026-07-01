@@ -1754,34 +1754,47 @@ class NotifeeService {
     // KILLED-STATE TAP FIX: Android frequently delivers the GROUP SUMMARY's
     // press (not the child's) as the launching notification when the app is
     // killed. getInitialNotification() then returns THIS summary — so it MUST
-    // carry routing data or captureInitialCallRoute sees no conversationId and
-    // the app falls through to the dashboard instead of opening the chat. When
-    // exactly ONE conversation is active we tag the summary with that
-    // conversation so a summary tap still deep-links to the right thread. With
-    // 2+ conversations there is no single target, so we omit data and the tap
-    // opens the chat list (correct — the user picks which chat).
+    // ALWAYS carry routing data or the cold-start dispatcher sees no
+    // conversationId and the app falls through to the DASHBOARD instead of a
+    // chat. Two cases:
+    //   • exactly ONE active conversation → tag the summary with that
+    //     conversation so a summary tap deep-links straight to the 1:1/group
+    //     thread.
+    //   • 2+ active conversations → there is no single target (Android can't
+    //     tell WHICH child was tapped), so we tag it with an `openChatList`
+    //     marker (plus the most-recent conversationId as a best-effort hint) so
+    //     the tap opens the CHAT LIST — never the dashboard. The user then picks
+    //     the chat. This is the fix for "killed-state tap with multiple unread
+    //     chats opens the dashboard".
     const singleConversationId =
       conversationCount === 1 ? ordered[0]?.conversationId : undefined;
+    const mostRecentConversationId = ordered[0]?.conversationId;
+
+    // Build a fully-formed, routable data payload for EVERY summary state so the
+    // cold-start path always has a conversationId + colon-delimited dedupeKey to
+    // parse (both the dispatcher and the payload validators require them).
+    const summaryData: Record<string, string> = singleConversationId
+      ? {
+          conversationId: String(singleConversationId),
+          type: "chat_message",
+          dedupeKey: `chat:${singleConversationId}`,
+        }
+      : {
+          // 2+ conversations — open the chat list. Carry the most-recent
+          // conversation id purely so validators/loggers have a value; the
+          // `openChatList` marker below makes the consumers route to the LIST.
+          conversationId: String(mostRecentConversationId ?? ""),
+          type: "chat_message",
+          dedupeKey: `chat:list`,
+          openChatList: "1",
+        };
 
     try {
       await notifee.displayNotification({
         id: MESSAGE_GROUP_SUMMARY_ID,
         title: "Loops",
         body: summaryText,
-        ...(singleConversationId
-          ? {
-              data: {
-                conversationId: String(singleConversationId),
-                type: "chat_message",
-                // Carry a stable dedupeKey so a KILLED-state summary tap yields a
-                // fully-formed, routable payload (the cold-start dispatcher and
-                // payload validators expect a colon-delimited dedupeKey). Without
-                // it, getInitialNotification() returning THIS summary was routed
-                // to the dashboard instead of the 1:1 thread.
-                dedupeKey: `chat:${singleConversationId}`,
-              } as Record<string, string>,
-            }
-          : {}),
+        data: summaryData,
         android: {
           channelId: MESSAGE_CHANNEL_ID,
           importance: this.AndroidImportance.HIGH ?? 4,
@@ -2015,14 +2028,41 @@ class NotifeeService {
 
     const data = (detail?.notification?.data || {}) as Record<string, string>;
     const conversationId = data.conversationId;
-    // Only handle message notifications (calls are handled by handleCallEvent).
-    if (!conversationId || data.callId) return false;
 
     const pressActionId: string | undefined =
       detail?.pressAction?.id || detail?.notification?.android?.pressAction?.id;
 
     const isPress = type === (this.EventType.PRESS ?? 1);
     const isAction = type === (this.EventType.ACTION_PRESS ?? 2);
+
+    // KILLED/WARM MULTI-CHAT SUMMARY tap: the GROUP SUMMARY for 2+ unread chats
+    // carries `openChatList` (no single target thread — Android can't tell WHICH
+    // child was tapped). Route to the chat LIST — never the dashboard. Handled
+    // BEFORE the strict message validator below, since the summary intentionally
+    // omits messageId/senderName. Only a body PRESS is relevant here (the
+    // summary has no Reply/Mark-read actions).
+    if ((data.openChatList === "1" || (data as any).openChatList === true) && isPress) {
+      notificationLogger.info("notification_tap_open_chat_list", {
+        source: "notifeeService.handleMessageEvent",
+        dedupeKey: data.dedupeKey || "chat:list",
+      });
+      const listRoute = {
+        conversationId: "",
+        dedupeKey: data.dedupeKey || "chat:list",
+        openChatList: true,
+      };
+      try {
+        await persistPendingChat(listRoute);
+      } catch {
+        /* best-effort */
+      }
+      setPendingChat(listRoute);
+      return true;
+    }
+
+    // Only handle message notifications (calls are handled by handleCallEvent).
+    if (!conversationId || data.callId) return false;
+
     if (!isPress && !isAction) return false;
 
     const validationResult = NotificationPayloadValidator.validate(data, 'tap_handler');

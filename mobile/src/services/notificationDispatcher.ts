@@ -42,6 +42,10 @@ export interface NotificationRoute {
   timestamp: number;
   dedupeKey: string;
   sourceState: 'cold_start' | 'warm' | 'background_alive';
+  // When true (a KILLED-state GROUP-SUMMARY tap for 2+ unread chats), the
+  // consumer opens the CHAT LIST instead of a specific thread — never the
+  // dashboard. See notifeeService.postGroupSummary's `openChatList` marker.
+  openChatList?: boolean;
 }
 
 export interface DispatcherState {
@@ -288,6 +292,26 @@ class NotificationDispatcherService {
     sourceState: NotificationRoute['sourceState'],
     pressActionId?: string
   ): NotificationRoute | null {
+    // KILLED-STATE MULTI-CHAT SUMMARY: a group-summary tap for 2+ unread chats
+    // carries `openChatList` (Android can't tell WHICH child was tapped). Route
+    // to the CHAT LIST — never the dashboard — before the conversationId guard,
+    // since there is no single target thread. See notifeeService.postGroupSummary.
+    if (payload.openChatList === '1' || payload.openChatList === true) {
+      notificationLogger.info('initial_notification_open_chat_list', {
+        source: 'dispatch',
+        dedupeKey: payload.dedupeKey || 'chat:list',
+        metadata: { sourceState },
+      });
+      return {
+        type: 'message',
+        conversationId: String(payload.conversationId || ''),
+        timestamp: Date.now(),
+        dedupeKey: payload.dedupeKey || 'chat:list',
+        sourceState,
+        openChatList: true,
+      };
+    }
+
     // Validate required fields
     if (!payload.conversationId) {
       notificationLogger.warn('missing_conversationId_in_payload', {
@@ -454,6 +478,9 @@ class NotificationDispatcherService {
         conversationId: route.conversationId,
         dedupeKey: route.dedupeKey,
         messageId: route.messageId,
+        // Carry the "open chat list" marker (2+ unread summary tap) so the
+        // cold-start consumer routes to the LIST rather than the dashboard.
+        ...(route.openChatList ? { openChatList: true } : {}),
       };
       setPendingChat(pendingChat);
       await persistPendingChat(pendingChat);

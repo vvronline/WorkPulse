@@ -8,6 +8,10 @@ import {
 import ConfirmDialog from "../../components/common/ConfirmDialog";
 import s from "./Tenants.module.css";
 
+// Base plans are enforced by the backend (tenants.plan CHECK constraint +
+// plan-catalog validation). They cannot be deleted from the catalog.
+const BASE_PLAN_KEYS = ["standard", "pro", "enterprise"];
+
 export default function PlanManagement() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
@@ -73,6 +77,10 @@ export default function PlanManagement() {
     };
 
     const handleDeletePlan = (key: string) => {
+        if (BASE_PLAN_KEYS.includes(key)) {
+            setError(`The "${key}" plan is a required base plan and cannot be deleted.`);
+            return;
+        }
         setPlans((p: any) => {
             const next = { ...p };
             delete next[key];
@@ -214,13 +222,19 @@ export default function PlanManagement() {
                             </div>
 
                             <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
-                                <button
-                                    className={s.btnSmall}
-                                    style={{ color: "var(--danger)" }}
-                                    onClick={() => handleDeletePlan(key)}
-                                >
-                                    <Trash2 size={13} /> Delete Plan
-                                </button>
+                                {BASE_PLAN_KEYS.includes(key) ? (
+                                    <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>
+                                        Base plan — cannot be deleted.
+                                    </span>
+                                ) : (
+                                    <button
+                                        className={s.btnSmall}
+                                        style={{ color: "var(--danger)" }}
+                                        onClick={() => handleDeletePlan(key)}
+                                    >
+                                        <Trash2 size={13} /> Delete Plan
+                                    </button>
+                                )}
                             </div>
                         </div>
                     )}

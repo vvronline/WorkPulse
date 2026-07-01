@@ -120,7 +120,7 @@ router.post("/", async (req: Request, res: Response) => {
             return res.status(400).json({ error: `Invalid plan. Must be one of: ${PLAN_KEYS.join(", ")}` });
         }
 
-        const { tenant, db } = await createTenant({
+        const { tenant } = await createTenant({
             orgName: org_name,
             slug,
             plan: plan || "standard",
@@ -129,26 +129,13 @@ router.post("/", async (req: Request, res: Response) => {
             maxStorageMb: max_storage_mb || null,
         });
 
-        // Auto-seed a super_admin user for the platform admin who created this tenant
-        if (req.isPlatformUser) {
-            const platUser = (await masterQuery("SELECT * FROM platform_users WHERE id = $1", [req.userId])).rows[0];
-            if (platUser) {
-                const existing = (await db.query("SELECT id FROM users WHERE username = $1 OR email = $2", [platUser.username, platUser.email || ""])).rows[0];
-                if (!existing) {
-                    const newUser = (await db.query(
-                        `INSERT INTO users (username, password, full_name, email, org_id, role)
-                         VALUES ($1, $2, $3, $4, 1, 'platform_admin') RETURNING id`,
-                        [platUser.username, platUser.password, platUser.full_name, platUser.email || `${platUser.username}@platform.local`]
-                    )).rows[0];
-                    if (platUser.email) {
-                        await masterQuery(
-                            "INSERT INTO user_directory (email, username, tenant_id, user_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
-                            [platUser.email.toLowerCase(), platUser.username.toLowerCase(), tenant.id, newUser.id]
-                        );
-                    }
-                }
-            }
-        }
+        // NOTE: The platform admin is intentionally NOT provisioned as a user
+        // inside the new tenant. Platform staff reach a tenant only through the
+        // consent-gated impersonation flow, which lazily creates a dedicated,
+        // directory-hidden "Platform Inspector" account (see
+        // getOrCreateInspectorUser). Seeding a visible platform_admin here would
+        // pollute the tenant's user directory, inflate user_count, and consume a
+        // seat against the plan's max_users limit.
 
         logPlatformAction(req, "tenant_created", "tenant", tenant.id, { slug, org_name }, tenant.id);
         res.status(201).json({ tenant });
@@ -217,14 +204,16 @@ router.put("/plan-catalog", async (req: Request, res: Response) => {
         if (!plans || typeof plans !== "object" || Object.keys(plans).length === 0) {
             return res.status(400).json({ error: "plans object is required with at least one plan" });
         }
-        for (const [key, plan] of Object.entries(plans) as [string, any][]) {
-            if (!plan.label || !plan.features || !plan.limits) {
-                return res.status(400).json({ error: `Plan "${key}" must have label, features, and limits` });
-            }
+        // savePlanCatalog validates & normalises via sanitizePlanCatalog, which
+        // throws a descriptive Error on any structural problem (missing base
+        // plan, bad limits, etc). Surface those as a 400 rather than a 500.
+        let current: any;
+        try {
+            current = await savePlanCatalog(plans);
+        } catch (validationErr: any) {
+            return res.status(400).json({ error: validationErr.message || "Invalid plan catalog" });
         }
-        await savePlanCatalog(plans);
-        logPlatformAction(req, "plan_catalog_updated", "platform", null, { plan_keys: Object.keys(plans) });
-        const current = await loadPlanCatalog();
+        logPlatformAction(req, "plan_catalog_updated", "platform", null, { plan_keys: Object.keys(current) });
         res.json({ plans: current, feature_labels: FEATURE_LABELS, feature_keys: FEATURE_KEYS });
     } catch (err) {
         logger.error({ err }, "Update plan catalog error");
@@ -235,9 +224,9 @@ router.put("/plan-catalog", async (req: Request, res: Response) => {
 // POST /admin/tenants/plan-catalog/reset — reset to defaults
 router.post("/plan-catalog/reset", async (req: Request, res: Response) => {
     try {
-        await savePlanCatalog(DEFAULT_PLANS);
+        const current = await savePlanCatalog(DEFAULT_PLANS);
         logPlatformAction(req, "plan_catalog_reset", "platform", null, {});
-        res.json({ plans: DEFAULT_PLANS, feature_labels: FEATURE_LABELS, feature_keys: FEATURE_KEYS });
+        res.json({ plans: current, feature_labels: FEATURE_LABELS, feature_keys: FEATURE_KEYS });
     } catch (err) {
         logger.error({ err }, "Reset plan catalog error");
         res.status(500).json({ error: "Failed to reset plan catalog" });

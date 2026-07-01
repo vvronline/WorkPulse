@@ -104,20 +104,92 @@ async function loadPlanCatalog(): Promise<PlanCatalog> {
     return PLANS;
 }
 
-async function savePlanCatalog(catalog: PlanCatalog): Promise<void> {
+async function savePlanCatalog(catalog: PlanCatalog): Promise<PlanCatalog> {
+    const normalized = sanitizePlanCatalog(catalog);
     const { masterQuery } = require("../db");
     await masterQuery(
         `INSERT INTO app_settings (key, value) VALUES ('plans_catalog', $1)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-        [JSON.stringify(catalog)],
+        [JSON.stringify(normalized)],
     );
-    PLANS = catalog;
+    PLANS = normalized;
     planCacheTime = Date.now();
+    return normalized;
 }
 
 function getPlans(): PlanCatalog { return PLANS; }
 
 const PLAN_KEYS = Object.keys(DEFAULT_PLANS);
+
+/**
+ * Coerce a raw limit value to a positive integer, `null` (unlimited), or throw.
+ * Accepts numbers and numeric strings; empty string / null / undefined → null.
+ */
+function coerceLimit(value: unknown, field: string, planKey: string): number | null {
+    if (value === null || value === undefined || value === "") return null;
+    const n = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+        throw new Error(`Plan "${planKey}" has an invalid ${field}: must be a non-negative integer or null (unlimited).`);
+    }
+    return n;
+}
+
+/**
+ * Validate and normalise an arbitrary plan-catalog object into a strict,
+ * fully-populated catalog:
+ *   - every base plan key (standard/pro/enterprise) MUST be present;
+ *   - each plan gets a string label + description;
+ *   - `features` is rebuilt over the full FEATURE_KEYS whitelist with strict
+ *     booleans (unknown keys dropped, missing keys default to false);
+ *   - `limits` is coerced to { max_users, max_storage_mb } integers-or-null.
+ *
+ * Throws a descriptive Error on any structural problem so callers can surface
+ * a 400. This is the single choke-point that keeps plan gating rock-solid no
+ * matter what the admin UI submits.
+ */
+function sanitizePlanCatalog(raw: unknown): PlanCatalog {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new Error("Plan catalog must be a non-empty object keyed by plan id.");
+    }
+    const input = raw as Record<string, unknown>;
+    const out: PlanCatalog = {};
+
+    for (const [key, planRaw] of Object.entries(input)) {
+        if (!planRaw || typeof planRaw !== "object") {
+            throw new Error(`Plan "${key}" must be an object with label, features and limits.`);
+        }
+        const plan = planRaw as Record<string, unknown>;
+        if (!plan.label || typeof plan.label !== "string") {
+            throw new Error(`Plan "${key}" must have a non-empty string label.`);
+        }
+        const features: FeatureMap = {};
+        const rawFeatures = (plan.features && typeof plan.features === "object")
+            ? plan.features as Record<string, unknown>
+            : {};
+        for (const fk of FEATURE_KEYS) {
+            const c = coerceFeatureValue(rawFeatures[fk]);
+            features[fk] = c === true; // default false when null/absent
+        }
+        const rawLimits = (plan.limits && typeof plan.limits === "object")
+            ? plan.limits as Record<string, unknown>
+            : {};
+        out[key] = {
+            label: plan.label,
+            description: typeof plan.description === "string" ? plan.description : "",
+            features,
+            limits: {
+                max_users: coerceLimit(rawLimits.max_users, "max_users", key),
+                max_storage_mb: coerceLimit(rawLimits.max_storage_mb, "max_storage_mb", key),
+            },
+        };
+    }
+
+    const missing = PLAN_KEYS.filter(k => !(k in out));
+    if (missing.length) {
+        throw new Error(`Plan catalog is missing required base plan(s): ${missing.join(", ")}.`);
+    }
+    return out;
+}
 
 /**
  * Plan tier ordering. Use `isAtLeastPlan(currentPlan, requiredPlan)` for
@@ -276,6 +348,7 @@ export {
     getPlans,
     loadPlanCatalog,
     savePlanCatalog,
+    sanitizePlanCatalog,
     getEffectiveFeatures,
     getPlanLimits,
     isFeatureEnabled,

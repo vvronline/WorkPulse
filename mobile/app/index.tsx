@@ -75,6 +75,9 @@ export default function Index() {
           conversationId: dispatcherRoute.conversationId,
           dedupeKey: dispatcherRoute.dedupeKey,
           messageId: dispatcherRoute.messageId,
+          // A 2+ unread GROUP-SUMMARY tap has no single target thread — route to
+          // the chat LIST instead of the dashboard.
+          ...(dispatcherRoute.openChatList ? { openChatList: true } : {}),
         };
       }
 
@@ -95,8 +98,9 @@ export default function Index() {
       if (cancelled) return;
 
       // A pending CALL always wins over a chat route. Otherwise open the exact
-      // conversation the message notification pointed at.
-      if (!route && chat?.conversationId) {
+      // conversation the message notification pointed at — or, for a 2+ unread
+      // GROUP-SUMMARY tap (openChatList, no single target), the chat LIST.
+      if (!route && (chat?.conversationId || chat?.openChatList)) {
         notificationDispatcher.consumeRoute();
         consumePendingChat();
         void clearPersistedPendingChat();
@@ -218,11 +222,17 @@ export default function Index() {
     if (chatRoute.dedupeKey) {
       notificationLogger.logStateTransition(chatRoute.dedupeKey, String(chatRoute.conversationId), NotificationState.NAVIGATION_STARTED, { target: "chat", source: "app_index_cold_start" });
     }
+    // A 2+ unread GROUP-SUMMARY tap (openChatList, no single target thread) opens
+    // the chat LIST — never the dashboard. A concrete conversationId still opens
+    // the exact thread via `openConversationId`.
     return (
       <Redirect
         href={{
           pathname: "/(tabs)/chat",
-          params: { openConversationId: chatRoute.conversationId },
+          params:
+            chatRoute.openChatList || !chatRoute.conversationId
+              ? {}
+              : { openConversationId: chatRoute.conversationId },
         }}
       />
     );

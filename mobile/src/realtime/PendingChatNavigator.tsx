@@ -42,7 +42,7 @@ export default function PendingChatNavigator() {
     // check and the subscription could otherwise both fire).
     let navigating = false;
 
-    const routeToChat = (route: { conversationId: string; dedupeKey?: string }): boolean => {
+    const routeToChat = (route: { conversationId: string; dedupeKey?: string; openChatList?: boolean }): boolean => {
       if (navigating) {
         if (route.dedupeKey) {
           notificationLogger.info("pending_chat_navigation_deferred", {
@@ -61,9 +61,15 @@ export default function PendingChatNavigator() {
           if (route.dedupeKey) {
             notificationLogger.logStateTransition(route.dedupeKey, route.conversationId, NotificationState.NAVIGATION_STARTED, { target: "chat", source: "PendingChatNavigator" });
           }
+          // A 2+ unread GROUP-SUMMARY tap (openChatList, no single target thread)
+          // opens the chat LIST — never the dashboard. A concrete conversationId
+          // still opens the exact thread via `openConversationId`.
           router.push({
             pathname: "/(tabs)/chat",
-            params: { openConversationId: route.conversationId },
+            params:
+              route.openChatList || !route.conversationId
+                ? {}
+                : { openConversationId: route.conversationId },
           });
         } finally {
           // Allow a subsequent (genuinely new) tap to navigate again.
@@ -83,8 +89,10 @@ export default function PendingChatNavigator() {
       // consumed once auth resolves (the effect re-runs on `user` change).
       if (loading || !user) return;
       const route = peekPendingChat();
-      if (!route?.conversationId) return;
-      const normalizedRoute = { ...route, conversationId: String(route.conversationId) };
+      // Accept a concrete conversationId OR an `openChatList` marker (2+ unread
+      // summary tap — routes to the chat LIST, never the dashboard).
+      if (!route || (!route.conversationId && !route.openChatList)) return;
+      const normalizedRoute = { ...route, conversationId: String(route.conversationId || "") };
       if (!routeToChat(normalizedRoute)) return;
       consumePendingChat();
       void clearPersistedPendingChat();

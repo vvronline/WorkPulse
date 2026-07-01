@@ -221,6 +221,40 @@ async function destroyAllPools(): Promise<void> {
 
 // ── Tenant lifecycle ────────────────────────────────────────────────────────
 
+/** PostgreSQL identifiers are capped at 63 bytes. */
+const PG_IDENT_MAX = 63;
+
+/**
+ * Resolve a database name derived from `base` that is unused both in the
+ * master `tenants` catalog and on the physical PostgreSQL cluster. Appends a
+ * numeric suffix (`_1`, `_2`, …) on collision. This guards against reusing the
+ * retained database of a soft-deleted tenant that shared the same slug.
+ */
+async function pickAvailableDbName(base: string): Promise<string> {
+    const trimmedBase = base.slice(0, PG_IDENT_MAX);
+    for (let i = 0; i < 1000; i++) {
+        const suffix = i === 0 ? "" : `_${i}`;
+        const candidate = i === 0
+            ? trimmedBase
+            : `${base.slice(0, PG_IDENT_MAX - suffix.length)}${suffix}`;
+
+        const inCatalog = (await masterQuery(
+            "SELECT 1 FROM tenants WHERE db_name = $1 LIMIT 1",
+            [candidate],
+        )).rows.length > 0;
+        if (inCatalog) continue;
+
+        const physicallyExists = (await masterQuery(
+            "SELECT 1 FROM pg_database WHERE datname = $1 LIMIT 1",
+            [candidate],
+        )).rows.length > 0;
+        if (physicallyExists) continue;
+
+        return candidate;
+    }
+    throw new Error(`Could not allocate a unique database name for base "${base}"`);
+}
+
 /**
  * Create a new tenant database and initialise its schema.
  */
@@ -230,7 +264,12 @@ async function createTenant(
     const { getPlanLimits, PLAN_KEYS } = require("./planCatalog");
     const effectivePlan = PLAN_KEYS.includes(plan) ? plan : "standard";
     const planLimits = getPlanLimits(effectivePlan);
-    const dbName = `wp_${slug.replace(/-/g, "_")}`;
+
+    // Allocate a database name that is free both in the master catalog AND on
+    // the physical PostgreSQL cluster. This prevents a "new" tenant from
+    // silently inheriting the data of a previously-deleted tenant that shared
+    // the same slug (whose retained database still exists after a soft delete).
+    const dbName = await pickAvailableDbName(`wp_${slug.replace(/-/g, "_")}`);
 
     // Sanitize: only allow safe identifiers to prevent DDL injection
     if (!/^wp_[a-z0-9_]+$/.test(dbName)) {
@@ -251,14 +290,11 @@ async function createTenant(
         // Use a connecting directly to avoid parameterized DDL issues
         await masterQuery(`CREATE DATABASE "${dbName}"`);
     } catch (err) {
-        if ((err as { code?: string }).code === "42P04") {
-            // Database already exists — fine (idempotent)
-            logger.warn({ dbName }, "Tenant database already exists");
-        } else {
-            // Roll back the tenants row
-            await masterQuery("DELETE FROM tenants WHERE id = $1", [tenant.id]);
-            throw err;
-        }
+        // Any failure here (including a rare 42P04 race after our pre-check)
+        // must roll back the catalog row so we never leave a tenant pointing
+        // at a database we didn't freshly provision.
+        await masterQuery("DELETE FROM tenants WHERE id = $1", [tenant.id]);
+        throw err;
     }
 
     // 3. Connect to the new database and initialise schema
@@ -283,11 +319,12 @@ async function createTenant(
  *
  * @param tenantId
  * @param hardDelete - If true, DROP DATABASE. If false, just mark deleted.
+ * @returns the tenant row that was deleted, or null if no such tenant existed.
  */
-async function deleteTenant(tenantId: number, hardDelete = false): Promise<void> {
+async function deleteTenant(tenantId: number, hardDelete = false): Promise<TenantRow | null> {
     const tenantRes = await masterQuery("SELECT * FROM tenants WHERE id = $1", [tenantId]);
     const tenant = tenantRes.rows[0] as TenantRow | undefined;
-    if (!tenant) throw new Error("Tenant not found");
+    if (!tenant) return null;
 
     // Close pool if cached
     await destroyTenantPool(tenant.db_name);
@@ -307,12 +344,28 @@ async function deleteTenant(tenantId: number, hardDelete = false): Promise<void>
         await masterQuery("DELETE FROM tenants WHERE id = $1", [tenantId]);
         logger.info({ tenantId, dbName: tenant.db_name }, "Tenant hard-deleted");
     } else {
+        // Soft delete: retain the database + catalog row for audit/recovery,
+        // but free the UNIQUE identifiers (slug, custom_domain) so the same
+        // slug can be provisioned again as a brand-new tenant. The db_name is
+        // left untouched so the retained data stays reachable; createTenant()
+        // allocates a fresh, collision-free db_name for any future tenant.
+        const tombstone = `_deleted_${tenantId}`;
+        const tombstonedSlug = `${tenant.slug}${tombstone}`;
         await masterQuery(
-            `UPDATE tenants SET status = 'deleted', updated_at = NOW() WHERE id = $1`,
-            [tenantId]
+            `UPDATE tenants
+                SET status = 'deleted',
+                    slug = $2,
+                    custom_domain = NULL,
+                    updated_at = NOW()
+              WHERE id = $1`,
+            [tenantId, tombstonedSlug]
         );
-        logger.info({ tenantId, dbName: tenant.db_name }, "Tenant soft-deleted");
+        // Drop the freed users from the global directory so their emails /
+        // usernames can be reused and don't inflate cross-tenant lookups.
+        await masterQuery("DELETE FROM user_directory WHERE tenant_id = $1", [tenantId]);
+        logger.info({ tenantId, dbName: tenant.db_name, freedSlug: tenant.slug }, "Tenant soft-deleted");
     }
+    return tenant;
 }
 
 /**
