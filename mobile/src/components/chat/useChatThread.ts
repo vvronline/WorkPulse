@@ -432,6 +432,10 @@ export function useChatThread() {
   // TextInput handle so we can blur/focus when switching between the system
   // keyboard and the in-app emoji keyboard.
   const inputRef = useRef<TextInput>(null);
+  const emojiKeyboardOpenRef = useRef(false);
+  const emojiKeyboardFocusTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   // One-shot guard so the "system keyboard appeared → close emoji" safety
   // effect below ignores the STALE keyboard height reported while the OS
   // keyboard is still animating away after we deliberately switched to the
@@ -453,6 +457,19 @@ export function useChatThread() {
   // appeared this session.
   const lastKbHeight = useRef(Math.round(winHeight * 0.4));
   if (kbInset > 100) lastKbHeight.current = kbInset;
+
+  useEffect(() => {
+    emojiKeyboardOpenRef.current = emojiKeyboardOpen;
+  }, [emojiKeyboardOpen]);
+
+  useEffect(
+    () => () => {
+      if (emojiKeyboardFocusTimer.current) {
+        clearTimeout(emojiKeyboardFocusTimer.current);
+      }
+    },
+    [],
+  );
 
   // Hydrate emoji recents + skin-tone preference once.
   useEffect(() => {
@@ -2546,6 +2563,10 @@ export function useChatThread() {
   // ── Inline emoji keyboard (Signal-style composer toggle) ──────────────────
   // Toggle between the system keyboard and the docked in-app emoji keyboard.
   function toggleEmojiKeyboard() {
+    if (emojiKeyboardFocusTimer.current) {
+      clearTimeout(emojiKeyboardFocusTimer.current);
+      emojiKeyboardFocusTimer.current = null;
+    }
     if (emojiKeyboardOpen) {
       // Emoji → system keyboard. This transition fights TWO Android quirks at
       // once, so it needs BOTH a blur AND a long-enough delayed focus:
@@ -2559,27 +2580,30 @@ export function useChatThread() {
       //     can't "collapse" anything.)
       //
       //  2. Prop-commit race: closing the panel flips the TextInput's
-      //     `showSoftInputOnFocus` false → true, but unmounting the heavy
-      //     EmojiKeyboard SectionList can delay React committing that prop to
-      //     the native view. If focus() fires before the commit lands, Android
-      //     still sees `showSoftInputOnFocus=false` and SUPPRESSES the keyboard
-      //     (the panel collapses with nothing replacing it). A 50ms / rAF timer
-      //     lost this race on real devices; 150ms reliably outlasts the unmount
-      //     + commit (the same delay startEdit uses to focus after a modal
-      //     tears down).
+      //     `showSoftInputOnFocus` false → true, and Android can still see the
+      //     stale native prop for a frame or two. If focus() fires too early the
+      //     keyboard is suppressed and the transition feels "stuck". Keeping the
+      //     emoji panel mounted removes the heavy unmount cost, so a short delay
+      //     is now enough — and we cancel it on rapid re-taps so old focus
+      //     requests cannot fight a newer emoji transition.
       //
       // Mirrors Signal-Android's InputAwareLayout, which requests the soft
       // input on its edit text only after the emoji page has been torn down,
       // treating keyboard↔emoji as an explicit transition.
+      emojiSearchFocused.current = false;
       setEmojiKeyboardOpen(false);
       inputRef.current?.blur();
-      setTimeout(() => inputRef.current?.focus(), 150);
+      emojiKeyboardFocusTimer.current = setTimeout(() => {
+        emojiKeyboardFocusTimer.current = null;
+        if (!emojiKeyboardOpenRef.current) inputRef.current?.focus();
+      }, 90);
     } else {
       // System → emoji: dismiss the OS keyboard, then dock the emoji keyboard.
       // Arm the guard FIRST so the safety effect ignores the system keyboard's
       // still-animating (stale) height — otherwise the emoji panel we open on
       // the next line would be instantly closed again (the dismiss is async).
       ignoreKbForEmoji.current = true;
+      emojiSearchFocused.current = false;
       // BLUR the field before dismissing. With the input still focused, RN
       // re-evaluates showSoftInputOnFocus and on Android re-shows the system
       // keyboard mid-transition — collapsing the docked panel and forcing the

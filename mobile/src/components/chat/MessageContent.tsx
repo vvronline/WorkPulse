@@ -3,6 +3,7 @@ import { Linking, StyleSheet, Text } from "react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
+import { isEmojiOnlyMessage } from "./chatUtils";
 
 // Linkify regex — matches http(s):// URLs as well as bare www. URLs (Signal's
 // LinkifyText recognises both). Used with a global flag to tokenize the body
@@ -53,25 +54,6 @@ function tokenize(text: string): Segment[] {
   return segments;
 }
 
-// Regex that matches one full emoji grapheme sequence (base glyph + any
-// modifiers / variation selectors / ZWJ-joined extensions).
-const EMOJI_SEQ_RE =
-  /(?:\p{Extended_Pictographic}|\p{Emoji_Presentation})[\p{Emoji_Modifier}\uFE0F\u20E3\u200D]*/gu;
-
-/**
- * Returns true when the message body consists solely of 1–5 emoji with no
- * other text (Signal's "jumbo emoji" threshold). These are rendered at 42 sp
- * instead of the standard 16 sp body size so standalone emoji are legible.
- */
-function isEmojiOnly(text: string): boolean {
-  const t = text.trim();
-  if (!t) return false;
-  const matches = t.match(EMOJI_SEQ_RE);
-  if (!matches || matches.length > 5) return false;
-  // After stripping all matched emoji sequences + whitespace, nothing should remain.
-  return t.replace(EMOJI_SEQ_RE, "").trim().length === 0;
-}
-
 /**
  * Renders a message's text body (mirrors the web MessageContent). Shows the
  * "deleted" placeholder when the message has been removed. Returns null when
@@ -95,8 +77,7 @@ export default function MessageContent({
     () => (deleted ? null : tokenize(message.content || "")),
     [deleted, message.content],
   );
-  const emojiOnly =
-    !deleted && !!message.content && isEmojiOnly(message.content);
+  const emojiOnly = !deleted && isEmojiOnlyMessage(message.content);
   if (!message.content && !deleted) return null;
   return (
     <Text

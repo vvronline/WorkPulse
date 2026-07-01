@@ -25,6 +25,23 @@ export const ALL_EMOJIS = [
   "\u{1F389}","\u{1F38A}","\u2728","\u2B50","\u{1F31F}","\u{1F4AF}","\u2705","\u274C",
 ];
 
+// Regex that matches one full emoji grapheme sequence (base glyph + optional
+// modifiers / variation selectors / ZWJ-joined extensions).
+const EMOJI_SEQ_RE =
+  /(?:\p{Extended_Pictographic}|\p{Emoji_Presentation})[\p{Emoji_Modifier}\uFE0F\u20E3\u200D]*/gu;
+
+// True when text is only 1..maxEmojiCount emoji graphemes (plus whitespace).
+export function isEmojiOnlyMessage(
+  text?: string | null,
+  maxEmojiCount = 5,
+): boolean {
+  const t = (text || "").trim();
+  if (!t) return false;
+  const matches = t.match(EMOJI_SEQ_RE);
+  if (!matches || matches.length > maxEmojiCount) return false;
+  return t.replace(EMOJI_SEQ_RE, "").trim().length === 0;
+}
+
 export function isImageFile(m: ChatMessage): boolean {
   if (m.file_type && m.file_type.startsWith("image/")) return true;
   const name = (m.file_name || m.file_url || "").toLowerCase();

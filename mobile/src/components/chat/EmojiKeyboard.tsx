@@ -9,7 +9,7 @@
 //
 // See docs/CHAT_DESIGN_SPEC.md §2, §3.
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   Platform,
@@ -43,6 +43,7 @@ import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 const COLS = 8;
 
 export default function EmojiKeyboard({
+  visible,
   height,
   onPick,
   onBackspace,
@@ -51,6 +52,7 @@ export default function EmojiKeyboard({
   onSearchFocus,
   onSearchBlur,
 }: {
+  visible: boolean;
   height: number;
   onPick: (native: string) => void;
   onBackspace: () => void;
@@ -63,7 +65,7 @@ export default function EmojiKeyboard({
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
+  const [searchExpanded, setSearchExpanded] = useState(false);
   const [tone, setTone] = useState(getSkinTone);
   const [toneOpen, setToneOpen] = useState(false);
   const [recents, setRecents] = useState<Emoji[]>(getRecentEmoji);
@@ -71,6 +73,7 @@ export default function EmojiKeyboard({
   const [activeCat, setActiveCat] = useState<EmojiCategory>("smileys");
 
   const listRef = useRef<SectionList<EmojiRow>>(null);
+  const searchInputRef = useRef<TextInput>(null);
 
   const { height: winH } = useWindowDimensions();
   const ownKbInset = useKeyboardInset();
@@ -97,14 +100,30 @@ export default function EmojiKeyboard({
 
   // Search results, chunked into rows so the grid layout matches.
   const searchRows: EmojiRow[] = useMemo(() => {
-    if (!query.trim()) return [];
-    const hits = searchEmoji(query);
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) return [];
+    const hits = searchEmoji(trimmedQuery);
     const rows: EmojiRow[] = [];
     for (let i = 0; i < hits.length; i += COLS) {
       rows.push({ items: hits.slice(i, i + COLS), key: `search-${i}` });
     }
     return rows;
   }, [query]);
+  const searching = query.trim().length > 0;
+
+  useEffect(() => {
+    if (!visible || !searchExpanded) return;
+    const timer = setTimeout(() => searchInputRef.current?.focus(), 0);
+    return () => clearTimeout(timer);
+  }, [searchExpanded, visible]);
+
+  useEffect(() => {
+    if (visible) return;
+    searchInputRef.current?.blur();
+    setSearchExpanded(false);
+    setToneOpen(false);
+    if (query.length > 0) setQuery("");
+  }, [query, visible]);
 
   const handlePick = useCallback(
     (e: Emoji) => {
@@ -175,54 +194,66 @@ export default function EmojiKeyboard({
   );
 
   return (
-    <View style={[styles.wrap, { height: effectiveHeight }]}>
+    <View
+      pointerEvents={visible ? "auto" : "none"}
+      style={[
+        styles.wrap,
+        {
+          height: visible ? effectiveHeight : 0,
+          opacity: visible ? 1 : 0,
+          borderTopWidth: visible ? 1 : 0,
+        },
+      ]}
+    >
       {/* ── Fixed header (always mounted, never remounted) ── */}
       <View style={styles.topRowWrap}>
         <View style={styles.topRow}>
-          {/* Search input */}
-          <View style={styles.searchBox}>
-            <SearchIcon size={16} color={theme.textMuted} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search emoji"
-              placeholderTextColor={theme.textMuted}
-              value={query}
-              onChangeText={(v) => {
-                setQuery(v);
-                setSearching(v.trim().length > 0);
-              }}
-              onFocus={onSearchFocus}
-              onBlur={onSearchBlur}
-              autoCorrect={false}
-              returnKeyType="search"
-            />
-            {query.length > 0 && (
+          {searchExpanded ? (
+            <View style={styles.searchBox}>
+              <SearchIcon size={15} color={theme.textMuted} />
+              <TextInput
+                ref={searchInputRef}
+                style={styles.searchInput}
+                placeholder="Search emoji"
+                placeholderTextColor={theme.textMuted}
+                value={query}
+                onChangeText={setQuery}
+                onFocus={onSearchFocus}
+                onBlur={onSearchBlur}
+                autoCorrect={false}
+                returnKeyType="search"
+              />
               <Pressable
                 onPress={() => {
                   setQuery("");
-                  setSearching(false);
+                  setSearchExpanded(false);
+                  searchInputRef.current?.blur();
                 }}
                 hitSlop={8}
               >
-                <XIcon size={15} color={theme.textMuted} />
+                <XIcon size={14} color={theme.textMuted} />
               </Pressable>
-            )}
-          </View>
-          {/* Skin-tone toggle */}
-          <Pressable
-            style={styles.toneBtn}
-            onPress={() => setToneOpen((v) => !v)}
-          >
-            <Text style={styles.toneText}>{SKIN_TONES[tone].swatch}</Text>
-          </Pressable>
-        </View>
-        {/* Media shortcut row */}
-        <View style={styles.mediaRow}>
+            </View>
+          ) : (
+            <Pressable
+              style={styles.iconBtn}
+              onPress={() => setSearchExpanded(true)}
+              hitSlop={8}
+            >
+              <SearchIcon size={17} color={theme.textSecondary} />
+            </Pressable>
+          )}
           <Pressable style={styles.mediaBtn} onPress={onOpenGif}>
             <Text style={styles.mediaBtnText}>GIF</Text>
           </Pressable>
           <Pressable style={styles.mediaBtn} onPress={onOpenSticker}>
             <Text style={styles.mediaBtnText}>Sticker</Text>
+          </Pressable>
+          <Pressable
+            style={styles.toneBtn}
+            onPress={() => setToneOpen((v) => !v)}
+          >
+            <Text style={styles.toneText}>{SKIN_TONES[tone].swatch}</Text>
           </Pressable>
         </View>
       </View>
@@ -332,64 +363,71 @@ const makeStyles = (theme: Theme) =>
     topRow: {
       flexDirection: "row",
       alignItems: "center",
-      gap: 8,
-      paddingHorizontal: 10,
-      paddingTop: 8,
-      paddingBottom: 4,
-    },
-    mediaRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-      paddingHorizontal: 10,
-      paddingBottom: 6,
-    },
-    mediaBtn: {
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRadius: 14,
-      backgroundColor: theme.surface,
-      borderWidth: 1,
-      borderColor: theme.inputBorder,
-    },
-    mediaBtnText: {
-      color: theme.textSecondary,
-      fontSize: 12,
-      fontWeight: "700",
-    },
-    searchBox: {
-      flex: 1,
-      flexDirection: "row",
-      alignItems: "center",
+      minWidth: 0,
       gap: 6,
-      backgroundColor: theme.inputBg,
-      borderWidth: 1,
-      borderColor: theme.inputBorder,
-      borderRadius: 18,
-      paddingHorizontal: 12,
-      height: 36,
+      paddingHorizontal: 8,
+      paddingTop: 6,
+      paddingBottom: 5,
     },
-    searchInput: {
-      flex: 1,
-      color: theme.text,
-      fontSize: 14,
-      paddingVertical: 0,
-    },
-    toneBtn: {
-      width: 36,
-      height: 36,
-      borderRadius: 8,
+    iconBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
       borderWidth: 1,
       borderColor: theme.inputBorder,
       backgroundColor: theme.inputBg,
       alignItems: "center",
       justifyContent: "center",
     },
-    toneText: { fontSize: 18 },
+    mediaBtn: {
+      height: 34,
+      paddingHorizontal: 10,
+      borderRadius: 12,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+    },
+    mediaBtnText: {
+      color: theme.textSecondary,
+      fontSize: 11,
+      fontWeight: "600",
+    },
+    searchBox: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      backgroundColor: theme.inputBg,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      borderRadius: 17,
+      paddingHorizontal: 10,
+      height: 34,
+    },
+    searchInput: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 13,
+      paddingVertical: 0,
+    },
+    toneBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      borderWidth: 1,
+      borderColor: theme.inputBorder,
+      backgroundColor: theme.inputBg,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    toneText: { fontSize: 17 },
     tonePopup: {
       position: "absolute",
-      top: 48,
-      right: 10,
+      top: 44,
+      right: 8,
       // zIndex (iOS/web) + elevation (Android) so the popup paints ABOVE the
       // emoji grid sibling instead of being covered/clipped by it.
       zIndex: 50,
@@ -441,28 +479,28 @@ const makeStyles = (theme: Theme) =>
     bottomStrip: {
       flexDirection: "row",
       alignItems: "center",
-      paddingHorizontal: 6,
-      paddingVertical: 4,
+      paddingHorizontal: 4,
+      paddingVertical: 3,
       borderTopWidth: 1,
       borderTopColor: theme.border,
       backgroundColor: theme.bgSecondary,
     },
-    strip: { gap: 2, alignItems: "center", flexGrow: 1 },
+    strip: { gap: 1, alignItems: "center", flexGrow: 1 },
     stripTab: {
-      paddingHorizontal: 8,
-      paddingVertical: 5,
-      borderRadius: 8,
-      opacity: 0.5,
+      paddingHorizontal: 7,
+      paddingVertical: 4,
+      borderRadius: 7,
+      opacity: 0.56,
     },
-    stripTabActive: { opacity: 1, backgroundColor: theme.surface },
-    stripIcon: { fontSize: 18 },
+    stripTabActive: { opacity: 1, backgroundColor: theme.inputBg },
+    stripIcon: { fontSize: 17 },
     backspace: {
-      width: 44,
-      height: 32,
+      width: 40,
+      height: 30,
       alignItems: "center",
       justifyContent: "center",
-      borderRadius: 8,
+      borderRadius: 7,
       backgroundColor: theme.surface,
-      marginLeft: 4,
+      marginLeft: 3,
     },
   });

@@ -293,13 +293,7 @@ export default function ChatThread() {
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
       ) : (
-        <View
-          style={{
-            flex: 1,
-            paddingBottom:
-              c.emojiKeyboardOpen && c.kbInset > 100 ? c.kbInset : 0,
-          }}
-        >
+        <View style={{ flex: 1 }}>
           {/* Pinned-messages banner at the top of the chat. */}
           {c.latestPin ? (
             <PinnedBanner
@@ -353,17 +347,16 @@ export default function ChatThread() {
           />
           {/* Docked in-app emoji keyboard (shown in place of the system
               keyboard when the composer's emoji toggle is active). */}
-          {c.emojiKeyboardOpen ? (
-            <EmojiKeyboard
-              height={c.emojiKeyboardHeight}
-              onPick={c.insertEmoji}
-              onBackspace={c.emojiBackspace}
-              onOpenGif={c.attachGifFromEmoji}
-              onOpenSticker={c.attachStickerFromEmoji}
-              onSearchFocus={c.onEmojiSearchFocus}
-              onSearchBlur={c.onEmojiSearchBlur}
-            />
-          ) : null}
+          <EmojiKeyboard
+            visible={c.emojiKeyboardOpen}
+            height={c.emojiKeyboardHeight}
+            onPick={c.insertEmoji}
+            onBackspace={c.emojiBackspace}
+            onOpenGif={c.attachGifFromEmoji}
+            onOpenSticker={c.attachStickerFromEmoji}
+            onSearchFocus={c.onEmojiSearchFocus}
+            onSearchBlur={c.onEmojiSearchBlur}
+          />
         </View>
       )}
 

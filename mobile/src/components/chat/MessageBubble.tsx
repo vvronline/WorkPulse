@@ -21,7 +21,7 @@ import ReplyQuote from "./ReplyQuote";
 import FilePreview from "./FilePreview";
 import MessageContent from "./MessageContent";
 import ReactionChips from "./ReactionChips";
-import { fmtTime } from "./chatUtils";
+import { fmtTime, isEmojiOnlyMessage } from "./chatUtils";
 
 // Horizontal drag distance (px) past which releasing triggers a reply, and the
 // max the bubble is allowed to travel (Signal-style swipe-to-reply).
@@ -211,6 +211,10 @@ function MessageBubbleImpl({
     isImageType &&
     !isViewOnce &&
     !String(message.content || "").trim();
+  const isEmojiOnly =
+    !deleted &&
+    !message.file_url &&
+    isEmojiOnlyMessage(message.content);
 
   // While a media attachment is still uploading (or failed mid-upload) the
   // FilePreview shows a single progress/retry overlay on the card. Suppress the
@@ -316,6 +320,9 @@ function MessageBubbleImpl({
                 styles.bubble,
                 mine ? styles.bubbleMine : styles.bubbleTheirs,
                 isMediaOnly && styles.bubbleMediaOnly,
+                isEmojiOnly && styles.bubbleEmojiOnly,
+                isEmojiOnly &&
+                  (mine ? styles.bubbleEmojiOnlyMine : styles.bubbleEmojiOnlyTheirs),
                 cornerStyle,
                 message._pending && styles.bubblePending,
               ]}
@@ -509,6 +516,21 @@ const makeStyles = (theme: Theme) =>
       paddingHorizontal: 0,
       paddingVertical: 0,
       overflow: "hidden",
+    },
+    // Emoji-only text messages keep the jumbo glyphs but still render on a
+    // bubble surface so they don't feel detached from the thread.
+    bubbleEmojiOnly: {
+      borderWidth: 1,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    bubbleEmojiOnlyMine: {
+      backgroundColor: "rgba(255,255,255,0.12)",
+      borderColor: "rgba(255,255,255,0.18)",
+    },
+    bubbleEmojiOnlyTheirs: {
+      backgroundColor: "rgba(255,255,255,0.06)",
+      borderColor: "rgba(255,255,255,0.1)",
     },
     bubblePending: { opacity: 0.7 },
     sender: {
