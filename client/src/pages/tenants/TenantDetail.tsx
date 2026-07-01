@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
     getTenant, getTenantStats, getTenantUsers,
-    suspendTenant, reactivateTenant, deleteTenantApi, updateTenantDomain, updateTenantLimits,
+    suspendTenant, reactivateTenant, deleteTenantApi, updateTenant, updateTenantDomain, updateTenantLimits,
     getAdminOrganizations, updateAdminOrganization,
     getPlanCatalog, updateTenantPlan, updateTenantFeatures,
 } from "../../api";
@@ -332,6 +332,7 @@ export default function TenantDetail({ tenantId, onBack }: TenantDetailProps) {
 
 /* ── Tenant Settings sub-section ── */
 function TenantSettings({ tenant, org, onEditOrg, onReload }: { tenant: any; org: any; onEditOrg: () => void; onReload: () => void }) {
+    const [orgName, setOrgName] = useState(tenant.org_name || "");
     const [domain, setDomain] = useState(tenant.custom_domain || "");
     const [maxUsers, setMaxUsers] = useState<number | string>(tenant.max_users || "");
     const [maxStorage, setMaxStorage] = useState<number | string>(tenant.max_storage_mb || "");
@@ -346,6 +347,7 @@ function TenantSettings({ tenant, org, onEditOrg, onReload }: { tenant: any; org
     const [overrides, setOverrides] = useState<Record<string, boolean>>(tenant.features || {});
 
     useEffect(() => {
+        setOrgName(tenant.org_name || "");
         setDomain(tenant.custom_domain || "");
         setMaxUsers(tenant.max_users || "");
         setMaxStorage(tenant.max_storage_mb || "");
@@ -367,6 +369,16 @@ function TenantSettings({ tenant, org, onEditOrg, onReload }: { tenant: any; org
     const handleDomainChange = (val: string) => {
         setDomain(val);
         setDomainError(val && !DOMAIN_RE.test(val) ? "Enter a valid domain (e.g. app.company.com)" : "");
+    };
+
+    const saveName = async () => {
+        const trimmed = orgName.trim();
+        if (!trimmed) { setMsg("Organization name cannot be empty"); return; }
+        if (trimmed === tenant.org_name) return;
+        setSaving(true); setMsg("");
+        try { await updateTenant(tenant.id, { org_name: trimmed }); setMsg("Name updated"); onReload(); }
+        catch (e: any) { setMsg(e.response?.data?.error || "Failed"); }
+        finally { setSaving(false); }
     };
 
     const saveDomain = async () => {
@@ -425,6 +437,23 @@ function TenantSettings({ tenant, org, onEditOrg, onReload }: { tenant: any; org
     return (
         <div className={s.settingsWrap}>
             {msg && <div className={s.settingsMsg}>{msg}</div>}
+
+            {/* Tenant Details (name). Slug is immutable — it's tied to the
+                tenant DB name and domain routing, so it's shown read-only. */}
+            <fieldset className={s.fieldset}>
+                <legend className={s.legend}>Tenant Details</legend>
+                <div className={s.fieldRow}>
+                    <input value={orgName} onChange={e => setOrgName(e.target.value)}
+                        placeholder="Organization name"
+                        className={s.inputFull} />
+                    <button onClick={saveName} disabled={saving || !orgName.trim() || orgName.trim() === tenant.org_name} className={s.saveBtn}>Save</button>
+                </div>
+                {tenant.slug && (
+                    <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6 }}>
+                        Slug: <strong>{tenant.slug}</strong> (cannot be changed after creation)
+                    </p>
+                )}
+            </fieldset>
 
             {/* Plan Management */}
             <fieldset className={s.fieldset}>

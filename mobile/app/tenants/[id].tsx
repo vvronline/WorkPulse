@@ -57,6 +57,7 @@ import {
   reactivateTenant,
   suspendTenant,
   updateAdminOrganization,
+  updateTenant,
   updateTenantDomain,
   updateTenantFeatures,
   updateTenantLimits,
@@ -96,6 +97,7 @@ export default function TenantDetailScreen() {
   const [busy, setBusy] = useState(false);
 
   // Settings edit state
+  const [orgName, setOrgName] = useState("");
   const [maxUsers, setMaxUsers] = useState("");
   const [maxStorage, setMaxStorage] = useState("");
   const [domain, setDomain] = useState("");
@@ -127,6 +129,7 @@ export default function TenantDetailScreen() {
     if (tRes.status === "fulfilled") {
       t = tRes.value.data;
       setTenant(t);
+      setOrgName(t.org_name || "");
       setMaxUsers(t.max_users != null ? String(t.max_users) : "");
       setMaxStorage(t.max_storage_mb != null ? String(t.max_storage_mb) : "");
       setDomain(t.custom_domain || "");
@@ -232,6 +235,27 @@ export default function TenantDetailScreen() {
       await load();
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to save limits");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveName() {
+    if (!tenant) return;
+    const trimmed = orgName.trim();
+    if (!trimmed) {
+      Alert.alert("Invalid name", "Organization name cannot be empty.");
+      return;
+    }
+    if (trimmed === tenant.org_name) return;
+    setBusy(true);
+    setSettingsMsg(null);
+    try {
+      await updateTenant(tenant.id, { org_name: trimmed });
+      setSettingsMsg("Name updated");
+      await load();
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed to save name");
     } finally {
       setBusy(false);
     }
@@ -451,6 +475,29 @@ export default function TenantDetailScreen() {
       <View style={styles.settingsCard}>
         <Text style={styles.sectionTitle}>Settings</Text>
         {settingsMsg ? <Text style={styles.settingsMsg}>{settingsMsg}</Text> : null}
+
+        <Text style={styles.fieldLabel}>Organization name</Text>
+        <View style={styles.inlineRow}>
+          <TextInput
+            style={[styles.input, { flex: 1 }]}
+            value={orgName}
+            onChangeText={setOrgName}
+            placeholder="Organization name"
+            placeholderTextColor={theme.textMuted}
+          />
+          <Pressable
+            style={[styles.smallBtn, busy && styles.disabled]}
+            onPress={saveName}
+            disabled={busy}
+          >
+            <Text style={styles.smallBtnText}>Save</Text>
+          </Pressable>
+        </View>
+        {tenant.slug ? (
+          <Text style={styles.note}>
+            Slug: {tenant.slug} (cannot be changed after creation)
+          </Text>
+        ) : null}
 
         {planOptions.length > 0 ? (
           <>

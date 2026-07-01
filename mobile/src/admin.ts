@@ -517,6 +517,18 @@ export function reactivateTenant(id: number | string) {
   return api.put<{ message: string }>(`/admin/tenants/${id}/reactivate`);
 }
 
+/**
+ * Update a tenant's general config (currently just the organization name).
+ * Slug is immutable post-creation (tied to the tenant DB / domain routing),
+ * and features/plan/limits have their own dedicated endpoints.
+ */
+export function updateTenant(
+  id: number | string,
+  data: { org_name?: string },
+) {
+  return api.put<{ tenant: Tenant }>(`/admin/tenants/${id}`, data);
+}
+
 export function deleteTenant(
   id: number | string,
   hard?: boolean,

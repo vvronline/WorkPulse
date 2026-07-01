@@ -15,11 +15,14 @@
  *   2. Also checks once on mount / when auth resolves (covers a route stashed
  *      just before this mounted, or one that arrived while unauthenticated).
  *
- * It routes through `/(tabs)/chat?openConversationId=…` (NOT directly to
- * `/chat/[id]`) so the tab shell stays under the thread — Android back/gesture
- * returns to the chat list instead of exiting the app — exactly mirroring the
- * cold-start redirect in app/index.tsx. The chat tab then pushes the exact
- * 1:1/group thread. This is the SINGLE, reliable mechanism for all warm states.
+ * It routes a concrete conversation STRAIGHT to `/chat/[id]` (the exact 1:1/group
+ * thread) rather than hopping through `/(tabs)/chat?openConversationId=…` and
+ * relying on the chat tab's effect to then push the thread — that second hop was
+ * unreliable on a cold/killed launch (the chat tab isn't mounted yet), landing
+ * the user on the chat LIST instead of the tapped conversation. The thread's own
+ * back handler (useChatThread.goBackToChatList) falls back to `/(tabs)/chat`, so
+ * back/gesture still returns to the chat list instead of exiting the app. A 2+
+ * unread GROUP-SUMMARY tap (no single target) still opens the chat LIST.
  */
 
 import { useEffect } from "react";
@@ -62,15 +65,22 @@ export default function PendingChatNavigator() {
             notificationLogger.logStateTransition(route.dedupeKey, route.conversationId, NotificationState.NAVIGATION_STARTED, { target: "chat", source: "PendingChatNavigator" });
           }
           // A 2+ unread GROUP-SUMMARY tap (openChatList, no single target thread)
-          // opens the chat LIST — never the dashboard. A concrete conversationId
-          // still opens the exact thread via `openConversationId`.
-          router.push({
-            pathname: "/(tabs)/chat",
-            params:
-              route.openChatList || !route.conversationId
-                ? {}
-                : { openConversationId: route.conversationId },
-          });
+          // opens the chat LIST — never the dashboard.
+          if (route.openChatList || !route.conversationId) {
+            router.push({ pathname: "/(tabs)/chat", params: {} });
+          } else {
+            // A concrete conversation → open the EXACT thread DIRECTLY instead of
+            // hopping through `/(tabs)/chat?openConversationId=…` and relying on the
+            // chat tab's effect to then push it. That second hop was unreliable on a
+            // cold/killed launch (the chat tab isn't mounted yet), landing the user
+            // on the chat LIST instead of the tapped conversation. The thread's own
+            // back handler (useChatThread.goBackToChatList) falls back to
+            // `/(tabs)/chat`, so back-navigation still returns to the chat list.
+            router.push({
+              pathname: "/chat/[id]",
+              params: { id: String(route.conversationId) },
+            });
+          }
         } finally {
           // Allow a subsequent (genuinely new) tap to navigate again.
           navigating = false;

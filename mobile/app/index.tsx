@@ -223,16 +223,25 @@ export default function Index() {
       notificationLogger.logStateTransition(chatRoute.dedupeKey, String(chatRoute.conversationId), NotificationState.NAVIGATION_STARTED, { target: "chat", source: "app_index_cold_start" });
     }
     // A 2+ unread GROUP-SUMMARY tap (openChatList, no single target thread) opens
-    // the chat LIST — never the dashboard. A concrete conversationId still opens
-    // the exact thread via `openConversationId`.
+    // the chat LIST — never the dashboard.
+    if (chatRoute.openChatList || !chatRoute.conversationId) {
+      return <Redirect href={{ pathname: "/(tabs)/chat", params: {} }} />;
+    }
+    // A concrete conversation → open the EXACT 1:1/group thread DIRECTLY, exactly
+    // like the incoming-call cold start redirects straight to /call. Previously
+    // this went through `/(tabs)/chat?openConversationId=…` and relied on the chat
+    // tab's `openConversationId` effect to THEN push the thread — a fragile second
+    // hop that, on a KILLED cold start, frequently left the user on the chat LIST
+    // instead of the tapped conversation ("tapping a message opens the common chat
+    // window, not that person's chat"). Redirecting straight to the thread removes
+    // that hop so the correct 1:1 thread always opens. The thread's own hardware
+    // back handler (useChatThread.goBackToChatList) falls back to `/(tabs)/chat`,
+    // so back-navigation still returns to the chat list.
     return (
       <Redirect
         href={{
-          pathname: "/(tabs)/chat",
-          params:
-            chatRoute.openChatList || !chatRoute.conversationId
-              ? {}
-              : { openConversationId: chatRoute.conversationId },
+          pathname: "/chat/[id]",
+          params: { id: String(chatRoute.conversationId) },
         }}
       />
     );

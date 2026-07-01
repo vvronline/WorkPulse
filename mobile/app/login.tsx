@@ -212,11 +212,6 @@ export default function LoginScreen() {
               </TouchableOpacity>
             </>
           ) : null}
-
-          <Text style={styles.switch}>
-            Don&apos;t have an account?{" "}
-            <Text style={styles.switchLink}>Register</Text>
-          </Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -368,11 +363,4 @@ const makeStyles = (theme: Theme) =>
     backgroundColor: theme.inputBg,
   },
   biometricText: { color: theme.primaryLight, fontSize: 15, fontWeight: "600" },
-  switch: {
-    textAlign: "center",
-    marginTop: 22,
-    fontSize: 14,
-    color: theme.textSecondary,
-  },
-  switchLink: { color: theme.primaryLight, fontWeight: "600" },
 });

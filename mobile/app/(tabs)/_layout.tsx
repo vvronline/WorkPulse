@@ -210,9 +210,12 @@ export default function TabsLayout() {
           // Grow the bar to include the bottom safe-area inset so it clears the
           // home indicator / gesture nav bar instead of sitting flush against
           // the screen edge (matches Signal-Android's inset-aware bars).
-          height: 60 + insets.bottom,
-          paddingTop: 6,
-          paddingBottom: 8 + insets.bottom,
+          // Enforce a MINIMUM bottom gap so devices that report a 0 inset (e.g.
+          // 3-button nav / no gesture bar) still get visible breathing room
+          // between the icons and the screen edge instead of a cramped bar.
+          height: 68 + Math.max(insets.bottom, 14),
+          paddingTop: 10,
+          paddingBottom: Math.max(insets.bottom, 14),
         },
         tabBarLabelStyle: { fontSize: 11, fontWeight: "500" },
       }}

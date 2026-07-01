@@ -1638,12 +1638,22 @@ router.get("/:id/users", async (req: Request, res: Response) => {
         const limit = Math.min(Math.max(Number(rawLimit) || 50, 1), 200);
         const off = Math.max(Number(offset) || 0, 0);
 
-        let whereClause = "";
+        // Always exclude platform-level accounts and directory-hidden
+        // synthetic rows (e.g. the "Platform Inspector" users created by
+        // getOrCreateInspectorUser during impersonation). These are not real
+        // tenant members and must never surface in the tenant user list.
+        const conditions: string[] = [
+            "u.role <> 'platform_admin'",
+            "u.hidden_from_directory = FALSE",
+        ];
         const params: unknown[] = [];
         if (search) {
-            whereClause = "WHERE u.full_name ILIKE $1 OR u.username ILIKE $1 OR u.email ILIKE $1";
             params.push(`%${search}%`);
+            conditions.push(
+                `(u.full_name ILIKE $${params.length} OR u.username ILIKE $${params.length} OR u.email ILIKE $${params.length})`,
+            );
         }
+        const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
         const countRes = await db.query(`SELECT COUNT(*) FROM users u ${whereClause}`, params);
         const usersRes = await db.query(
