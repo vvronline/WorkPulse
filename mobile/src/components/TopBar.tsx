@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import { Pressable, StyleSheet, Text, View, Image } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
-import { Bell, Search } from "lucide-react-native";
+import { Bell } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
@@ -88,16 +88,8 @@ export default function TopBar() {
         <Text style={styles.title}>loops</Text>
       </View>
 
-      {/* Right: search + notifications + profile */}
+      {/* Right: notifications + profile */}
       <View style={styles.right}>
-        <Pressable
-          style={styles.iconBtn}
-          onPress={() => router.push("/search")}
-          hitSlop={6}
-          accessibilityLabel="Search"
-        >
-          <Search size={20} color={theme.textSecondary} />
-        </Pressable>
         <Pressable
           style={styles.iconBtn}
           onPress={() => router.push("/notifications")}
