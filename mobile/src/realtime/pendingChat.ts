@@ -25,6 +25,8 @@ import * as SecureStore from "expo-secure-store";
 
 export type PendingChatRoute = {
   conversationId: string;
+  dedupeKey?: string;
+  messageId?: string;
 };
 
 let pending: PendingChatRoute | null = null;

@@ -12,13 +12,15 @@ import {
   type PendingCallRoute,
 } from "../src/realtime/pendingCall";
 import { beginCallNavigation } from "../src/realtime/callRouting";
-import { notifeeService } from "../src/services/notifeeService";
 import {
   consumePendingChat,
   peekPendingChat,
   loadPersistedPendingChat,
   clearPersistedPendingChat,
+  type PendingChatRoute,
 } from "../src/realtime/pendingChat";
+import { notificationLogger, NotificationState } from "../src/utils/notificationLogger";
+import { notificationDispatcher } from "../src/services/notificationDispatcher";
 
 /**
  * Entry route: route to tabs when authenticated, otherwise to login.
@@ -54,47 +56,34 @@ export default function Index() {
   // notification (killed app), notifeeService.handleMessageEvent persisted the
   // target conversation. We consume it here and redirect STRAIGHT to the 1:1/
   // group thread instead of landing on the chat LIST. null = none.
-  const [chatConversationId, setChatConversationId] = useState<string | null>(
+  const [chatRoute, setChatRoute] = useState<PendingChatRoute | null>(
     null,
   );
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // 1. Notifee initial notification (user TAPPED the call notification /
-      //    Answer-Decline action to cold-launch). 2. SecureStore-persisted
-      //    route (the only signal that survives the LOCKED+KILLED full-screen-
-      //    intent auto-launch, which is not a tap so getInitialNotification()
-      //    is null). The persisted route is TTL-guarded so a stale ring is
-      //    ignored. The in-memory route (tap) takes precedence.
-      // captureInitialCallRoute reads Notifee's ONE-SHOT getInitialNotification()
-      // and stashes the right pending route for BOTH a cold-start CALL tap AND a
-      // cold-start MESSAGE tap (it inspects the payload — callId → pending call,
-      // conversationId-only → pending chat). It must therefore be the SINGLE
-      // reader of getInitialNotification(); a second read returns null.
-      await notifeeService.captureInitialCallRoute().catch(() => {});
+      const routeDecisionStartedAt = Date.now();
+      const dispatcherRoute = await notificationDispatcher.waitForRoute(600);
       if (cancelled) return;
 
       let route = peekPendingCall();
       let chat = peekPendingChat();
+
+      if (!route && !chat && dispatcherRoute?.type === "message") {
+        chat = {
+          conversationId: dispatcherRoute.conversationId,
+          dedupeKey: dispatcherRoute.dedupeKey,
+          messageId: dispatcherRoute.messageId,
+        };
+      }
 
       // Bounded retry for the SecureStore-persisted route. On a LOCKED + KILLED
       // device the full-screen-intent AUTO-launches this activity the instant
       // the notification is posted; although displayIncomingCall persists the
       // route BEFORE displayNotification(), the async SecureStore write can land
       // a few milliseconds after this brand-new process starts reading.
-      //
-      // The SAME race also affects a cold-start MESSAGE tap: captureInitialCall-
-      // Route runs from BOTH this screen and PendingCallNavigator, but Notifee's
-      // getInitialNotification() yields the launching notification only ONCE. The
-      // loser of that native race sees null and must instead wait for the winner
-      // to finish its async setPendingChat / persistPendingChat write. Without a
-      // retry the chat route was frequently missed and the app fell through to
-      // the dashboard (the "tapping a message just opens the dashboard" bug).
-      // Poll for EITHER a call or a chat route so both are reliably picked up.
-      // A genuinely absent route returns null immediately each attempt, so a
-      // normal launch only pays the cost of the first miss.
-      if (!route && !chat) {
+      if (!route && !chat && !dispatcherRoute) {
         for (let attempt = 0; attempt < 6 && !route && !chat; attempt++) {
           route = (await loadPersistedPendingCall()) ?? peekPendingCall();
           if (route || cancelled) break;
@@ -106,15 +95,33 @@ export default function Index() {
       if (cancelled) return;
 
       // A pending CALL always wins over a chat route. Otherwise open the exact
-      // conversation the message notification pointed at (in-memory route from a
-      // warm Notifee tap takes precedence over the SecureStore-persisted one).
+      // conversation the message notification pointed at.
       if (!route && chat?.conversationId) {
+        notificationDispatcher.consumeRoute();
         consumePendingChat();
         void clearPersistedPendingChat();
-        setChatConversationId(String(chat.conversationId));
+        if (chat.dedupeKey) {
+          notificationLogger.logStateTransition(chat.dedupeKey, String(chat.conversationId), NotificationState.ROUTE_CONSUMED, { source: "app_index_cold_start" });
+        }
+        setChatRoute(chat);
       }
 
       if (cancelled) return;
+      if (route) {
+        notificationDispatcher.consumeRoute();
+      }
+      notificationLogger.info("cold_start_route_decision", {
+        source: "app_index_cold_start",
+        dedupeKey: route?.dedupeKey || chat?.dedupeKey || dispatcherRoute?.dedupeKey,
+        conversationId: route?.conversationId || chat?.conversationId || dispatcherRoute?.conversationId,
+        metadata: {
+          selected: route ? "call" : chat ? "chat" : "default",
+          dispatcherRouteType: dispatcherRoute?.type,
+          dispatcherWaitMs: Date.now() - routeDecisionStartedAt,
+          pendingCallFound: Boolean(route),
+          pendingChatFound: Boolean(chat),
+        },
+      });
       setCallRoute(route ?? null);
     })();
     return () => {
@@ -172,6 +179,10 @@ export default function Index() {
     consumePendingCall();
     void clearPersistedPendingCall();
     beginCallNavigation(callRoute.callId, callRoute.conversationId);
+    if (callRoute.dedupeKey) {
+      notificationLogger.logStateTransition(callRoute.dedupeKey, callRoute.conversationId, NotificationState.ROUTE_CONSUMED, { source: "app_index_cold_start" });
+      notificationLogger.logStateTransition(callRoute.dedupeKey, callRoute.conversationId, NotificationState.NAVIGATION_STARTED, { target: "call", source: "app_index_cold_start" });
+    }
     return (
       <Redirect
         href={{
@@ -203,12 +214,15 @@ export default function Index() {
   // tab shell FIRST, then let the Chat tab push the exact thread. This keeps the
   // (tabs) route under `/chat/[id]`, so Android back/gesture returns to the chat
   // list instead of treating the thread as the app root and exiting.
-  if (chatConversationId && user) {
+  if (chatRoute && user) {
+    if (chatRoute.dedupeKey) {
+      notificationLogger.logStateTransition(chatRoute.dedupeKey, String(chatRoute.conversationId), NotificationState.NAVIGATION_STARTED, { target: "chat", source: "app_index_cold_start" });
+    }
     return (
       <Redirect
         href={{
           pathname: "/(tabs)/chat",
-          params: { openConversationId: chatConversationId },
+          params: { openConversationId: chatRoute.conversationId },
         }}
       />
     );

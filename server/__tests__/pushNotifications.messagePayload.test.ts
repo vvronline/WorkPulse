@@ -96,12 +96,48 @@ describe("pushNotifications.sendMessageNotification", () => {
             unreadCount: "5",
             badgeCount: "5",
             dedupeKey: "msg:123",
+            senderAvatar: "",
         });
+        expect(sent.data).toHaveProperty("sentAt");
+        expect(Number.isNaN(Date.parse(sent.data.sentAt))).toBe(false);
+        expect(sent.data.dedupeKey).toBe(`msg:${sent.data.messageId}`);
         // webpush still carries the notification block so desktop/browser render.
         expect(sent.webpush.notification).toMatchObject({
             title: "Alice",
             body: "Hello from Alice",
         });
+    });
+
+    test("includes sender avatar and stable routing contract fields", async () => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }] });
+
+        await pushNotifications.sendMessageNotification(
+            mockQuery,
+            10,
+            1,
+            {
+                conversationId: 777,
+                messageId: 888,
+                senderId: 99,
+                senderName: "Dana",
+                senderAvatar: "https://cdn.example.test/dana.png",
+                messagePreview: "Avatar payload",
+                unreadCount: 2,
+            },
+        );
+
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        expect(sent.data).toMatchObject({
+            type: "chat_message",
+            conversationId: "777",
+            messageId: "888",
+            senderId: "99",
+            senderName: "Dana",
+            senderAvatar: "https://cdn.example.test/dana.png",
+            dedupeKey: "msg:888",
+            tenantId: "1",
+        });
+        expect(Number.isNaN(Date.parse(sent.data.sentAt))).toBe(false);
     });
 
     test("includes APNs alert and badge for iOS message display", async () => {

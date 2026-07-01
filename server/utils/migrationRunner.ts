@@ -1391,6 +1391,53 @@ const MIGRATIONS: Migration[] = [
             await query(`ALTER TABLE chat_media_jobs ADD COLUMN IF NOT EXISTS pipeline_meta JSONB NOT NULL DEFAULT '{}'::jsonb`);
         },
     },
+    {
+        // Phase 5 — tenant-scoped notification lifecycle telemetry for the
+        // mobile push-routing overhaul. Stores structured client events
+        // (displayed, tapped, route_persisted, route_consumed, etc.) so the
+        // backend can aggregate success-rate / latency metrics for the web
+        // dashboard.
+        name: '2026_07_v19_notification_metric_events',
+        async up(query) {
+            await query(`
+                CREATE TABLE IF NOT EXISTS notification_metric_events (
+                    id                SERIAL PRIMARY KEY,
+                    client_event_id   TEXT NOT NULL UNIQUE,
+                    user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    dedupe_key        TEXT,
+                    conversation_id   TEXT,
+                    message_id        TEXT,
+                    notification_type TEXT,
+                    level             TEXT NOT NULL DEFAULT 'INFO',
+                    event             TEXT NOT NULL,
+                    state             TEXT,
+                    source            TEXT,
+                    duration_ms       INTEGER,
+                    error_hash        TEXT,
+                    metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    client_timestamp  TIMESTAMPTZ NOT NULL,
+                    received_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            `);
+            await query(`
+                CREATE INDEX IF NOT EXISTS idx_notification_metric_events_timestamp
+                ON notification_metric_events(client_timestamp DESC)
+            `);
+            await query(`
+                CREATE INDEX IF NOT EXISTS idx_notification_metric_events_dedupe
+                ON notification_metric_events(dedupe_key)
+                WHERE dedupe_key IS NOT NULL
+            `);
+            await query(`
+                CREATE INDEX IF NOT EXISTS idx_notification_metric_events_state
+                ON notification_metric_events(state, client_timestamp DESC)
+            `);
+            await query(`
+                CREATE INDEX IF NOT EXISTS idx_notification_metric_events_user
+                ON notification_metric_events(user_id, client_timestamp DESC)
+            `);
+        },
+    },
 ];
 
 interface MigrationOpts {

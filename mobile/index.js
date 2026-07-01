@@ -9,18 +9,41 @@
  * never runs in the terminated state, and incoming-call / message pushes are
  * silently dropped.
  *
- * After registering the background handler we delegate to expo-router's default
- * entry so the normal app boot proceeds unchanged.
+ * SAME FOR FOREGROUND HANDLER: The FCM foreground handler (`onMessage`) MUST
+ * also register here, at the JS entry top-level, to guarantee it is ready when
+ * the app is launched in the foreground and receives data-only payloads. If
+ * registration is deferred to a React useEffect, messages can arrive BEFORE
+ * the handler is registered, causing them to be silently dropped.
+ *
+ * After handler registration starts, notificationDispatcher begins the
+ * ONE-SHOT Notifee initial-notification read. The root route waits briefly for
+ * the dispatcher result instead of reading getInitialNotification() itself.
  */
 import { backgroundPushService } from "./src/services/backgroundPushService";
+import { notificationDispatcher } from "./src/services/notificationDispatcher";
 
-// Register the FCM background handler at import time (top-level), not in a
-// component lifecycle. Safe to call here: it is idempotent and no-ops if the
-// native @react-native-firebase/messaging module is unavailable (e.g. Expo Go).
+// Step 1: Register the FCM background handler at import time (top-level).
+// Safe to call here: it is idempotent and no-ops if the native
+// @react-native-firebase/messaging module is unavailable (e.g. Expo Go).
 backgroundPushService.initialize();
 
-// Hand off to expo-router's standard entry to boot the app UI.
-// NOTE: use require (not a static import) so this runs AFTER
-// backgroundPushService.initialize() above — static imports are hoisted and
-// would otherwise boot the app before the background handler is registered.
+// Step 2: Register the FCM foreground handler (onMessage) at the JS entry top-level.
+// This starts before React boots so the handler is wired as early as possible.
+// Do NOT delay expo-router''s entry behind this async work: React Native expects
+// the root component to be registered during initial JS evaluation.
+backgroundPushService.registerForegroundHandler().catch((error) => {
+  console.error("Foreground handler registration failed:", error);
+  // Continue anyway — background handler still works
+});
+
+// Step 3: Start the single-reader cold-start dispatcher before React mounts.
+// Do not await it here: React Native expects the root component registration to
+// happen during initial JS evaluation. app/index.tsx waits up to 600ms for this.
+notificationDispatcher.initialize("cold_start").catch((error) => {
+  console.error("Notification dispatcher initialization failed:", error);
+});
+
+// Step 4: Hand off to expo-router''s standard entry synchronously.
+// NOTE: use require (not a static import) so this runs AFTER the top-level
+// handler registration calls above — static imports are hoisted.
 require("expo-router/entry");

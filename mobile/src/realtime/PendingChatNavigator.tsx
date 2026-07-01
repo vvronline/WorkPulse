@@ -31,6 +31,7 @@ import {
   subscribePendingChat,
   clearPersistedPendingChat,
 } from "./pendingChat";
+import { notificationLogger, NotificationState } from "../utils/notificationLogger";
 
 export default function PendingChatNavigator() {
   const router = useRouter();
@@ -41,21 +42,40 @@ export default function PendingChatNavigator() {
     // check and the subscription could otherwise both fire).
     let navigating = false;
 
-    const routeToChat = (conversationId: string) => {
-      if (navigating) return;
+    const routeToChat = (route: { conversationId: string; dedupeKey?: string }): boolean => {
+      if (navigating) {
+        if (route.dedupeKey) {
+          notificationLogger.info("pending_chat_navigation_deferred", {
+            source: "PendingChatNavigator",
+            dedupeKey: route.dedupeKey,
+            conversationId: route.conversationId,
+            metadata: { reason: "navigation_in_progress" },
+          });
+        }
+        return false;
+      }
       navigating = true;
       // Defer one tick so the navigation tree is fully mounted before pushing.
       setTimeout(() => {
         try {
+          if (route.dedupeKey) {
+            notificationLogger.logStateTransition(route.dedupeKey, route.conversationId, NotificationState.NAVIGATION_STARTED, { target: "chat", source: "PendingChatNavigator" });
+          }
           router.push({
             pathname: "/(tabs)/chat",
-            params: { openConversationId: conversationId },
+            params: { openConversationId: route.conversationId },
           });
         } finally {
           // Allow a subsequent (genuinely new) tap to navigate again.
           navigating = false;
+          // If another tap arrived while navigation was in-flight, it remained
+          // pending instead of being consumed. Retry once the router is free.
+          setTimeout(() => {
+            tryConsume();
+          }, 0);
         }
       }, 0);
+      return true;
     };
 
     const tryConsume = () => {
@@ -64,9 +84,13 @@ export default function PendingChatNavigator() {
       if (loading || !user) return;
       const route = peekPendingChat();
       if (!route?.conversationId) return;
+      const normalizedRoute = { ...route, conversationId: String(route.conversationId) };
+      if (!routeToChat(normalizedRoute)) return;
       consumePendingChat();
       void clearPersistedPendingChat();
-      routeToChat(String(route.conversationId));
+      if (route.dedupeKey) {
+        notificationLogger.logStateTransition(route.dedupeKey, String(route.conversationId), NotificationState.ROUTE_CONSUMED, { source: "PendingChatNavigator" });
+      }
     };
 
     // 1) React immediately to a warm/background-but-alive tap.

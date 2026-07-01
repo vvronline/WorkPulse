@@ -31,6 +31,7 @@ import * as SecureStore from "expo-secure-store";
 export type PendingCallRoute = {
   conversationId: string;
   callId: string;
+  dedupeKey?: string;
   callType: string;
   peerId: string;
   peerName: string;
@@ -85,6 +86,7 @@ export function pendingCallFromData(
   return {
     conversationId: String(data.conversationId),
     callId: String(data.callId),
+    dedupeKey: data.dedupeKey || `call:${data.callId}`,
     callType: data.callType === "video" ? "video" : "voice",
     peerId: String(data.callerId || data.senderId || ""),
     peerName: data.callerName || "Incoming call",

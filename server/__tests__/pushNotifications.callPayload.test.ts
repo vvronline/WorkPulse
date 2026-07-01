@@ -99,7 +99,44 @@ describe("pushNotifications.sendCallNotification", () => {
             groupName: "Team Chat",
             dedupeKey: "call:99",
             callCategory: "incoming-call",
+            callerAvatar: "",
         });
+        expect(sent.data).toHaveProperty("sentAt");
+        expect(sent.data).toHaveProperty("expiresAt");
+        expect(Number.isNaN(Date.parse(sent.data.sentAt))).toBe(false);
+        expect(Number.isNaN(Date.parse(sent.data.expiresAt))).toBe(false);
+        expect(sent.data.dedupeKey).toBe(`call:${sent.data.callId}`);
+    });
+
+    test("includes caller avatar and stable routing contract fields", async () => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }] });
+        await pushNotifications.sendCallNotification(
+            mockQuery,
+            1,
+            1,
+            {
+                callId: 199,
+                conversationId: 19,
+                callerId: 13,
+                callerName: "Priya",
+                callerAvatar: "https://cdn.example.test/priya.png",
+                callType: "voice",
+            },
+        );
+
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        expect(sent.data).toMatchObject({
+            type: "incoming_call",
+            callId: "199",
+            conversationId: "19",
+            callerId: "13",
+            callerName: "Priya",
+            callerAvatar: "https://cdn.example.test/priya.png",
+            dedupeKey: "call:199",
+            tenantId: "1",
+        });
+        expect(Number.isNaN(Date.parse(sent.data.sentAt))).toBe(false);
+        expect(Number.isNaN(Date.parse(sent.data.expiresAt))).toBe(false);
     });
 
     test("includes APNs alert headers for iOS call UI", async () => {

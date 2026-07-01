@@ -75,6 +75,43 @@ class PushNotificationService {
         };
     }
 
+    private assertRoutingPayloadContract(
+        notificationType: "call" | "message",
+        data: Record<string, string>,
+    ): void {
+        const presentFields =
+            notificationType === "call"
+                ? ["type", "callId", "conversationId", "callerId", "callerName", "callerAvatar", "dedupeKey", "expiresAt", "sentAt"]
+                : ["type", "conversationId", "messageId", "senderId", "senderName", "senderAvatar", "dedupeKey", "sentAt"];
+        const nonEmptyFields =
+            notificationType === "call"
+                ? ["type", "callId", "conversationId", "callerId", "callerName", "dedupeKey", "expiresAt", "sentAt"]
+                : ["type", "conversationId", "messageId", "senderId", "senderName", "dedupeKey", "sentAt"];
+
+        const missing = presentFields.filter((field) => !(field in data));
+        const empty = nonEmptyFields.filter((field) => !data[field]);
+        const invalid: string[] = [];
+
+        if (notificationType === "call") {
+            if (data.type !== "incoming_call") invalid.push("type");
+            if (!/^call:\d+$/.test(data.dedupeKey || "")) invalid.push("dedupeKey");
+            if (Number.isNaN(Date.parse(data.expiresAt || ""))) invalid.push("expiresAt");
+        } else {
+            if (data.type !== "chat_message") invalid.push("type");
+            if (!/^msg:\d+$/.test(data.dedupeKey || "")) invalid.push("dedupeKey");
+        }
+
+        if (Number.isNaN(Date.parse(data.sentAt || ""))) invalid.push("sentAt");
+
+        if (missing.length > 0 || empty.length > 0 || invalid.length > 0) {
+            logger.error(
+                { notificationType, missing, empty, invalid },
+                "Push payload contract validation failed",
+            );
+            throw new Error(`Invalid ${notificationType} push payload contract`);
+        }
+    }
+
     private buildAndroidNotification(
         channelId: string,
         priority: "high" | "max" = "high",
@@ -237,6 +274,7 @@ class PushNotificationService {
                 },
             },
         };
+        this.assertRoutingPayloadContract("call", payload.data);
 
         logger.info(
             {
@@ -375,6 +413,7 @@ class PushNotificationService {
                 },
             },
         };
+        this.assertRoutingPayloadContract("message", payload.data);
 
         logger.info(
             {

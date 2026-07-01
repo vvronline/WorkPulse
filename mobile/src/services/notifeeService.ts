@@ -36,6 +36,9 @@ import { sendMessage, markConversationRead } from "../features";
 import { loadCallPrefs } from "./callPrefsStore";
 import { getToken } from "../auth/tokenStore";
 import { storage } from "../storage/mmkv";
+import { notificationLogger, NotificationState } from "../utils/notificationLogger";
+import { NotificationPayloadValidator } from "../utils/notificationPayloadValidator";
+import { notificationDispatcher } from "./notificationDispatcher";
 import {
   startRinging,
   stopRinging,
@@ -399,15 +402,9 @@ class NotifeeService {
   private resolved = false;
   private channelsEnsured = false;
   private fsiPermissionChecked = false;
-  // One-shot guard for captureInitialCallRoute. Notifee's
-  // getInitialNotification() returns the launching notification ONLY ONCE — a
-  // second read returns null. captureInitialCallRoute is called from MULTIPLE
-  // places on cold start (app/index.tsx AND PendingCallNavigator). Without this
-  // guard they RACE: whoever reads first gets the route, the loser sees null and
-  // the app falls through to the dashboard (the "tap opens dashboard, not the
-  // chat" bug). This latch makes the FIRST caller the sole reader; every later
-  // caller is a cheap no-op, and all consumers then read the stashed pending
-  // call/chat routes from their stores instead.
+  // Backward-compatibility guard for the legacy captureInitialCallRoute() shim.
+  // Phase 6 moved the one-shot initial-notification read to notificationDispatcher;
+  // this latch keeps any older callers from waiting repeatedly.
   private initialRouteCaptured = false;
 
   private resolve(): NotifeeModule | null {
@@ -1075,6 +1072,11 @@ class NotifeeService {
         },
       });
 
+      // LOG: Notification displayed state
+      if (data.dedupeKey && data.conversationId) {
+        notificationLogger.logNotificationDisplayed(data.dedupeKey, data.conversationId, 'call');
+      }
+
       // Persist the call route so a LOCKED + KILLED device — where the
       // full-screen-intent AUTO-launches MainActivity in a brand-new process
       // (not a notification tap, so getInitialNotification() is null) — can
@@ -1264,6 +1266,14 @@ class NotifeeService {
     const notifee = this.resolve();
     if (!notifee) return;
     const data = payload.data || {};
+    
+    // DEFENSIVE: Validate critical fields before attempting display
+    // This catches malformed payloads early and ensures structured error logging
+    if (!data.conversationId && !data.messageId) {
+      console.warn("[NotifeeService] displayMessage: missing conversationId and messageId");
+      return;
+    }
+    
     const title =
       payload.title || data.title || data.senderName || "New message";
     const body = payload.body || data.body || "";
@@ -1451,12 +1461,20 @@ class NotifeeService {
 
     // Post NOW without the avatar so the message is guaranteed to appear.
     await postNotification({});
+    // LOG: Notification displayed state
+    if (data.dedupeKey && conversationId) {
+      notificationLogger.logNotificationDisplayed(data.dedupeKey, conversationId, 'message');
+    }
 
     // ── STEP 1b: refresh the cross-conversation GROUP SUMMARY ─────────────
     // Record this conversation in the active-summary registry and (re)post the
     // umbrella summary so 2+ conversations collapse under one "WorkPulse" entry
     // (Signal parity). No-op visually when only ONE conversation is active — the
     // OS shows that child directly and hides the summary.
+    //
+    // NOTE: Deduplication happens UPSTREAM in backgroundPushService.handleNotificationPayload()
+    // using notificationDeduplicator, so only unique messages reach this point.
+    // recordActiveConversation is therefore safe to call without duplicate-checking here.
     if (conversationId) {
       try {
         const map = recordActiveConversation(conversationId, {
@@ -1532,6 +1550,13 @@ class NotifeeService {
     const notifee = this.resolve();
     if (!notifee) return;
     const data = payload.data || {};
+    
+    // DEFENSIVE: Validate critical fields before attempting display
+    if (!data.type && !payload.title && !data.title) {
+      console.warn("[NotifeeService] displayAlert: missing notification type, title, and data.title");
+      return;
+    }
+    
     const title = payload.title || data.title || "Notification";
     const body = payload.body || data.body || "";
     if (!title && !body) return;
@@ -1861,6 +1886,35 @@ class NotifeeService {
     const data = (detail?.notification?.data || {}) as Record<string, string>;
     if (!data.callId || !data.conversationId) return false;
 
+    // VALIDATION: Validate call payload
+    const validationResult = NotificationPayloadValidator.validate(data, 'tap_handler');
+    if (!validationResult.ok) {
+      notificationLogger.warn('tap_payload_validation_failed', {
+        source: 'notifeeService.handleCallEvent',
+        dedupeKey: data.dedupeKey,
+        metadata: {
+          reason: validationResult.reason,
+          missing: validationResult.missing,
+          invalid: validationResult.invalid,
+        },
+      });
+      return false;
+    }
+
+    // LOG: Tap event with call action
+    const action = pressActionId || 'body_press';
+    notificationLogger.logNotificationTapped(data.dedupeKey, data.conversationId, data.callId);
+    notificationLogger.info('notification_tapped', {
+      source: 'notifeeService',
+      dedupeKey: data.dedupeKey,
+      conversationId: data.conversationId,
+      metadata: {
+        type: 'call',
+        action: action,
+        validatedRoute: validationResult.ok ? 'call' : undefined,
+      },
+    });
+
     const isPress = type === (this.EventType.PRESS ?? 1);
     const isAction = type === (this.EventType.ACTION_PRESS ?? 2);
     if (!isPress && !isAction) return false;
@@ -1876,7 +1930,11 @@ class NotifeeService {
         ...data,
         notificationAction: "decline_call",
       });
-      if (route) setPendingCall(route);
+      if (route) {
+        setPendingCall(route);
+        await persistPendingCall(route).catch(() => {});
+        notificationLogger.logStateTransition(route.dedupeKey || data.dedupeKey, route.conversationId, NotificationState.ROUTE_PERSISTED, { action: "decline_call" });
+      }
       await nativeCallService.handleAction("reject", data);
       return true;
     }
@@ -1889,7 +1947,11 @@ class NotifeeService {
         ...data,
         notificationAction: "accept_call",
       });
-      if (route) setPendingCall(route);
+      if (route) {
+        setPendingCall(route);
+        await persistPendingCall(route).catch(() => {});
+        notificationLogger.logStateTransition(route.dedupeKey || data.dedupeKey, route.conversationId, NotificationState.ROUTE_PERSISTED, { action: "accept_call" });
+      }
       await nativeCallService.handleAction("answer", data);
       return true;
     }
@@ -1897,7 +1959,11 @@ class NotifeeService {
     // Body press → open the call screen in incoming mode without auto-answer.
     // Stash a pending route too, so a cold start still reaches the call screen.
     const route = pendingCallFromData(data);
-    if (route) setPendingCall(route);
+    if (route) {
+      setPendingCall(route);
+      await persistPendingCall(route).catch(() => {});
+      notificationLogger.logStateTransition(route.dedupeKey || data.dedupeKey, route.conversationId, NotificationState.ROUTE_PERSISTED, { action: "body_tap_call" });
+    }
     try {
       // Include peerName/peerAvatar so the call screen shows the caller's name
       // (not the generic "Call" fallback) when this body-press deep link wins.
@@ -1941,6 +2007,25 @@ class NotifeeService {
     const isAction = type === (this.EventType.ACTION_PRESS ?? 2);
     if (!isPress && !isAction) return false;
 
+    const validationResult = NotificationPayloadValidator.validate(data, 'tap_handler');
+    if (!validationResult.ok) {
+      notificationLogger.warn('tap_payload_validation_failed', {
+        source: 'notifeeService.handleMessageEvent',
+        dedupeKey: data.dedupeKey,
+        conversationId,
+        metadata: {
+          reason: validationResult.reason,
+          missing: validationResult.missing,
+          invalid: validationResult.invalid,
+        },
+      });
+      return false;
+    }
+
+    if (data.dedupeKey && conversationId) {
+      notificationLogger.logNotificationTapped(data.dedupeKey, conversationId, data.messageId);
+    }
+
     const convIdNum = Number(conversationId);
     // The delivered notification's id is now the STABLE per-conversation id, so
     // detail.notification.id already targets the grouped entry. Fall back to
@@ -1956,9 +2041,30 @@ class NotifeeService {
 
     // ── "Mark as read" action ────────────────────────────────────────────
     if (pressActionId === "mark_read") {
+      notificationLogger.info("notification_tap_action_selected", {
+        source: "notifeeService.handleMessageEvent",
+        dedupeKey: data.dedupeKey,
+        conversationId,
+        messageId: data.messageId,
+        metadata: { action: "mark_read", notificationId },
+      });
       try {
         if (Number.isFinite(convIdNum)) await markConversationRead(convIdNum);
+        notificationLogger.info("notification_tap_action_completed", {
+          source: "notifeeService.handleMessageEvent",
+          dedupeKey: data.dedupeKey,
+          conversationId,
+          messageId: data.messageId,
+          metadata: { action: "mark_read" },
+        });
       } catch (err) {
+        notificationLogger.error("notification_tap_action_failed", err, {
+          source: "notifeeService.handleMessageEvent",
+          dedupeKey: data.dedupeKey,
+          conversationId,
+          messageId: data.messageId,
+          metadata: { action: "mark_read" },
+        });
         console.warn("[NotifeeService] Failed to mark conversation read:", err);
       }
       // Clear the accumulated MessagingStyle history so the NEXT message starts
@@ -1974,6 +2080,13 @@ class NotifeeService {
 
     // ── "Reply" action (inline RemoteInput) ──────────────────────────────
     if (pressActionId === "reply") {
+      notificationLogger.info("notification_tap_action_selected", {
+        source: "notifeeService.handleMessageEvent",
+        dedupeKey: data.dedupeKey,
+        conversationId,
+        messageId: data.messageId,
+        metadata: { action: "reply", notificationId },
+      });
       // Notifee delivers the typed text on detail.input (string) — older
       // versions nested it under detail.input.text. Support both shapes.
       const rawInput =
@@ -1984,6 +2097,12 @@ class NotifeeService {
 
       if (!replyText) {
         // Nothing typed — leave the notification so the user can retry.
+        notificationLogger.warn("notification_reply_empty", {
+          source: "notifeeService.handleMessageEvent",
+          dedupeKey: data.dedupeKey,
+          conversationId,
+          messageId: data.messageId,
+        });
         return true;
       }
 
@@ -2027,7 +2146,21 @@ class NotifeeService {
             await notifee.cancelNotification(notificationId).catch(() => {});
           }
         }
+        notificationLogger.info("notification_tap_action_completed", {
+          source: "notifeeService.handleMessageEvent",
+          dedupeKey: data.dedupeKey,
+          conversationId,
+          messageId: data.messageId,
+          metadata: { action: "reply" },
+        });
       } catch (err) {
+        notificationLogger.error("notification_tap_action_failed", err, {
+          source: "notifeeService.handleMessageEvent",
+          dedupeKey: data.dedupeKey,
+          conversationId,
+          messageId: data.messageId,
+          metadata: { action: "reply" },
+        });
         console.warn(
           "[NotifeeService] Failed to send reply from notification:",
           err,
@@ -2039,6 +2172,13 @@ class NotifeeService {
     }
 
     // ── Body PRESS → open the exact conversation ─────────────────────────
+    notificationLogger.info("notification_tap_action_selected", {
+      source: "notifeeService.handleMessageEvent",
+      dedupeKey: data.dedupeKey,
+      conversationId,
+      messageId: data.messageId,
+      metadata: { action: "body_press", notificationId },
+    });
     // UNIFIED ROUTING (Signal-parity, fixes "tap opens dashboard / common chat
     // list, not the 1:1 thread"): we DO NOT fire a `Linking.openURL` deep link
     // anymore — that was unreliable (expo-router could miss the scheme/route and
@@ -2051,11 +2191,35 @@ class NotifeeService {
     //                background-but-alive tap.
     // One mechanism, three states, always the correct thread.
     try {
-      await persistPendingChat({ conversationId: String(conversationId) });
+      await persistPendingChat({
+        conversationId: String(conversationId),
+        dedupeKey: data.dedupeKey,
+        messageId: data.messageId,
+      });
     } catch {
       /* best-effort */
     }
-    setPendingChat({ conversationId: String(conversationId) });
+    setPendingChat({
+      conversationId: String(conversationId),
+      dedupeKey: data.dedupeKey,
+      messageId: data.messageId,
+    });
+    notificationLogger.info("notification_tap_route_staged", {
+      source: "notifeeService.handleMessageEvent",
+      dedupeKey: data.dedupeKey,
+      conversationId,
+      messageId: data.messageId,
+      metadata: {
+        action: "body_press",
+        persisted: true,
+        inMemory: true,
+      },
+    });
+
+    // LOG: Tap event — route persisted to pending chat
+    if (data.dedupeKey && conversationId) {
+      notificationLogger.logStateTransition(data.dedupeKey, conversationId, NotificationState.ROUTE_PERSISTED, { action: 'body_tap_message' });
+    }
 
     // Mark the conversation read on open (matches in-app behaviour).
     try {
@@ -2087,120 +2251,16 @@ class NotifeeService {
    *   • MESSAGE notifications → a pending CHAT route, so a cold-start body tap
    *     opens the EXACT conversation instead of landing on the dashboard.
    *
-   * Both are read from the SAME `getInitialNotification()` call because Notifee
-   * only returns the launching notification ONCE — a second read returns null.
+   * Deprecated Phase 6 shim: notificationDispatcher now owns the only
+   * `getInitialNotification()` read and stages the same pending routes.
    */
   async captureInitialCallRoute(): Promise<void> {
-    // ONE-SHOT GUARD: only the first caller actually reads the launching
-    // notification / native action; later callers (the second of
-    // index.tsx + PendingCallNavigator) no-op so they can't race for the
-    // single-use getInitialNotification() and lose (→ dashboard fallthrough).
     if (this.initialRouteCaptured) return;
     this.initialRouteCaptured = true;
-
-    // FIRST: the native CallStyle status-bar notification path. When the user
-    // taps Answer/Decline on the foreground-service (CallRingService) call
-    // notification, CallActionActivity records the choice natively
-    // (PendingCallActionStore) and launches a deep link. On a COLD start the
-    // proven routing path (app/index.tsx) reads the SecureStore-PERSISTED
-    // pending-call route — which was written at RING time with autoAnswer="0"
-    // and no action — so it would open the call screen in plain RINGING mode and
-    // the deep link's action params are lost (Answer never connects, Decline
-    // never rejects). Here we read that native action and MERGE it into the
-    // in-memory pending route (which app/index.tsx prefers over the persisted
-    // one), so the call screen's autoAnswer/autoDecline effects fire. This is a
-    // no-op when the native module is unavailable or no action was recorded.
-    try {
-      const nativeAction = getPendingCallAction();
-      if (nativeAction) {
-        // The full call details (callType, peerName, peerAvatar, peerId) live in
-        // the persisted route written at ring time; the native record only has
-        // the action + identity. Merge them so the call screen has everything.
-        const persisted = await loadPersistedPendingCall();
-        const matches =
-          persisted &&
-          String(persisted.callId) === String(nativeAction.callId) &&
-          String(persisted.conversationId) ===
-            String(nativeAction.conversationId);
-        const base =
-          matches && persisted
-            ? persisted
-            : {
-                conversationId: String(nativeAction.conversationId),
-                callId: String(nativeAction.callId),
-                callType: "voice",
-                peerId: "",
-                peerName: "Incoming call",
-                peerAvatar: "",
-                autoAnswer: "0",
-              };
-        const merged = {
-          ...base,
-          autoAnswer: nativeAction.action === "answer" ? "1" : "0",
-          ...(nativeAction.action === "decline"
-            ? { action: "decline" }
-            : { action: undefined }),
-        };
-        setPendingCall(merged);
-        // Consumed — clear so a stale tap can't auto-answer a later call.
-        clearPendingCallAction();
-        return;
-      }
-    } catch (err) {
-      console.warn(
-        "[NotifeeService] Failed to read native pending call action:",
-        err,
-      );
-    }
-
-    const notifee = this.resolve();
-    if (!notifee || typeof notifee.getInitialNotification !== "function")
-      return;
-    try {
-      const initial = await notifee.getInitialNotification();
-      if (!initial) return;
-      const data = (initial.notification?.data || {}) as Record<string, string>;
-      const pressActionId: string | undefined = initial.pressAction?.id;
-
-      // CALL notification cold-start tap → stash a pending call route.
-      if (data.callId && data.conversationId) {
-        const action =
-          pressActionId === "answer"
-            ? "accept_call"
-            : pressActionId === "decline"
-              ? "decline_call"
-              : undefined;
-        const route = pendingCallFromData({
-          ...data,
-          notificationAction: action,
-        });
-        if (route) setPendingCall(route);
-        return;
-      }
-
-      // MESSAGE notification cold-start tap → stash a pending chat route so
-      // app/index.tsx opens the exact conversation. On a killed app the
-      // launching tap is delivered via getInitialNotification() (NOT
-      // onBackgroundEvent), so handleMessageEvent never runs and nothing else
-      // persists the route — this is the only place it gets captured for a cold
-      // start. "reply"/"mark_read" action taps must NOT navigate into the thread.
-      if (
-        data.conversationId &&
-        !data.callId &&
-        pressActionId !== "reply" &&
-        pressActionId !== "mark_read"
-      ) {
-        setPendingChat({ conversationId: String(data.conversationId) });
-        await persistPendingChat({
-          conversationId: String(data.conversationId),
-        }).catch(() => {});
-      }
-    } catch (err) {
-      console.warn(
-        "[NotifeeService] Failed to read initial notification:",
-        err,
-      );
-    }
+    notificationLogger.info("legacy_initial_route_capture_delegated", {
+      source: "notifeeService",
+    });
+    await notificationDispatcher.waitForRoute(600);
   }
 
   /**

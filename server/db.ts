@@ -1081,6 +1081,43 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
     await q(`
         CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at DESC)
     `);
+    await q(`
+        CREATE TABLE IF NOT EXISTS notification_metric_events (
+            id                SERIAL PRIMARY KEY,
+            client_event_id   TEXT NOT NULL UNIQUE,
+            user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            dedupe_key        TEXT,
+            conversation_id   TEXT,
+            message_id        TEXT,
+            notification_type TEXT,
+            level             TEXT NOT NULL DEFAULT 'INFO',
+            event             TEXT NOT NULL,
+            state             TEXT,
+            source            TEXT,
+            duration_ms       INTEGER,
+            error_hash        TEXT,
+            metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
+            client_timestamp  TIMESTAMPTZ NOT NULL,
+            received_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+    await q(`
+        CREATE INDEX IF NOT EXISTS idx_notification_metric_events_timestamp
+        ON notification_metric_events(client_timestamp DESC)
+    `);
+    await q(`
+        CREATE INDEX IF NOT EXISTS idx_notification_metric_events_dedupe
+        ON notification_metric_events(dedupe_key)
+        WHERE dedupe_key IS NOT NULL
+    `);
+    await q(`
+        CREATE INDEX IF NOT EXISTS idx_notification_metric_events_state
+        ON notification_metric_events(state, client_timestamp DESC)
+    `);
+    await q(`
+        CREATE INDEX IF NOT EXISTS idx_notification_metric_events_user
+        ON notification_metric_events(user_id, client_timestamp DESC)
+    `);
 
     // ---- Chat / Direct Messages ----
     await q(`

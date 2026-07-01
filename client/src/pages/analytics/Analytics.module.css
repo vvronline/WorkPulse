@@ -144,6 +144,30 @@
   color: var(--text-secondary);
 }
 
+.animated-notification-widget {
+  position: relative;
+  overflow: hidden;
+}
+
+.notification-icon-bg {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.14);
+}
+
+.notification-widget-meta {
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 /* ============= CHARTS GRID ============= */
 .analytics-charts-row {
   display: grid;

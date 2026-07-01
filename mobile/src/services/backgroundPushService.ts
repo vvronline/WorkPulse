@@ -5,6 +5,9 @@ import { notifeeService } from "./notifeeService";
 import { isConversationActive } from "../realtime/activeConversation";
 import type { NotificationPayload } from "./pushNotificationService";
 import { buildNotificationPayload, pushNotificationService } from "./pushNotificationService";
+import { notificationLogger, NotificationState } from "../utils/notificationLogger";
+import { NotificationPayloadValidator } from "../utils/notificationPayloadValidator";
+import { notificationDeduplicator } from "../utils/notificationDeduplicator";
 
 type RemoteMessage = {
   notification?: {
@@ -87,10 +90,21 @@ class BackgroundPushService {
    * notification, no incoming-call UI). This wires that missing path through the
    * same `handleNotificationPayload` used by the background handler.
    *
+   * IMPORTANT: This can be called either:
+   * 1. SYNCHRONOUSLY from mobile/index.js (at JS entry, BEFORE React boots)
+   *    - Ensures handler is ready before any messages arrive
+   *    - Fixes the race condition where messages arrive before handler registration completes
+   *    - Call: await backgroundPushService.registerForegroundHandler()
+   *
+   * 2. ASYNCHRONOUSLY from a component useEffect (legacy path)
+   *    - Works for warm-start / already-booted app
+   *    - Better than nothing, but doesn't catch early foreground messages
+   *    - Only use if synchronous registration isn't possible
+   *
    * Safe to call repeatedly; only registers once. No-ops if the native
    * messaging module / default Firebase app is unavailable (e.g. Expo Go).
    */
-  registerForegroundHandler(): void {
+  async registerForegroundHandler(): Promise<void> {
     if (this.foregroundUnsub) return;
     try {
       this.messaging = this.messaging || this.resolveMessagingModule();
@@ -172,9 +186,8 @@ class BackgroundPushService {
     const data = payload.data;
     if (!data) return;
 
-    // Call lifecycle cancel events: clear any ringing call notification so it
-    // stops ringing / disappears when the caller hangs up or it's handled
-    // elsewhere. These may arrive as data pushes while backgrounded/terminated.
+    // Call lifecycle cancel events must be handled before display-payload
+    // validation. They intentionally do not carry sender/caller display fields.
     if (
       data.type === "call_ended" ||
       data.type === "call_rejected" ||
@@ -183,6 +196,34 @@ class BackgroundPushService {
     ) {
       await notifeeService.cancelCall(data.callId, data.conversationId);
       return;
+    }
+
+    // VALIDATION STEP: Use NotificationPayloadValidator to catch malformed payloads early
+    // and provide structured error logging
+    const validationResult = NotificationPayloadValidator.validate(data, 'backgroundPushService');
+    if (!validationResult.ok) {
+      // Validation failed but don't crash — log and return
+      notificationLogger.warn('payload_validation_failed_in_handler', {
+        source: 'backgroundPushService',
+        metadata: {
+          reason: validationResult.reason,
+          missing: validationResult.missing,
+          invalid: validationResult.invalid,
+        },
+      });
+      return;
+    }
+
+    if (data.dedupeKey && data.conversationId) {
+      notificationLogger.logStateTransition(
+        data.dedupeKey,
+        data.conversationId,
+        NotificationState.DELIVERED,
+        {
+          type: data.callId ? "call" : "message",
+          appState: AppState.currentState,
+        },
+      );
     }
 
     if (data.callId && data.conversationId) {
@@ -281,14 +322,42 @@ class BackgroundPushService {
         data.type === "chat_message" ||
         data.type === "message" ||
         Boolean(data.conversationId || data.messageId);
-      if (notifeeService.isAvailable()) {
-        if (isChatMessage) {
-          await notifeeService.displayMessage(payload);
-        } else {
-          await notifeeService.displayAlert(payload);
+      
+      // DEDUPLICATION CHECK: Skip duplicate messages in rapid bursts
+      // This prevents "spam" where the server retries the same message multiple times
+      let shouldDisplayMessage = true;
+      if (isChatMessage && data.conversationId && data.dedupeKey) {
+        const dedupeResult = notificationDeduplicator.shouldDisplay({
+          conversationId: data.conversationId,
+          dedupeKey: data.dedupeKey,
+          messageId: data.messageId,
+          timestamp: Date.now(),
+        });
+        shouldDisplayMessage = dedupeResult.shouldDisplay;
+        
+        if (!shouldDisplayMessage) {
+          notificationLogger.info('message_skipped_duplicate', {
+            source: 'backgroundPushService',
+            dedupeKey: data.dedupeKey,
+            conversationId: data.conversationId,
+            metadata: {
+              reason: dedupeResult.reason,
+            },
+          });
         }
-      } else {
-        await this.presentDataNotification(payload);
+      }
+      
+      // Display only if not a duplicate
+      if (shouldDisplayMessage) {
+        if (notifeeService.isAvailable()) {
+          if (isChatMessage) {
+            await notifeeService.displayMessage(payload);
+          } else {
+            await notifeeService.displayAlert(payload);
+          }
+        } else {
+          await this.presentDataNotification(payload);
+        }
       }
     }
 

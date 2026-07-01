@@ -27,6 +27,7 @@ import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 import { nativeCallService } from "../src/services/nativeCallService";
 import { backgroundPushService } from "../src/services/backgroundPushService";
 import { notifeeService } from "../src/services/notifeeService";
+import { notificationMetricsSync } from "../src/services/notificationMetricsSync";
 import { ensureCallMediaPermissions } from "../src/services/mediaPermissions";
 import { warmIceConfig } from "../src/features";
 import {
@@ -264,10 +265,16 @@ export default function RootLayout() {
     // custom entry point is ever bypassed. The killed/headless state is still
     // handled by `mobile/index.js`.
     backgroundPushService.initialize();
-    // Foreground FCM message handler. The server sends DATA-ONLY pushes (so the
-    // background/headless handler always runs); without this, foreground
-    // message/notification pushes are silently dropped (no status-bar entry).
-    backgroundPushService.registerForegroundHandler();
+    // IMPORTANT: The foreground FCM message handler is now registered at the
+    // JS entry top-level in `mobile/index.js` (before React boots) to guarantee
+    // it's ready for any messages that arrive while the app is in the foreground.
+    // This call here is now a no-op (idempotent) but left as documentation and
+    // safety net in case index.js registration fails.
+    // The handler is async, but we don't need to await it here since it was
+    // already awaited in index.js.
+    backgroundPushService.registerForegroundHandler().catch(() => {
+      // Silent fail: background handler still works even if foreground fails
+    });
     // Notifee foreground event handler: handles Answer/Decline taps on the
     // full-screen incoming-call notification while the app is alive.
     const unsubscribeNotifee = notifeeService.registerForegroundHandler();
@@ -289,7 +296,12 @@ export default function RootLayout() {
     // screen can read it from cache and skip the per-call wait — shaving the
     // connection-setup delay (see src/features.ts getCachedIceConfig).
     warmIceConfig().catch(() => {});
+    notificationMetricsSync.queueSync(3000);
+    const notificationMetricsInterval = setInterval(() => {
+      notificationMetricsSync.queueSync();
+    }, 60_000);
     return () => {
+      clearInterval(notificationMetricsInterval);
       backgroundPushService.unregisterForegroundHandler();
       unsubscribeNotifee();
     };

@@ -683,6 +683,8 @@ export const markNotificationRead = (id: number | string) =>
     API.post(`/notifications/${id}/read`);
 export const markAllNotificationsRead = () => API.post("/notifications/read-all");
 export const deleteNotification = (id: number | string) => API.delete(`/notifications/${id}`);
+export const getNotificationMetrics = (hours = 24) =>
+    API.get("/notifications/metrics", { params: { hours } });
 export const getActiveAnnouncements = () => API.get("/notifications/announcements");
 
 // Export

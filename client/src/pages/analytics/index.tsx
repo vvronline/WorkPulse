@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAutoDismiss } from "../../hooks/useAutoDismiss";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, BellRing } from "lucide-react";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -22,6 +22,7 @@ import {
   getLocalDate,
   getLocalToday,
   exportMyAnalytics,
+  getNotificationMetrics,
 } from "../../api";
 import ExportButton from "../../components/common/ExportButton";
 import WidgetsGrid from "../../components/dashboard/WidgetsGrid";
@@ -51,6 +52,13 @@ interface AnalyticsDay {
   breakMinutes: number;
   workMode?: string;
   [key: string]: any;
+}
+
+interface NotificationMetrics {
+  successRate: number | null;
+  routingAttempts: number;
+  successfulRoutes: number;
+  p95LatencyMs: number;
 }
 
 const EMPTY_DAYS: AnalyticsDay[] = [];
@@ -106,6 +114,28 @@ export default function Analytics() {
   const history = result?.history ?? EMPTY_DAYS;
   const widgets = result?.widgets ?? null;
   const loading = isLoading || (isCustom && (!customFrom || !customTo));
+
+  const { data: notificationMetricsResult } = useQuery({
+    queryKey: ["notification-metrics", 24],
+    queryFn: async () => {
+      const res = await getNotificationMetrics(24);
+      return res.data as NotificationMetrics;
+    },
+    staleTime: 60_000,
+  });
+  const notificationMetrics = notificationMetricsResult ?? null;
+  const routingSuccessLabel =
+    notificationMetrics?.successRate == null
+      ? "No data"
+      : `${notificationMetrics.successRate.toFixed(1)}%`;
+  const routingSuccessClass =
+    notificationMetrics?.successRate == null
+      ? ""
+      : notificationMetrics.successRate >= 99
+        ? "stat-value-success"
+        : notificationMetrics.successRate >= 95
+          ? "stat-value-warning"
+          : "stat-value-danger";
 
   useEffect(() => {
     if (isError)
@@ -223,7 +253,23 @@ export default function Analytics() {
         <div className={`error-msg ${s["section-divider"]}`}>{error}</div>
       ) : (
         <>
-          <WidgetsGrid widgets={widgets} />
+          <WidgetsGrid widgets={widgets}>
+            <div className={`stat-card ${s["animated-notification-widget"]}`}>
+              <div className={s["notification-icon-bg"]}>
+                <BellRing size={20} />
+              </div>
+              <div className={`stat-value ${routingSuccessClass}`}>
+                {routingSuccessLabel}
+              </div>
+              <div className="stat-label">Notification Routing</div>
+              {notificationMetrics ? (
+                <div className={s["notification-widget-meta"]}>
+                  {notificationMetrics.successfulRoutes}/{notificationMetrics.routingAttempts} routes
+                  {notificationMetrics.p95LatencyMs ? ` · p95 ${Math.round(notificationMetrics.p95LatencyMs)}ms` : ""}
+                </div>
+              ) : null}
+            </div>
+          </WidgetsGrid>
 
           <SummaryStats data={data} />
 

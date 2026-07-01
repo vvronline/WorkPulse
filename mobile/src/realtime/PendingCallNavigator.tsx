@@ -26,28 +26,22 @@ import {
   clearPersistedPendingCall,
 } from "./pendingCall";
 import { beginCallNavigation } from "./callRouting";
-import { notifeeService } from "../services/notifeeService";
+import { notificationLogger, NotificationState } from "../utils/notificationLogger";
+import { notificationDispatcher } from "../services/notificationDispatcher";
 
 export default function PendingCallNavigator() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
-  // Capture any cold-start routing source ONCE on mount, before auth resolves,
-  // so a pending call route is available the moment the user is known:
-  //   1. Notifee's initial notification — set when the user TAPPED the call
-  //      notification / its Answer-Decline action to cold-launch the app.
-  //   2. The SecureStore-persisted route — the ONLY signal that survives the
-  //      LOCKED + KILLED case, where the full-screen-intent AUTO-launches the
-  //      activity (no tap → getInitialNotification() is null). Only honoured if
-  //      still fresh (TTL-guarded in loadPersistedPendingCall) so a stale ring
-  //      never reopens a dead call screen. The in-memory route (set by the
-  //      Notifee tap handlers) takes precedence when present.
+  // Wait briefly for the single-reader dispatcher, then load any SecureStore-
+  // persisted call route as a fallback. This component must never read Notifee's
+  // one-shot getInitialNotification() directly.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      await notifeeService.captureInitialCallRoute().catch(() => {});
+      await notificationDispatcher.waitForRoute(600).catch(() => null);
       if (cancelled) return;
-      if (peekPendingCall()) return; // a tap-sourced route already exists
+      if (peekPendingCall()) return; // in-memory route already exists
       const persisted = await loadPersistedPendingCall();
       if (cancelled || !persisted) return;
       if (peekPendingCall()) return; // re-check: tap route may have arrived
@@ -68,6 +62,9 @@ export default function PendingCallNavigator() {
 
     const route = consumePendingCall();
     if (!route) return;
+    if (route.dedupeKey) {
+      notificationLogger.logStateTransition(route.dedupeKey, route.conversationId, NotificationState.ROUTE_CONSUMED, { source: "PendingCallNavigator" });
+    }
 
     // Group CALL (huddle): a `meetingCode` means the callee joins the n-way
     // meeting mesh, not the 1:1 p2p call screen. Route straight to the meeting
@@ -78,6 +75,9 @@ export default function PendingCallNavigator() {
       // Huddle auto-join (no meeting lobby) + audio-only for a voice call.
       const ct = route.callType === "video" ? "video" : "voice";
       const t = setTimeout(() => {
+        if (route.dedupeKey) {
+          notificationLogger.logStateTransition(route.dedupeKey, route.conversationId, NotificationState.NAVIGATION_STARTED, { target: "meeting", source: "PendingCallNavigator" });
+        }
         router.push(`/meeting/${code}?huddle=1&callType=${ct}` as never);
       }, 0);
       return () => clearTimeout(t);
@@ -91,6 +91,9 @@ export default function PendingCallNavigator() {
 
     // Defer one tick so the navigation tree is fully mounted before pushing.
     const t = setTimeout(() => {
+      if (route.dedupeKey) {
+        notificationLogger.logStateTransition(route.dedupeKey, route.conversationId, NotificationState.NAVIGATION_STARTED, { target: "call", source: "PendingCallNavigator" });
+      }
       router.push({
         pathname: "/call/[conversationId]",
         params: {

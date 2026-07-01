@@ -115,6 +115,103 @@ describe("GET /api/notifications", () => {
     });
 });
 
+describe("GET /api/notifications/metrics", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test("returns aggregated notification routing metrics", async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({
+            rows: [{
+                total_notifications: 12,
+                routing_attempts: 10,
+                successful_routes: 9,
+                failed_routes: 1,
+                deduplicated_count: 3,
+                validation_failures: 1,
+                delivery_failures: 0,
+                delivered_count: 12,
+                displayed_count: 11,
+                tapped_count: 10,
+                route_persisted_count: 10,
+                route_consumed_count: 9,
+                last_event_at: "2026-07-01T08:00:00.000Z",
+                average_latency_ms: 720.5,
+                p50_latency_ms: 650,
+                p95_latency_ms: 1400,
+            }],
+            rowCount: 1,
+        });
+
+        const res = await request(app)
+            .get("/api/notifications/metrics?hours=24")
+            .set("Cookie", authCookie());
+
+        expect(res.status).toBe(200);
+        expect(res.body.windowHours).toBe(24);
+        expect(res.body.successRate).toBe(90);
+        expect(res.body.counts.routingAttempts).toBe(10);
+        expect(res.body.counts.successfulRoutes).toBe(9);
+        expect(res.body.latency.p95Ms).toBe(1400);
+    });
+});
+
+describe("POST /api/notifications/metrics/events", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 1 });
+    });
+
+    test("rejects an empty events array", async () => {
+        setupAuth();
+        const res = await request(app)
+            .post("/api/notifications/metrics/events")
+            .set("Cookie", authCookie())
+            .set(CSRF)
+            .send({ events: [] });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/non-empty array/i);
+    });
+
+    test("ingests notification metric events", async () => {
+        setupAuth();
+        const res = await request(app)
+            .post("/api/notifications/metrics/events")
+            .set("Cookie", authCookie())
+            .set(CSRF)
+            .send({
+                events: [
+                    {
+                        clientEventId: "evt_1",
+                        timestamp: Date.now(),
+                        level: "INFO",
+                        event: "state_transition_route_consumed",
+                        dedupeKey: "msg:123",
+                        conversationId: "42",
+                        messageId: "123",
+                        notificationType: "message",
+                        state: "route_consumed",
+                        durationMs: 820,
+                        source: "app.index",
+                        metadata: { path: "/(tabs)/chat" },
+                    },
+                ],
+            });
+
+        expect(res.status).toBe(200);
+        expect(res.body.ok).toBe(true);
+        expect(res.body.accepted).toBe(1);
+        expect(res.body.inserted).toBe(1);
+        const insertCall = mockQuery.mock.calls.find((c: any[]) =>
+            c[0] && typeof c[0] === "string" && c[0].includes("INSERT INTO notification_metric_events"),
+        );
+        expect(insertCall).toBeDefined();
+        expect(insertCall[1][0]).toBe("evt_1");
+        expect(insertCall[1][1]).toBe(1);
+    });
+});
+
 // ─── POST /api/notifications/read-all ─────────────────────────────────────
 
 describe("POST /api/notifications/read-all", () => {
