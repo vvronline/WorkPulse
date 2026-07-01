@@ -18,6 +18,7 @@ import {
   MoreVertical,
   Phone,
   Pin,
+  Search,
   Star,
   Trash2,
   Video as VideoIcon,
@@ -26,7 +27,12 @@ import {
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { useEffect, useMemo, useState } from "react";
-import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeInRight,
+  FadeOut,
+  FadeOutLeft,
+} from "react-native-reanimated";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import GroupCompositeAvatar from "../../src/components/GroupCompositeAvatar";
 import {
@@ -111,10 +117,15 @@ export default function ChatThread() {
             : c.searchMode
               ? {
                   // Signal in-conversation search: the header becomes a search
-                  // field with a back arrow (exit) and a clear "X". The match
-                  // counter + up/down navigation live in a bottom bar.
+                  // field with a back arrow (exit) and a clear "X". Match
+                  // count + up/down navigation stay inline in the same row.
+                  headerTitleAlign: "left",
                   headerTitle: () => (
-                    <View style={styles.searchHeader}>
+                    <Animated.View
+                      entering={FadeInRight.duration(170)}
+                      exiting={FadeOutLeft.duration(120)}
+                      style={styles.searchHeader}
+                    >
                       <TextInput
                         style={styles.searchInput}
                         placeholder="Search this chat…"
@@ -132,14 +143,64 @@ export default function ChatThread() {
                           <X size={18} color={theme.textSecondary} />
                         </Pressable>
                       ) : null}
-                    </View>
+                    </Animated.View>
                   ),
                   headerLeft: () => (
                     <Pressable onPress={c.closeSearch} hitSlop={8}>
                       <ArrowLeft size={22} color={theme.text} />
                     </Pressable>
                   ),
-                  headerRight: () => null,
+                  headerRight: () => (
+                    <Animated.View
+                      entering={FadeIn.duration(160)}
+                      exiting={FadeOut.duration(100)}
+                      style={styles.searchHeaderActions}
+                    >
+                      <Text style={styles.searchInlineCount}>
+                        {c.searchMatchIds.length > 0
+                          ? `${c.searchActiveIdx + 1}/${c.searchMatchIds.length}`
+                          : c.searchQuery.trim().length < 2
+                            ? "Type"
+                            : "No"}
+                      </Text>
+                      <Pressable
+                        onPress={c.searchPrev}
+                        hitSlop={8}
+                        disabled={
+                          c.searchMatchIds.length === 0 || c.searchActiveIdx <= 0
+                        }
+                        style={styles.searchHeaderBtn}
+                      >
+                        <ChevronUp
+                          size={20}
+                          color={
+                            c.searchMatchIds.length === 0 || c.searchActiveIdx <= 0
+                              ? theme.textMuted
+                              : theme.text
+                          }
+                        />
+                      </Pressable>
+                      <Pressable
+                        onPress={c.searchNext}
+                        hitSlop={8}
+                        disabled={
+                          c.searchMatchIds.length === 0 ||
+                          c.searchActiveIdx >= c.searchMatchIds.length - 1
+                        }
+                        style={styles.searchHeaderBtn}
+                      >
+                        <ChevronDown
+                          size={20}
+                          color={
+                            c.searchMatchIds.length === 0 ||
+                            c.searchActiveIdx >= c.searchMatchIds.length - 1
+                              ? theme.textMuted
+                              : theme.text
+                          }
+                        />
+                      </Pressable>
+                    </Animated.View>
+                  ),
                 }
               : {
                   title: c.name || "Chat",
@@ -201,6 +262,9 @@ export default function ChatThread() {
                   // everywhere too.
                   headerRight: () => (
                     <View style={styles.headerActions}>
+                      <Pressable onPress={c.openSearch} hitSlop={8}>
+                        <Search size={20} color={theme.primary} />
+                      </Pressable>
                       <Pressable
                         onPress={() => c.startCall("voice")}
                         hitSlop={8}
@@ -247,59 +311,6 @@ export default function ChatThread() {
           ) : null}
 
           <ChatList c={c} styles={styles} theme={theme} />
-
-          {/* Signal in-conversation search match-navigation bar. Shows the
-              current match position and up/down arrows to step through results
-              (each step scrolls the list to the match + flashes its highlight). */}
-          {c.searchMode ? (
-            <View style={styles.searchNavBar}>
-              <Text style={styles.searchNavCount}>
-                {c.searchMatchIds.length > 0
-                  ? `${c.searchActiveIdx + 1} of ${c.searchMatchIds.length}`
-                  : c.searchQuery.trim().length < 2
-                    ? "Type to search"
-                    : "No results"}
-              </Text>
-              <View style={styles.searchNavBtns}>
-                <Pressable
-                  onPress={c.searchPrev}
-                  hitSlop={8}
-                  disabled={
-                    c.searchMatchIds.length === 0 || c.searchActiveIdx <= 0
-                  }
-                  style={styles.searchNavBtn}
-                >
-                  <ChevronUp
-                    size={22}
-                    color={
-                      c.searchMatchIds.length === 0 || c.searchActiveIdx <= 0
-                        ? theme.textMuted
-                        : theme.text
-                    }
-                  />
-                </Pressable>
-                <Pressable
-                  onPress={c.searchNext}
-                  hitSlop={8}
-                  disabled={
-                    c.searchMatchIds.length === 0 ||
-                    c.searchActiveIdx >= c.searchMatchIds.length - 1
-                  }
-                  style={styles.searchNavBtn}
-                >
-                  <ChevronDown
-                    size={22}
-                    color={
-                      c.searchMatchIds.length === 0 ||
-                      c.searchActiveIdx >= c.searchMatchIds.length - 1
-                        ? theme.textMuted
-                        : theme.text
-                    }
-                  />
-                </Pressable>
-              </View>
-            </View>
-          ) : null}
 
           {c.peerTyping ? (
             <TypingIndicator name={c.name} avatar={c.headerAvatar} />
@@ -788,7 +799,7 @@ const makeStyles = (theme: Theme) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.bg },
     center: { flex: 1, alignItems: "center", justifyContent: "center" },
-    headerActions: { flexDirection: "row", gap: 18, alignItems: "center" },
+    headerActions: { flexDirection: "row", gap: 14, alignItems: "center" },
     headerBackButton: {
       width: 44,
       height: 40,
@@ -802,8 +813,8 @@ const makeStyles = (theme: Theme) =>
       flexDirection: "row",
       alignItems: "center",
       gap: 8,
-      minWidth: 240,
       flex: 1,
+      minWidth: 0,
     },
     searchInput: {
       flex: 1,
@@ -812,25 +823,21 @@ const makeStyles = (theme: Theme) =>
       paddingVertical: 4,
       fontFamily: theme.fontRegular,
     },
-    searchNavBar: {
+    searchHeaderActions: {
       flexDirection: "row",
       alignItems: "center",
-      justifyContent: "space-between",
-      paddingHorizontal: 16,
-      paddingVertical: 8,
-      backgroundColor: theme.bgSecondary,
-      borderTopWidth: 1,
-      borderTopColor: theme.border,
+      gap: 4,
     },
-    searchNavCount: {
-      fontSize: 13,
-      color: theme.textSecondary,
+    searchInlineCount: {
+      fontSize: 11,
+      color: theme.textMuted,
       fontFamily: theme.fontMedium,
+      minWidth: 28,
+      textAlign: "right",
     },
-    searchNavBtns: { flexDirection: "row", alignItems: "center", gap: 20 },
-    searchNavBtn: {
-      width: 32,
-      height: 32,
+    searchHeaderBtn: {
+      width: 28,
+      height: 28,
       alignItems: "center",
       justifyContent: "center",
     },

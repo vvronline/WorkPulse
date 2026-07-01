@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, memo } from "react";
-import { MicOff, Hand, Loader2, WifiOff } from "lucide-react";
+import { MicOff, Hand, Loader2, WifiOff, RefreshCw } from "lucide-react";
 
 // A single shared AudioContext for all participant tiles. Browsers cap the
 // number of concurrent contexts, and creating one per tile (especially with
@@ -24,6 +24,10 @@ interface ParticipantTileProps {
     isMini?: boolean;
     isActiveSpeaker?: boolean;
     onVisibilityChange?: (q: "q" | "h") => void;
+    // Phase 3.2 (G5) — fired when the user taps the "Couldn't connect — Retry"
+    // button that appears after this peer's 30s connect timeout. Triggers a
+    // manual per-peer rebuild in useMeetingState (`retryPeer`).
+    onRetry?: () => void;
 }
 
 /**
@@ -43,6 +47,8 @@ const ParticipantTile = memo(function ParticipantTile({
      *  of view. Sender flips its upstream bitrate accordingly. Pass
      *  undefined for local / mini tiles where there's nothing to ask. */
     onVisibilityChange,
+    /** Phase 3.2 (G5) — manual per-peer rebuild for the failed-connect tile. */
+    onRetry,
 }: ParticipantTileProps) {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const tileRootRef = useRef<HTMLDivElement | null>(null);
@@ -54,6 +60,7 @@ const ParticipantTile = memo(function ParticipantTile({
         raisedHand,
         connectionState,
         avatar,
+        connectFailed,
     } = participant || {};
     const [avatarFailed, setAvatarFailed] = useState(false);
 
@@ -227,9 +234,19 @@ const ParticipantTile = memo(function ParticipantTile({
     // so users get clear feedback during the (sometimes multi-second) ICE
     // handshake instead of staring at a blank tile and assuming something
     // is broken.
+    // Phase 3.2 (G5) — once the per-peer 30s connect timeout fires (in
+    // useMeetingState), the participant is flagged `connectFailed`. That takes
+    // priority over the Connecting…/Reconnecting… spinners: we stop the infinite
+    // spinner and show a "Couldn't connect — Retry" affordance instead.
+    const hasConnectFailed = !isLocal && !!connectFailed && !showVideo;
     const isConnecting =
-        !isLocal && (!connectionState || connectionState === "new" || connectionState === "connecting");
-    const isReconnecting = !isLocal && (connectionState === "disconnected" || connectionState === "failed");
+        !isLocal &&
+        !hasConnectFailed &&
+        (!connectionState || connectionState === "new" || connectionState === "connecting");
+    const isReconnecting =
+        !isLocal &&
+        !hasConnectFailed &&
+        (connectionState === "disconnected" || connectionState === "failed");
     const statusLabel = isConnecting ? "Connecting…" : isReconnecting ? "Reconnecting…" : null;
 
     // ─── Phase 5 — IntersectionObserver receiver-side bandwidth saving ────
@@ -298,7 +315,25 @@ const ParticipantTile = memo(function ParticipantTile({
                             initial
                         )}
                     </div>
-                    {statusLabel && (
+                    {hasConnectFailed ? (
+                        // Phase 3.2 (G5) — the 30s connect timeout fired: stop the
+                        // infinite spinner and offer a manual rebuild.
+                        <div className="mr-tile-status mr-tile-status--failed">
+                            <WifiOff size={14} />
+                            <span>Couldn't connect</span>
+                            {onRetry && (
+                                <button
+                                    type="button"
+                                    className="mr-tile-retry-btn"
+                                    onClick={onRetry}
+                                    title="Retry connecting to this participant"
+                                >
+                                    <RefreshCw size={12} />
+                                    <span>Retry</span>
+                                </button>
+                            )}
+                        </div>
+                    ) : statusLabel ? (
                         <div className={`mr-tile-status ${isReconnecting ? "mr-tile-status--warn" : ""}`}>
                             {isReconnecting ? (
                                 <WifiOff size={14} />
@@ -307,7 +342,7 @@ const ParticipantTile = memo(function ParticipantTile({
                             )}
                             <span>{statusLabel}</span>
                         </div>
-                    )}
+                    ) : null}
                 </div>
             )}
 

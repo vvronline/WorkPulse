@@ -28,6 +28,7 @@ import {
   MessageSquare,
   MoreVertical,
   PhoneOff,
+  RefreshCw,
   SmilePlus,
   SwitchCamera,
   Users,
@@ -149,6 +150,7 @@ export default function MeetingScreen() {
     switchCamera,
     join,
     leave,
+    retryPeer,
   } = useMeetingMesh({
     meetingId,
     selfId: user?.id ?? null,
@@ -408,6 +410,7 @@ export default function MeetingScreen() {
             tileCount={tileCount}
             participant={p}
             raisedHand={raisedHands.has(String(p.userId))}
+            onRetry={() => retryPeer(p.userId)}
           />
         ))}
       </ScrollView>
@@ -934,11 +937,13 @@ function RemoteTile({
   participant,
   tileCount,
   raisedHand = false,
+  onRetry,
 }: {
   theme: Theme;
   participant: MeetingParticipant;
   tileCount: number;
   raisedHand?: boolean;
+  onRetry?: () => void;
 }) {
   return (
     <VideoTile
@@ -952,6 +957,8 @@ function RemoteTile({
       connected={!!participant.stream}
       mirror={false}
       raisedHand={raisedHand}
+      connectFailed={participant.connectFailed}
+      onRetry={onRetry}
     />
   );
 }
@@ -968,6 +975,8 @@ function VideoTile({
   connected = false,
   mirror = false,
   raisedHand = false,
+  connectFailed = false,
+  onRetry,
 }: {
   theme: Theme;
   name: string;
@@ -980,6 +989,8 @@ function VideoTile({
   connected?: boolean;
   mirror?: boolean;
   raisedHand?: boolean;
+  connectFailed?: boolean;
+  onRetry?: () => void;
 }) {
   const { width, height } = useWindowDimensions();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -1005,7 +1016,10 @@ function VideoTile({
     ? styles.tileVideo
     : [styles.tileVideo, Platform.OS === "android" && styles.unmirrorVideo];
   const displayName = isLocal ? `${name} (You)` : name;
-  const showConnecting = !isLocal && !connected;
+  // Phase 3.2 (G5) — once the 30s connect timeout flags this peer, show a
+  // "Couldn't connect — Retry" state instead of the infinite spinner.
+  const hasConnectFailed = !isLocal && !!connectFailed && !showVideo;
+  const showConnecting = !isLocal && !connected && !hasConnectFailed;
 
   return (
     <View style={[styles.tile, { width: tileWidth, height: tileHeight }]}>
@@ -1032,7 +1046,17 @@ function VideoTile({
               </Text>
             )}
           </View>
-          {showConnecting ? (
+          {hasConnectFailed ? (
+            <View style={styles.tileStatusRow}>
+              <View style={{ alignItems: "center", gap: 8 }}>
+                <Text style={styles.tileFailedText}>Couldn't connect</Text>
+                <Pressable style={styles.tileRetryBtn} onPress={onRetry}>
+                  <RefreshCw size={13} color="#fff" />
+                  <Text style={styles.tileRetryText}>Retry</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : showConnecting ? (
             <View style={styles.tileStatusRow}>
               <ActivityIndicator size="small" color={theme.textSecondary} />
               <Text style={styles.tileStatusText}>Connecting…</Text>

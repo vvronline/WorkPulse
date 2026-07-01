@@ -20,6 +20,13 @@ import type { MeetingState } from "./connectionStateMachine";
 // The hook's own `useState` values stay authoritative; the store is a
 // read-only projection during this incremental migration window.
 import { createMeetingStore, DEFAULT_MEETING_STATE } from "./meetingStore";
+import {
+    peerConnectionReducer,
+    initialPeerPhase,
+    isPeerTerminal,
+    type PeerPhase,
+    type PeerEvent,
+} from "./peerConnectionMachine";
 import type { AnyRecord } from "../../types";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -47,6 +54,30 @@ type ExtendedPC = RTCPeerConnection & {
     _screenTrackIds?: Set<string>;
     _reclassifyTracks?: () => void;
     _disconnectTimer?: ReturnType<typeof setTimeout> | null;
+    // Phase 3.1 (P4.19) — relay-first fast-retry timer. Armed once per peer on
+    // the initial (non-relay) PC; if the peer isn't `connected` within ~5s we
+    // rebuild it TURN-only and re-offer. Cleared on connect / failed / teardown.
+    _relayRetryTimer?: ReturnType<typeof setTimeout> | null;
+    // Phase 3.2 (G5) — per-peer 30s connect timeout. Armed once per peer; if the
+    // peer still hasn't reached `connected` when it fires, we stop the infinite
+    // spinner and flag the participant `connectFailed` so its tile surfaces a
+    // "Couldn't connect — Retry" manual-rebuild button. Cleared on connect /
+    // teardown (and superseded by a manual `retryPeer`).
+    _connectTimeoutTimer?: ReturnType<typeof setTimeout> | null;
+    // Perfect Negotiation (Phase 2.1) — per-peer glare guards. `_makingOffer`
+    // marks our own offer-in-flight window so a colliding inbound offer is
+    // detected as glare; `_polite` is the deterministic politeness role
+    // (polite = String(selfId) > String(remoteId)).
+    _makingOffer?: boolean;
+    _polite?: boolean;
+    _isSettingRemoteAnswerPending?: boolean;
+    // Phase 5.1 — per-peer connection phase, driven by the pure
+    // `peerConnectionReducer` (mesh equivalent of the 1:1 `callStateMachine`).
+    // The TERMINAL phase (`closed`) is ABSORBING: once `closePeerConnection`
+    // marks this PC closed, a LATE `connected`/`ontrack` from the connection
+    // being torn down can no longer revive the removed participant tile — the
+    // mesh P3.14 effect race.
+    _phase?: PeerPhase;
 };
 
 interface PendingSendEntry {
@@ -85,6 +116,46 @@ function newClientMsgId(): string {
 const PENDING_SEND_FAIL_AFTER_MS = 10_000;
 /** Retry cadence for the pending-send queue when WS is OPEN. */
 const PENDING_SEND_RETRY_EVERY_MS = 3_000;
+/** Phase 2.3 (G4) — cap on the outbound mesh-signal queue so a long offline
+ *  window can't grow it unbounded. Oldest frames are dropped first. */
+const OUTBOUND_QUEUE_MAX = 500;
+/** Phase 3.2 (G5) — per-peer connect timeout. If a peer hasn't reached
+ *  `connected` within this window (through the initial STUN attempt AND the
+ *  relay-first fast-retry from 3.1), we stop the infinite spinner and surface a
+ *  "Couldn't connect — Retry" tile so the user can trigger a manual rebuild. */
+const PEER_CONNECT_TIMEOUT_MS = 30_000;
+
+/** Phase 4.1 — Bandwidth governor. A WebRTC mesh uploads N−1 copies of our
+ *  video, so the per-peer video cap must shrink as the call grows to keep the
+ *  single uplink from saturating (saturation starves audio → the "laggy"
+ *  report). Audio is ALWAYS prioritized (Opus, capped separately at
+ *  `AUDIO_MAX_BITRATE`, never governed down by peer count). Tiered caps are
+ *  shared verbatim with mobile `useMeetingMesh.videoBitrateForPeerCount`:
+ *    ≤3 remote peers → 500 kbps, 4–6 → 300 kbps, 7+ → 150 kbps.
+ *  `peerCount` here is the number of REMOTE peers (N−1). */
+function videoBitrateForPeerCount(peerCount: number): number {
+    if (peerCount <= 3) return 500_000;
+    if (peerCount <= 6) return 300_000;
+    return 150_000;
+}
+/** Phase 4.1 — Opus audio cap. Prioritized: never governed down by peer count
+ *  so voice always survives even when video is squeezed at high counts. */
+const AUDIO_MAX_BITRATE = 48_000;
+
+/** Phase 4.2 — Active-speaker-driven video at high counts. A mesh only carries
+ *  ~5–6 reliable video streams, so once the REMOTE-peer count exceeds this
+ *  threshold we stop asking every peer for full video and demote the
+ *  non-priority tiles to `q` (thumbnail → effectively audio+avatar). Below the
+ *  threshold everyone keeps mid/full video (`h`/`f`). */
+const HIGH_COUNT_VIDEO_THRESHOLD = 6;
+/** Phase 4.2 — how long a peer stays in the "recent speaker" priority set after
+ *  it last held the floor, so brief pauses don't instantly drop them to a
+ *  thumbnail (avoids quality thrash during back-and-forth conversation). */
+const RECENT_SPEAKER_WINDOW_MS = 12_000;
+/** Phase 4.2 — cap on how many peers may hold full video simultaneously at high
+ *  counts (presenter + dominant/recent speakers). Keeps the aggregate downlink
+ *  bounded — "only the dominant speaker + a few". */
+const MAX_PRIORITY_VIDEO_PEERS = 4;
 
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
     { urls: "stun:stun.l.google.com:19302" },
@@ -96,6 +167,75 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
         credential: "openrelayproject",
     },
 ];
+
+// Phase 2.4 (G6) — Deterministic ICE-config gating + public-TURN policy, ported
+// from the proven 1:1 path (useWebRTC.ts P1.8/P1.9). These are the two mesh
+// equivalents:
+//   • hasRealTurn — a config carries "real" (provisioned) TURN only when the
+//     server returned managed creds (Cloudflare Calls / self-hosted coturn /
+//     a static provider) rather than the public Open Relay fallback or STUN.
+//     The server's `mode` is authoritative; when absent we sniff for a
+//     non-openrelay turn:/turns: URL. The FIRST mesh offer/answer must never
+//     negotiate against the public-only fallback — on a network that requires a
+//     relay this makes the first join hang ("Connecting…") even though a retry
+//     works once real creds are cached.
+//   • applyPublicTurnPolicy — when the server forbids the public fallback
+//     (`allowPublicFallback === false` / DISABLE_PUBLIC_TURN), strip the public
+//     openrelay.metered.ca TURN URLs from the ICE list we hand to
+//     RTCPeerConnection. STUN is ALWAYS kept.
+const REAL_TURN_MODES = new Set(["cloudflare-calls", "coturn-rest", "static"]);
+
+function hasRealTurn(
+    cfg: { mode?: string; iceServers?: RTCIceServer[] } | null | undefined,
+): boolean {
+    if (!cfg) return false;
+    if (cfg.mode && REAL_TURN_MODES.has(cfg.mode)) return true;
+    const servers = cfg.iceServers || [];
+    for (const s of servers) {
+        const urls = Array.isArray(s?.urls) ? s.urls : [s?.urls];
+        for (const u of urls) {
+            if (typeof u !== "string") continue;
+            const lower = u.toLowerCase();
+            if (
+                (lower.startsWith("turn:") || lower.startsWith("turns:")) &&
+                !lower.includes("openrelay.metered.ca")
+            ) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function applyPublicTurnPolicy(
+    servers: RTCIceServer[],
+    allowPublic: boolean,
+): RTCIceServer[] {
+    if (allowPublic) return servers;
+    const out: RTCIceServer[] = [];
+    for (const s of servers || []) {
+        const urls = Array.isArray(s?.urls) ? s.urls : [s?.urls];
+        const kept = urls.filter(
+            (u) =>
+                typeof u === "string" &&
+                !u.toLowerCase().includes("openrelay.metered.ca"),
+        );
+        if (kept.length === 0) continue; // entry was entirely public TURN — drop it
+        out.push({ ...s, urls: kept.length === 1 ? kept[0] : kept });
+    }
+    return out;
+}
+
+// Phase 5.1 — per-peer state-machine dispatch. Drives an ExtendedPC's `_phase`
+// through the pure `peerConnectionReducer`. The reducer's `closed` phase is
+// ABSORBING, so once a PC instance is marked CLOSED any later event (e.g. a late
+// CONNECTED / ontrack from the connection being torn down) is a no-op on THAT
+// instance — a rebuilt PC is a fresh instance with its own `_phase`, so this
+// only kills the dead one. Returns the new phase so call sites can guard on it.
+function dispatchPeerPhase(pc: ExtendedPC, event: PeerEvent): PeerPhase {
+    pc._phase = peerConnectionReducer(pc._phase ?? initialPeerPhase(), event);
+    return pc._phase;
+}
 
 function buildMeetingMediaProfiles(
     wantVideo: boolean,
@@ -206,6 +346,12 @@ export function useMeetingState({
     >(new Map());
     const requestedQualityRef = useRef<Map<number | string, string>>(new Map());
     const lastRequestSentRef = useRef<Map<number | string, string>>(new Map());
+    // Phase 4.2 — recent-speaker ledger: userId → last time that peer held the
+    // floor (was the dominant speaker). Used by the high-count demotion policy to
+    // keep a peer at full video for `RECENT_SPEAKER_WINDOW_MS` after they last
+    // spoke, so brief conversational pauses don't thrash their tile down to a
+    // thumbnail and back.
+    const recentSpeakersRef = useRef<Map<number | string, number>>(new Map());
     const [activePanel, setActivePanel] = useState<string | null>(null);
     const [messages, setMessages] = useState<MeetingMessage[]>(
         () => getCachedMessages(code || "") as MeetingMessage[],
@@ -241,8 +387,25 @@ export function useMeetingState({
     wsRef.current = ws;
     const iceServersRef = useRef<RTCIceServer[]>(DEFAULT_ICE_SERVERS);
     const iceExpiresAtRef = useRef(0);
+    // Phase 2.4 (G6) — deterministic ICE-config gating state (ported from the
+    // 1:1 path). `iceHasRealTurnRef`: the loaded config carries real provisioned
+    // TURN (not public Open Relay / STUN-only). `iceAllowPublicRef`: the server
+    // permits the public Open Relay fallback (default true for older servers).
+    // `firstNegotiationStartedRef`: the very first mesh offer/answer has begun
+    // (only that one is gated on genuine TURN). `initialIceConfigLoadedRef`: a
+    // live /ice-config fetch has resolved at least once.
+    const iceHasRealTurnRef = useRef(false);
+    const iceAllowPublicRef = useRef(true);
+    const firstNegotiationStartedRef = useRef(false);
+    const initialIceConfigLoadedRef = useRef(false);
     const relayOnlyPeersRef = useRef<Set<number | string>>(new Set());
     const iceRestartCountsRef = useRef<Map<number | string, number>>(new Map());
+    // Phase 2.2 — reliable-delivery handshake guards. `subscribedRef` ensures we
+    // send `meeting_subscribe` once per WS connection (reset on reconnect via the
+    // open handler); `readySentRef` ensures `meeting_ready` is sent once our PCs
+    // are built.
+    const subscribedRef = useRef(false);
+    const readySentRef = useRef(false);
     const presenterIdRef = useRef(presenterId);
     presenterIdRef.current = presenterId;
     const mutedRef = useRef(muted);
@@ -257,6 +420,33 @@ export function useMeetingState({
     }, [code, messages]);
 
     const pendingSendsRef = useRef<Map<string, PendingSendEntry>>(new Map());
+
+    // Phase 2.3 (G4) — outbound mesh-signal queue. When the WS is not OPEN
+    // (reconnecting / brief blip) `wsSend` enqueues the frame instead of
+    // dropping it; `flushOutboundQueue` replays it on the next `open`. This
+    // mirrors the queue-on-closed / flush-on-open guarantee the 1:1 path gets
+    // from the shared `useWebSocket` sendMessage. Without it, an offer/ICE
+    // candidate produced during a reconnect window was silently lost, leaving a
+    // peer stuck in "connecting".
+    const outboundQueueRef = useRef<Array<{ type: string; data?: unknown }>>(
+        [],
+    );
+
+    const flushOutboundQueue = useCallback(() => {
+        const w = wsRef.current;
+        if (!w || w.readyState !== 1) return;
+        const queued = outboundQueueRef.current;
+        if (queued.length === 0) return;
+        outboundQueueRef.current = [];
+        for (const frame of queued) {
+            try {
+                w.send(JSON.stringify(frame));
+            } catch {
+                /* ignore — re-queueing here risks an infinite loop on a
+                   half-open socket; the periodic handshake will recover */
+            }
+        }
+    }, []);
 
     const markMessageStatus = useCallback(
         (clientMsgId: string | null | undefined, patch: AnyRecord) => {
@@ -292,17 +482,42 @@ export function useMeetingState({
     );
 
     const wsSend = useCallback((type: string, data?: unknown) => {
-        if (wsRef.current && wsRef.current.readyState === 1) {
-            wsRef.current.send(JSON.stringify({ type, data }));
+        const w = wsRef.current;
+        if (w && w.readyState === 1) {
+            try {
+                w.send(JSON.stringify({ type, data }));
+                return;
+            } catch {
+                /* fall through to queue on a transient send failure */
+            }
         }
+        // Phase 2.3 (G4) — socket not OPEN (or send threw): queue instead of
+        // dropping so the frame is replayed on the next `open`. Bound the queue
+        // and evict oldest first so a long offline window can't grow it
+        // unbounded.
+        const q = outboundQueueRef.current;
+        q.push({ type, data });
+        if (q.length > OUTBOUND_QUEUE_MAX)
+            q.splice(0, q.length - OUTBOUND_QUEUE_MAX);
     }, []);
 
     const applyQualityCapForPeer = useCallback((peerId: number | string) => {
         const pc = pcsRef.current.get(peerId);
         if (!pc) return;
         const level = requestedQualityRef.current.get(peerId) || "h";
+        // Phase 4.1 — the per-peer quality request ("f"/"h"/"q") is now bounded
+        // by the bandwidth governor's ceiling for the current call size, so a
+        // remote asking for "full" can't push our uplink past what N−1 peers can
+        // afford. `f` → ceiling (the active speaker / presenter gets the best the
+        // call size allows), `h` → half-step, `q` → thumbnail floor. Audio is
+        // never governed here (only video senders are touched below).
+        const ceiling = videoBitrateForPeerCount(pcsRef.current.size);
         const maxBitrate =
-            level === "q" ? 150_000 : level === "h" ? 500_000 : 1_200_000;
+            level === "q"
+                ? Math.min(150_000, ceiling)
+                : level === "h"
+                  ? Math.min(300_000, ceiling)
+                  : ceiling;
         for (const sender of pc.getSenders()) {
             if (!sender.track || sender.track.kind !== "video") continue;
             try {
@@ -379,42 +594,88 @@ export function useMeetingState({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Fetch ICE config.
-    useEffect(() => {
-        let cancelled = false;
-        const refresh = async () => {
-            try {
-                const { data } = await retryWithBackoff(() => getIceConfig(), {
-                    maxAttempts: 4,
-                    baseDelayMs: 300,
-                    maxDelayMs: 4_000,
-                });
-                if (cancelled) return;
-                const d = data as {
-                    iceServers?: RTCIceServer[];
-                    expiresAt?: number;
-                };
-                if (d?.iceServers?.length) {
-                    iceServersRef.current = d.iceServers;
-                    iceExpiresAtRef.current = d.expiresAt || 0;
-                }
-            } catch {
-                /* keep defaults */
+    // Phase 2.4 (G6) — ICE-config refresh that ALSO records the public-TURN
+    // policy (`allowPublicFallback`) + whether the config carries real,
+    // provisioned TURN (`hasRealTurn`) so the first-negotiation gate below can
+    // decide whether to keep (briefly) waiting for genuine creds. Mirrors
+    // useWebRTC.ts `refreshIceConfig`.
+    const refreshIceConfig = useCallback(async () => {
+        try {
+            const { data } = await retryWithBackoff(() => getIceConfig(), {
+                maxAttempts: 4,
+                baseDelayMs: 300,
+                maxDelayMs: 4_000,
+            });
+            const d = data as {
+                iceServers?: RTCIceServer[];
+                expiresAt?: number;
+                mode?: string;
+                allowPublicFallback?: boolean;
+            };
+            if (d?.iceServers?.length) {
+                iceServersRef.current = d.iceServers;
+                iceExpiresAtRef.current = d.expiresAt || 0;
+                initialIceConfigLoadedRef.current = true;
+                // Absent on older servers → treated as allowed (backwards-compat).
+                iceAllowPublicRef.current = d.allowPublicFallback !== false;
+                iceHasRealTurnRef.current = hasRealTurn(d);
             }
-        };
-        refresh();
+        } catch {
+            /* keep defaults */
+        }
+    }, []);
+
+    // Phase 2.4 (G6) — deterministic gate. Stage 1: wait for ANY config to
+    // load. Stage 2 (FIRST negotiation only): additionally wait — bounded to
+    // ~1.5s — for real, provisioned TURN, re-fetching once, so the initial mesh
+    // offer/answer never negotiates against the public-only fallback (which
+    // makes the first join hang on a relay-required network). A later
+    // ICE-restart / renegotiation proceeds promptly with whatever creds we have.
+    const waitForIceConfig = useCallback(
+        async (timeoutMs = 2000) => {
+            const start = Date.now();
+            if (!initialIceConfigLoadedRef.current) {
+                while (
+                    !initialIceConfigLoadedRef.current &&
+                    Date.now() - start < timeoutMs
+                ) {
+                    await new Promise((r) => setTimeout(r, 100));
+                }
+            }
+            if (
+                !firstNegotiationStartedRef.current &&
+                !iceHasRealTurnRef.current
+            ) {
+                const REAL_TURN_DEADLINE_MS = Math.max(timeoutMs, 1500);
+                let refetched = false;
+                while (
+                    !iceHasRealTurnRef.current &&
+                    Date.now() - start < REAL_TURN_DEADLINE_MS
+                ) {
+                    if (!refetched) {
+                        refetched = true;
+                        void refreshIceConfig();
+                    }
+                    await new Promise((r) => setTimeout(r, 150));
+                }
+            }
+            firstNegotiationStartedRef.current = true;
+        },
+        [refreshIceConfig],
+    );
+
+    // Fetch ICE config on mount + proactively refresh before creds expire.
+    useEffect(() => {
+        refreshIceConfig();
         const t = setInterval(() => {
             if (
                 iceExpiresAtRef.current &&
                 iceExpiresAtRef.current - Math.floor(Date.now() / 1000) < 300
             )
-                refresh();
+                refreshIceConfig();
         }, 60_000);
-        return () => {
-            cancelled = true;
-            clearInterval(t);
-        };
-    }, []);
+        return () => clearInterval(t);
+    }, [refreshIceConfig]);
 
     // ─── Devicechange listener ───
     useEffect(() => {
@@ -664,7 +925,12 @@ export function useMeetingState({
             }
 
             const pcConfig: RTCConfiguration = {
-                iceServers: iceServersRef.current,
+                // Phase 2.4 (G6) — strip the public Open Relay TURN entries when
+                // the server forbids the public fallback. STUN is always kept.
+                iceServers: applyPublicTurnPolicy(
+                    iceServersRef.current,
+                    iceAllowPublicRef.current,
+                ),
                 bundlePolicy: "max-bundle",
                 rtcpMuxPolicy: "require",
                 iceCandidatePoolSize: 4,
@@ -678,6 +944,18 @@ export function useMeetingState({
             } catch {
                 return null;
             }
+            // Perfect Negotiation (Phase 2.1): deterministic politeness per peer.
+            // The lexicographically-greater id is the POLITE peer (rolls back on
+            // an offer collision); the other is IMPOLITE (ignores the colliding
+            // offer, keeps its own). Stable + symmetric so both sides agree.
+            pc._polite = String(user?.id ?? "") > String(remoteUserId);
+            pc._makingOffer = false;
+            pc._isSettingRemoteAnswerPending = false;
+            // Phase 5.1 — fresh PC starts in `connecting`. Transitions run
+            // through `dispatchPeerPhase` (the pure reducer) at each lifecycle
+            // point; the `closed` phase is absorbing so a late `connected` from
+            // THIS instance being torn down can't revive a removed tile.
+            pc._phase = initialPeerPhase();
             pcsRef.current.set(remoteUserId, pc);
 
             if (localStreamRef.current) {
@@ -694,13 +972,12 @@ export function useMeetingState({
             }
 
             setTimeout(() => {
+                // Phase 4.1 — bandwidth governor. `pcsRef.current.size` is the
+                // number of REMOTE peers (each PC = one remote), so this is the
+                // N−1 uplink-fan-out count the ladder is tuned for. Audio is
+                // pinned at `AUDIO_MAX_BITRATE` and never scaled down.
                 const peerCount = pcsRef.current.size;
-                const videoBitrate =
-                    peerCount <= 2
-                        ? 1_200_000
-                        : peerCount <= 4
-                          ? 600_000
-                          : 400_000;
+                const videoBitrate = videoBitrateForPeerCount(peerCount);
                 for (const sender of pc.getSenders()) {
                     if (!sender.track) continue;
                     try {
@@ -715,7 +992,8 @@ export function useMeetingState({
                             params.degradationPreference =
                                 "maintain-framerate";
                         } else {
-                            params.encodings[0].maxBitrate = 48_000;
+                            params.encodings[0].maxBitrate =
+                                AUDIO_MAX_BITRATE;
                         }
                         sender.setParameters(params).catch(() => {});
                     } catch {
@@ -767,6 +1045,11 @@ export function useMeetingState({
             pc._reclassifyTracks = reclassifyTracks;
 
             pc.ontrack = (e) => {
+                // Phase 5.1 — terminal-absorption guard. If this PC instance was
+                // already closed (participant_left / teardown), a late `ontrack`
+                // from the connection being torn down must NOT re-`upsert` the
+                // removed tile.
+                if (isPeerTerminal(pc._phase ?? initialPeerPhase())) return;
                 if (
                     !remoteStream
                         .getTracks()
@@ -868,6 +1151,20 @@ export function useMeetingState({
 
             pc.onconnectionstatechange = () => {
                 const state = pc.connectionState;
+                // Phase 5.1 — terminal-absorption guard. Once THIS PC instance
+                // has been closed (participant_left / teardown dispatched CLOSED),
+                // a LATE connectionState transition from the connection being torn
+                // down (classically a "connected" landing a beat after we removed
+                // the tile) must be a no-op — it can neither revive the removed
+                // participant nor flip global status back to connected.
+                if (isPeerTerminal(pc._phase ?? initialPeerPhase())) return;
+                // Phase 5.1 — record the live phase through the pure reducer.
+                if (state === "connected")
+                    dispatchPeerPhase(pc, { type: "CONNECTED" });
+                else if (state === "failed")
+                    dispatchPeerPhase(pc, { type: "FAILED" });
+                else if (state === "disconnected" && pc._phase === "connected")
+                    dispatchPeerPhase(pc, { type: "RECONNECTING" });
                 setParticipants((prev) => {
                     const next = new Map(prev);
                     const ex = next.get(remoteUserId);
@@ -889,6 +1186,30 @@ export function useMeetingState({
                         clearTimeout(pc._disconnectTimer);
                         pc._disconnectTimer = null;
                     }
+                    // Phase 3.1 (P4.19) — connected in time; cancel the
+                    // relay-first fast-retry so it can't tear down a good PC.
+                    if (pc._relayRetryTimer) {
+                        clearTimeout(pc._relayRetryTimer);
+                        pc._relayRetryTimer = null;
+                    }
+                    // Phase 3.2 (G5) — connected in time; cancel the 30s connect
+                    // timeout and clear any prior `connectFailed` flag on the tile.
+                    if (pc._connectTimeoutTimer) {
+                        clearTimeout(pc._connectTimeoutTimer);
+                        pc._connectTimeoutTimer = null;
+                    }
+                    setParticipants((prev) => {
+                        const n = new Map(prev);
+                        const p = n.get(remoteUserId);
+                        if (p && p.connectFailed) {
+                            n.set(remoteUserId, {
+                                ...p,
+                                connectFailed: false,
+                            });
+                            return n;
+                        }
+                        return prev;
+                    });
                     wsSend("meeting_track_state", {
                         meetingId,
                         muted: mutedRef.current,
@@ -897,6 +1218,12 @@ export function useMeetingState({
                     });
                 } else if (pc.connectionState === "failed") {
                     dispatchFsm("peer_failed");
+                    // Phase 3.1 (P4.19) — the fast-retry timer is redundant once
+                    // we've reached `failed`; the failed-rebuild below covers it.
+                    if (pc._relayRetryTimer) {
+                        clearTimeout(pc._relayRetryTimer);
+                        pc._relayRetryTimer = null;
+                    }
                     setParticipants((prev) => {
                         const n = new Map(prev);
                         const p = n.get(remoteUserId);
@@ -950,9 +1277,36 @@ export function useMeetingState({
             };
 
             if (isInitiator) {
-                pc.createOffer()
-                    .then((offer) => pc.setLocalDescription(offer))
-                    .then(() =>
+                // Mark our offer-in-flight window so a colliding inbound offer
+                // arriving before setLocalDescription completes is still detected
+                // as glare by the Perfect Negotiation guard in handleSignal.
+                pc._makingOffer = true;
+                (async () => {
+                    try {
+                        // Phase 2.4 (G6) — gate the FIRST offer on real TURN so
+                        // the initial negotiation never runs against the public-
+                        // only fallback. If genuine creds landed during the wait,
+                        // refresh the PC's ICE servers via setConfiguration before
+                        // gathering begins at setLocalDescription.
+                        await waitForIceConfig();
+                        try {
+                            pc.setConfiguration({
+                                iceServers: applyPublicTurnPolicy(
+                                    iceServersRef.current,
+                                    iceAllowPublicRef.current,
+                                ),
+                                bundlePolicy: "max-bundle",
+                                rtcpMuxPolicy: "require",
+                                iceCandidatePoolSize: 4,
+                                ...(relayOnlyPeersRef.current.has(remoteUserId)
+                                    ? { iceTransportPolicy: "relay" as const }
+                                    : {}),
+                            });
+                        } catch {
+                            /* setConfiguration unsupported / not critical */
+                        }
+                        const offer = await pc.createOffer();
+                        await pc.setLocalDescription(offer);
                         wsSend("meeting_signal", {
                             meetingId,
                             targetUserId: remoteUserId,
@@ -960,13 +1314,76 @@ export function useMeetingState({
                                 type: "offer",
                                 sdp: pc.localDescription,
                             },
-                        }),
-                    )
-                    .catch(console.error);
+                        });
+                    } catch (err) {
+                        console.error(err);
+                    } finally {
+                        pc._makingOffer = false;
+                    }
+                })();
+            }
+
+            // Phase 3.1 (P4.19) — relay-first fast retry. On the INITIAL
+            // (non-relay) PC, arm a one-shot ~5s timer: if this peer hasn't
+            // reached `connected` by then (a UDP/STUN path a corporate proxy /
+            // symmetric NAT silently blackholes), rebuild that ONE peer TURN-only
+            // (`iceTransportPolicy:"relay"`, set via `relayOnlyPeersRef`) and
+            // re-offer as the initiator. This is faster than waiting for the
+            // browser's own ICE-`failed` (15–30s), so relay-required networks
+            // connect promptly. Idempotent with the failed-rebuild path via the
+            // per-peer `relayOnlyPeersRef` guard; skipped when already relay-only.
+            if (!relayOnlyPeersRef.current.has(remoteUserId)) {
+                pc._relayRetryTimer = setTimeout(() => {
+                    pc._relayRetryTimer = null;
+                    if (pcsRef.current.get(remoteUserId) !== pc) return;
+                    if (pc.connectionState === "connected") return;
+                    if (relayOnlyPeersRef.current.has(remoteUserId)) return;
+                    relayOnlyPeersRef.current.add(remoteUserId);
+                    try {
+                        pc.close();
+                    } catch {
+                        /* ignore */
+                    }
+                    pcsRef.current.delete(remoteUserId);
+                    createPeerConnection(remoteUserId, true);
+                }, 5000);
+            }
+
+            // Phase 3.2 (G5) — per-peer 30s connect timeout. Both recovery
+            // ladders above (relay-first fast-retry @5s, failed-rebuild) get a
+            // chance inside this window. If the peer STILL isn't `connected`
+            // after 30s we stop the infinite "Connecting…" spinner and flag the
+            // tile `connectFailed` so the user gets a "Couldn't connect — Retry"
+            // button (manual rebuild via `retryPeer`) instead of staring at a
+            // dead tile. Only armed on the FIRST (non-relay) PC per peer so a
+            // relay-rebuild doesn't reset the clock; cleared on connect (above)
+            // and on teardown.
+            if (!relayOnlyPeersRef.current.has(remoteUserId)) {
+                pc._connectTimeoutTimer = setTimeout(() => {
+                    pc._connectTimeoutTimer = null;
+                    // Check the CURRENT PC for this peer (the relay-first
+                    // fast-retry / failed-rebuild may have swapped `pc` for a
+                    // fresh relay-only one). If whatever PC is live now has
+                    // connected, there's nothing to flag.
+                    const cur = pcsRef.current.get(remoteUserId);
+                    if (cur && cur.connectionState === "connected") return;
+                    setParticipants((prev) => {
+                        const n = new Map(prev);
+                        const p = n.get(remoteUserId);
+                        if (p && p.connectFailed !== true) {
+                            n.set(remoteUserId, {
+                                ...p,
+                                connectFailed: true,
+                            });
+                            return n;
+                        }
+                        return prev;
+                    });
+                }, PEER_CONNECT_TIMEOUT_MS);
             }
             return pc;
         },
-        [meetingId, wsSend, dispatchFsm, user?.id],
+        [meetingId, wsSend, dispatchFsm, user?.id, waitForIceConfig],
     );
 
     // Network change → ICE restart
@@ -1024,11 +1441,53 @@ export function useMeetingState({
         ) => {
             if (!pc) return;
             if (signal.type === "offer") {
+                // Perfect Negotiation (Phase 2.1) glare guard: an offer arriving
+                // while our own offer is in flight (or we're not stable) is a
+                // collision. The IMPOLITE peer ignores it (keeps its own offer);
+                // the POLITE peer rolls back its local offer then accepts. This
+                // governs ALL re-negotiation (video toggle, screen share, ICE
+                // restart) and kills the renegotiation-glare deadlock (G3).
+                const offerCollision =
+                    !!pc._makingOffer || pc.signalingState !== "stable";
+                if (offerCollision) {
+                    if (!pc._polite) {
+                        // Impolite peer — ignore the colliding offer.
+                        return;
+                    }
+                    try {
+                        await pc.setLocalDescription({
+                            type: "rollback",
+                        } as RTCLocalSessionDescriptionInit);
+                    } catch {
+                        /* some browsers auto-rollback on setRemoteDescription */
+                    }
+                }
                 await pc.setRemoteDescription(
                     new RTCSessionDescription(
                         signal.sdp as RTCSessionDescriptionInit,
                     ),
                 );
+                // Phase 2.4 (G6) — gate the FIRST answer on real TURN (mirrors
+                // the initiator gate) so the initial negotiation never runs
+                // against the public-only fallback. Refresh the PC's ICE servers
+                // via setConfiguration if genuine creds landed during the wait.
+                await waitForIceConfig();
+                try {
+                    pc.setConfiguration({
+                        iceServers: applyPublicTurnPolicy(
+                            iceServersRef.current,
+                            iceAllowPublicRef.current,
+                        ),
+                        bundlePolicy: "max-bundle",
+                        rtcpMuxPolicy: "require",
+                        iceCandidatePoolSize: 4,
+                        ...(relayOnlyPeersRef.current.has(fromUserId)
+                            ? { iceTransportPolicy: "relay" as const }
+                            : {}),
+                    });
+                } catch {
+                    /* setConfiguration unsupported / not critical */
+                }
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
                 wsSend("meeting_signal", {
@@ -1060,7 +1519,7 @@ export function useMeetingState({
                 }
             }
         },
-        [meetingId, wsSend, flushPendingSignals],
+        [meetingId, wsSend, flushPendingSignals, waitForIceConfig],
     );
 
     // STABLE WS handler
@@ -1188,14 +1647,25 @@ export function useMeetingState({
                             : "connected",
                     );
 
+                    // Phase 2.2 — our RTCPeerConnection set is now built; tell the
+                    // server we're ready so it replays any buffered offer/ICE for
+                    // us and asks the other peers to (re)offer toward us (the
+                    // `meeting_peer_ready` fan-out). Idempotent via Perfect
+                    // Negotiation; guarded to fire once per WS connection.
+                    if (!readySentRef.current && hasPeersToConnect) {
+                        readySentRef.current = true;
+                        wsSend("meeting_ready", { meetingId });
+                    }
+
+                    // Phase 4.1 — bandwidth governor. A new peer joined, so the
+                    // uplink is now split across more remotes: re-cap EVERY
+                    // existing PC's video sender to the tier for the new count so
+                    // the single uplink can't saturate (audio senders are left
+                    // untouched — they stay pinned at `AUDIO_MAX_BITRATE`).
                     const peerCount = pcsRef.current.size;
                     if (peerCount > 1) {
                         const videoBitrate =
-                            peerCount <= 2
-                                ? 1_200_000
-                                : peerCount <= 4
-                                  ? 600_000
-                                  : 400_000;
+                            videoBitrateForPeerCount(peerCount);
                         for (const [, existingPc] of pcsRef.current) {
                             for (const sender of existingPc.getSenders()) {
                                 if (
@@ -1241,9 +1711,46 @@ export function useMeetingState({
                     handleSignal(fromUserId, pc, signal).catch(console.error);
                     break;
                 }
+                case "meeting_peer_ready": {
+                    // Phase 2.2 — the server tells us a peer (re)joined / became
+                    // ready, asking US to (re)offer toward them. If we already
+                    // have a live PC whose localDescription is an offer, re-send
+                    // it once (idempotent via Perfect Negotiation). If we have a
+                    // PC but it isn't offering (we're the answerer side), do
+                    // nothing — they will offer. If no PC exists yet, create one
+                    // as the initiator so a dropped bootstrap offer is recovered.
+                    const { userId } = data as { userId: number | string };
+                    if (userId == null || userId === user?.id) break;
+                    const existing = pcsRef.current.get(userId);
+                    if (existing) {
+                        if (
+                            existing.localDescription &&
+                            existing.localDescription.type === "offer"
+                        ) {
+                            wsSend("meeting_signal", {
+                                meetingId,
+                                targetUserId: userId,
+                                signal: {
+                                    type: "offer",
+                                    sdp: existing.localDescription,
+                                },
+                            });
+                        }
+                    } else {
+                        const created = createPeerConnection(userId, true);
+                        if (created) pcsRef.current.set(userId, created);
+                    }
+                    break;
+                }
                 case "meeting_participant_left": {
                     const { userId } = data as { userId: number | string };
-                    pcsRef.current.get(userId)?.close();
+                    // Phase 5.1 — dispatch CLOSED BEFORE tearing the PC down so a
+                    // late `connected`/`ontrack` from the connection being closed
+                    // can't revive the removed tile (the mesh P3.14 effect race).
+                    const leavingPc = pcsRef.current.get(userId);
+                    if (leavingPc)
+                        dispatchPeerPhase(leavingPc, { type: "CLOSED" });
+                    leavingPc?.close();
                     pcsRef.current.delete(userId);
                     setParticipants((prev) => {
                         const n = new Map(prev);
@@ -1536,11 +2043,28 @@ export function useMeetingState({
             iceRestartCountsRef.current.clear();
             relayOnlyPeersRef.current.clear();
         }
+        // Phase 2.2 — fresh WS connection: reset the reliable-delivery handshake
+        // guards so `meeting_subscribe`/`meeting_ready` fire again on reconnect.
+        subscribedRef.current = false;
+        readySentRef.current = false;
+        // Phase 2.3 (G4) — the PCs above were just torn down and will be rebuilt
+        // from the authoritative `existingPeers`; any offer/ICE frames still
+        // queued from the previous session reference dead connections, so drop
+        // them rather than replaying stale signaling onto fresh PCs.
+        outboundQueueRef.current = [];
 
         const sendJoin = () => {
             if (joined) return;
             joined = true;
             wsSend("meeting_join", { meetingId });
+            // Phase 2.2 — reliable-delivery handshake: announce we're subscribed
+            // so the server replays any buffered offer/ICE and tells the other
+            // peers to (re)offer toward us via `meeting_peer_ready`. Distinct from
+            // `meeting_ready` (PCs built) — this is "WS attached + listening".
+            if (!subscribedRef.current) {
+                subscribedRef.current = true;
+                wsSend("meeting_subscribe", { meetingId });
+            }
             setTimeout(
                 () =>
                     wsSend("meeting_track_state", {
@@ -2154,6 +2678,41 @@ export function useMeetingState({
     useEffect(() => {
         if (!ws) return;
         const flushAndReplay = () => {
+            // Phase 2.3 (G4) — replay any mesh-signal frames (offer / answer /
+            // ICE / track-state) that `wsSend` queued while the socket was not
+            // OPEN, so a reconnect window doesn't silently drop signaling.
+            flushOutboundQueue();
+            // Phase 5.2 — reconnect orchestration. On a WS reopen the server may
+            // have dropped our meeting membership (grace-expiry) and any peer that
+            // (re)joined while we were offline won't know about us. RE-ANNOUNCE
+            // ourselves: `meeting_join` re-registers us + re-fetches the
+            // authoritative `existingPeers` (which `meeting_participant_joined`
+            // reconciles — pruning phantoms + rebuilding missing PCs), then
+            // `meeting_subscribe` replays any buffered offer/ICE + fans out
+            // `meeting_peer_ready` so the others re-offer toward us. The Network
+            // change → ICE restart effect handles same-membership blips; this
+            // covers the membership-lost case. Idempotent server-side.
+            if (meetingId) {
+                subscribedRef.current = false;
+                readySentRef.current = false;
+                try {
+                    ws.send(
+                        JSON.stringify({
+                            type: "meeting_join",
+                            data: { meetingId },
+                        }),
+                    );
+                    ws.send(
+                        JSON.stringify({
+                            type: "meeting_subscribe",
+                            data: { meetingId },
+                        }),
+                    );
+                    subscribedRef.current = true;
+                } catch {
+                    /* ignore — periodic handshake / join effect will recover */
+                }
+            }
             const now = Date.now();
             for (const [, entry] of pendingSendsRef.current) {
                 entry.lastSentAt = now;
@@ -2251,6 +2810,59 @@ export function useMeetingState({
             wsSend("meeting_add_participant", { meetingId, targetUserId });
         },
         [meetingId, wsSend],
+    );
+
+    // Phase 3.2 (G5) — manual per-peer rebuild. Wired to the "Couldn't connect —
+    // Retry" tile button that appears after the 30s connect timeout flags a peer
+    // `connectFailed`. Tears the peer's dead PC down, resets its recovery state
+    // (relay-escalation + ICE-restart counters + connectFailed flag) so it starts
+    // fresh on the normal STUN+TURN path, then rebuilds as the initiator. The
+    // rebuilt PC re-arms both the relay-first fast-retry (3.1) and a new 30s
+    // connect timeout, so a second failure surfaces the Retry button again.
+    const retryPeer = useCallback(
+        (peerId: number | string) => {
+            if (peerId == null) return;
+            const existing = pcsRef.current.get(peerId);
+            if (existing) {
+                if (existing._relayRetryTimer) {
+                    clearTimeout(existing._relayRetryTimer);
+                    existing._relayRetryTimer = null;
+                }
+                if (existing._connectTimeoutTimer) {
+                    clearTimeout(existing._connectTimeoutTimer);
+                    existing._connectTimeoutTimer = null;
+                }
+                try {
+                    existing.close();
+                } catch {
+                    /* ignore */
+                }
+                pcsRef.current.delete(peerId);
+            }
+            // Reset recovery state so the manual retry starts from a clean slate
+            // on the normal (STUN+TURN) path rather than being pinned relay-only.
+            relayOnlyPeersRef.current.delete(peerId);
+            iceRestartCountsRef.current.delete(peerId);
+            setParticipants((prev) => {
+                const n = new Map(prev);
+                const p = n.get(peerId);
+                if (p) {
+                    n.set(peerId, {
+                        ...p,
+                        connectFailed: false,
+                        stream: null,
+                    });
+                    return n;
+                }
+                return prev;
+            });
+            const pc = createPeerConnection(peerId, true);
+            if (pc) pcsRef.current.set(peerId, pc);
+            // Ask the peer to (re)offer toward us too, in case they're the natural
+            // initiator side — idempotent under Perfect Negotiation (2.1).
+            wsSend("meeting_ready", { meetingId });
+        },
+        [createPeerConnection, wsSend, meetingId],
     );
 
     const switchAudioDevice = useCallback(async (deviceId: string) => {
@@ -2403,21 +3015,105 @@ export function useMeetingState({
                     bestId = uid;
                 }
             }
+            // Phase 4.2 — record when a peer holds the floor so the high-count
+            // demotion policy can keep it at full video for a short window after
+            // it stops speaking (hysteresis against conversational pauses).
+            if (bestId != null && bestId !== (user?.id ?? -1)) {
+                recentSpeakersRef.current.set(bestId, Date.now());
+            }
             setActiveSpeakerId((prev) => (prev === bestId ? prev : bestId));
         }, 350);
         return () => clearInterval(t);
-    }, []);
+    }, [user?.id]);
 
-    // ─── Phase 5 — Adaptive bitrate from active speaker + presenter ───
+    // ─── Phase 4.2 — Active-speaker-driven video demotion at high counts ───
+    // Below `HIGH_COUNT_VIDEO_THRESHOLD` remote peers the mesh can carry
+    // everyone's video, so the presenter + active speaker get full video (`f`)
+    // and the rest get mid (`h`) — the original Phase 5 policy. At/above the
+    // threshold the mesh can't carry N video streams, so we upgrade ONLY a
+    // bounded priority set (presenter + dominant speaker + recent speakers,
+    // capped at `MAX_PRIORITY_VIDEO_PEERS`) to full video and demote everyone
+    // else to `q` (thumbnail → effectively audio+avatar). This runs on a short
+    // interval (not just on activeSpeakerId change) so recent-speaker windows
+    // expire and demote stale tiles even when nobody new is talking. The
+    // per-peer `requestPeerQuality` send is deduped (`lastRequestSentRef`), so a
+    // steady state produces no WS traffic.
     useEffect(() => {
-        if (participants.size === 0) return;
-        for (const [peerId] of participants) {
-            if (peerId === user?.id) continue;
-            const isPresenterPeer = peerId === presenterId;
-            const isSpeaker = peerId === activeSpeakerId;
-            const level = isPresenterPeer || isSpeaker ? "f" : "h";
-            requestPeerQuality(peerId, level);
-        }
+        const applyPolicy = () => {
+            if (participants.size === 0) return;
+            const remotePeerIds: Array<number | string> = [];
+            for (const [peerId] of participants) {
+                if (peerId === user?.id) continue;
+                remotePeerIds.push(peerId);
+            }
+            if (remotePeerIds.length === 0) return;
+
+            const now = Date.now();
+            // Prune expired recent-speaker entries so the priority set shrinks
+            // back down once a peer has been quiet past the hysteresis window.
+            for (const [uid, at] of recentSpeakersRef.current) {
+                if (now - at > RECENT_SPEAKER_WINDOW_MS)
+                    recentSpeakersRef.current.delete(uid);
+            }
+
+            const highCount =
+                remotePeerIds.length >= HIGH_COUNT_VIDEO_THRESHOLD;
+
+            if (!highCount) {
+                // Small call — everyone fits. Presenter + active speaker get
+                // full video; the rest get mid (original Phase 5 behaviour).
+                for (const peerId of remotePeerIds) {
+                    const isPresenterPeer = peerId === presenterId;
+                    const isSpeaker = peerId === activeSpeakerId;
+                    requestPeerQuality(
+                        peerId,
+                        isPresenterPeer || isSpeaker ? "f" : "h",
+                    );
+                }
+                return;
+            }
+
+            // High count — build the bounded priority set that keeps full
+            // video: presenter first (always), then the dominant speaker, then
+            // the most-recent speakers, up to `MAX_PRIORITY_VIDEO_PEERS`.
+            const priority = new Set<number | string>();
+            if (
+                presenterId != null &&
+                presenterId !== user?.id &&
+                participants.has(presenterId)
+            )
+                priority.add(presenterId);
+            if (
+                activeSpeakerId != null &&
+                activeSpeakerId !== user?.id &&
+                participants.has(activeSpeakerId) &&
+                priority.size < MAX_PRIORITY_VIDEO_PEERS
+            )
+                priority.add(activeSpeakerId);
+            if (priority.size < MAX_PRIORITY_VIDEO_PEERS) {
+                const recent = [...recentSpeakersRef.current.entries()]
+                    .filter(
+                        ([uid]) =>
+                            uid !== user?.id && participants.has(uid),
+                    )
+                    .sort((a, b) => b[1] - a[1]);
+                for (const [uid] of recent) {
+                    if (priority.size >= MAX_PRIORITY_VIDEO_PEERS) break;
+                    priority.add(uid);
+                }
+            }
+
+            for (const peerId of remotePeerIds) {
+                requestPeerQuality(
+                    peerId,
+                    priority.has(peerId) ? "f" : "q",
+                );
+            }
+        };
+
+        applyPolicy();
+        const t = setInterval(applyPolicy, 2_000);
+        return () => clearInterval(t);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeSpeakerId, presenterId, participants.size]);
 
@@ -2478,6 +3174,9 @@ export function useMeetingState({
         switchAudioDevice,
         switchVideoDevice,
         handleWsMessage,
+        // Phase 3.2 (G5) — manual per-peer rebuild for the "Couldn't connect —
+        // Retry" tile.
+        retryPeer,
         // Phase 1 — Resilience Pack additions:
         fsmState,
         connectionBanner,

@@ -307,6 +307,137 @@ function clearCallBuffer(callId: number): void {
   _callSignalBuffers.delete(callId);
 }
 
+// ── Per-meeting WebRTC MESH signal buffer (group-call reliable delivery) ──
+// The 1:1 buffer above fixed the "answered but never connects" class of bugs
+// for two-party calls. The N-party mesh (`meeting_signal`) was still a pure
+// fire-and-forget relay: an offer/ICE destined for a peer who is mid-join,
+// cold-starting, or briefly reconnecting (within MEETING_DISCONNECT_GRACE_MS)
+// is silently dropped, so that one pair never connects while the rest of the
+// mesh does (the "one tile stuck on Connecting…" group-call bug). We buffer
+// the LATEST offer + ordered ICE candidates destined for an offline target,
+// keyed by meeting → target → sender, and replay them the instant the target
+// (re)joins, subscribes, or signals ready. Mirrors the proven 1:1 design.
+interface BufferedMeetingPeerSignals {
+  // Latest offer from `fromUserId` to the target (a newer offer — ICE-restart
+  // or relay rebuild — supersedes the previous one).
+  offer?: any;
+  // Ordered ICE candidates from `fromUserId`, awaiting the target's remote
+  // description / subscription.
+  ice: Array<any>;
+}
+interface BufferedMeetingSignals {
+  // targetUserId → (fromUserId → buffered signals from that sender)
+  byTarget: Map<number, Map<number, BufferedMeetingPeerSignals>>;
+  expiresAt: number;
+}
+
+const MEETING_SIGNAL_BUFFER_TTL_MS = 60_000;
+const MEETING_SIGNAL_BUFFER_MAX_MEETINGS = 2000;
+const MEETING_SIGNAL_BUFFER_MAX_ICE_PER_PEER = 80;
+const _meetingSignalBuffers = new Map<number, BufferedMeetingSignals>();
+
+function _pruneMeetingSignalBuffers(now: number): void {
+  for (const [meetingId, buf] of _meetingSignalBuffers) {
+    if (buf.expiresAt <= now) _meetingSignalBuffers.delete(meetingId);
+  }
+  if (_meetingSignalBuffers.size > MEETING_SIGNAL_BUFFER_MAX_MEETINGS) {
+    const oldest = _meetingSignalBuffers.keys().next().value;
+    if (oldest !== undefined) _meetingSignalBuffers.delete(oldest);
+  }
+}
+
+function _getOrCreateMeetingBuffer(meetingId: number): BufferedMeetingSignals {
+  const now = Date.now();
+  let buf = _meetingSignalBuffers.get(meetingId);
+  if (!buf || buf.expiresAt <= now) {
+    buf = {
+      byTarget: new Map(),
+      expiresAt: now + MEETING_SIGNAL_BUFFER_TTL_MS,
+    };
+    _meetingSignalBuffers.set(meetingId, buf);
+    _pruneMeetingSignalBuffers(now);
+  } else {
+    buf.expiresAt = now + MEETING_SIGNAL_BUFFER_TTL_MS;
+  }
+  return buf;
+}
+
+/**
+ * Buffer a mesh offer/candidate destined for a target peer with no live socket.
+ * Mesh signal types are "offer" | "answer" | "candidate". We only buffer the
+ * negotiation-critical "offer" and "candidate": an "answer" is a response to an
+ * offer, and if the offerer was offline when it arrived they re-offer on
+ * reconnect (via `meeting_peer_ready`), so buffering answers would only risk
+ * replaying a stale SDP against a fresh transport.
+ */
+function bufferMeetingSignal(
+  meetingId: number,
+  fromUserId: number,
+  targetUserId: number,
+  signal: any,
+): void {
+  if (!meetingId || !fromUserId || !targetUserId || !signal) return;
+  if (signal.type !== "offer" && signal.type !== "candidate") return;
+  const buf = _getOrCreateMeetingBuffer(meetingId);
+  let perTarget = buf.byTarget.get(targetUserId);
+  if (!perTarget) {
+    perTarget = new Map();
+    buf.byTarget.set(targetUserId, perTarget);
+  }
+  let entry = perTarget.get(fromUserId);
+  if (!entry) {
+    entry = { ice: [] };
+    perTarget.set(fromUserId, entry);
+  }
+  if (signal.type === "offer") {
+    // Keep only the LATEST offer from this sender; a new offer obsoletes the
+    // ICE buffered against the previous one (different transport).
+    entry.offer = signal;
+    entry.ice = [];
+  } else {
+    entry.ice.push(signal);
+    if (entry.ice.length > MEETING_SIGNAL_BUFFER_MAX_ICE_PER_PEER)
+      entry.ice.shift();
+  }
+}
+
+/**
+ * Replay every buffered offer + ICE candidate destined for `targetUserId` in a
+ * meeting (called when they join / subscribe / signal ready). For each sender we
+ * deliver the offer FIRST, then that sender's ICE in arrival order. Consumed
+ * entries are removed so a later replay can't double-deliver.
+ */
+function replayMeetingSignals(
+  meetingId: number,
+  targetUserId: number,
+  deliver: (fromUserId: number, signal: any) => void,
+): void {
+  const buf = _meetingSignalBuffers.get(meetingId);
+  if (!buf) return;
+  const perTarget = buf.byTarget.get(targetUserId);
+  if (!perTarget) return;
+  for (const [fromUserId, entry] of perTarget) {
+    if (entry.offer) deliver(fromUserId, entry.offer);
+    for (const c of entry.ice) deliver(fromUserId, c);
+  }
+  buf.byTarget.delete(targetUserId);
+}
+
+/** Drop all buffered signals (both directions) involving a user in a meeting. */
+function clearMeetingUserBuffer(meetingId: number, userId: number): void {
+  if (!meetingId || !userId) return;
+  const buf = _meetingSignalBuffers.get(meetingId);
+  if (!buf) return;
+  buf.byTarget.delete(userId);
+  for (const perTarget of buf.byTarget.values()) perTarget.delete(userId);
+}
+
+/** Clear the entire mesh signal buffer for a meeting (terminal transition). */
+function clearMeetingBuffer(meetingId: number): void {
+  if (!meetingId) return;
+  _meetingSignalBuffers.delete(meetingId);
+}
+
 /**
  * Insert a Signal-style call-event row into the conversation so 1:1 call HISTORY
  * appears INLINE in the chat thread ("Missed voice call", "Outgoing video call",
@@ -895,6 +1026,10 @@ function scheduleMeetingDisconnectCleanup({
         [meetingId, userId],
       );
 
+      // Drop any mesh signals buffered for / from this user — they are gone
+      // and a future rejoin starts a fresh negotiation.
+      clearMeetingUserBuffer(meetingId, userId);
+
       const activeParticipants = (
         await db.query(
           `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
@@ -910,6 +1045,8 @@ function scheduleMeetingDisconnectCleanup({
       }
 
       if (activeParticipants.length === 0) {
+        // Meeting is empty — drop the whole mesh signal buffer.
+        clearMeetingBuffer(meetingId);
         await db.query(
           `UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`,
           [meetingId],
@@ -2393,6 +2530,22 @@ async function handleChatMessage(
       });
     }
 
+    // RELIABLE MESH DELIVERY: replay any OFFER/ICE that existing peers sent
+    // toward this user while they had no open socket (cold start / reconnect
+    // within the grace window). The joiner just attached its WS handler and
+    // got `existingPeers`, so it is ready to consume them. This is the mesh
+    // analogue of the 1:1 `call_accept`/`call_subscribe` replay and the core
+    // fix for "one tile stuck on Connecting…" after a (re)join. The client
+    // additionally sends `meeting_subscribe` for a belt-and-braces re-request,
+    // but replaying here means the happy path needs no extra round-trip.
+    replayMeetingSignals(Number(meetingId), senderId, (fromUserId, signal) => {
+      sendToUser(tenantId, senderId, "meeting_signal", {
+        meetingId,
+        fromUserId,
+        signal,
+      });
+    });
+
     // System message in conversation (skip on PiP rejoin to avoid duplicates).
     // Huddles never post a `meeting_joined` system row — a group CALL is not a
     // meeting and must not leave meeting artifacts in the chat thread.
@@ -2477,6 +2630,9 @@ async function handleChatMessage(
       [meetingId, senderId],
     );
 
+    // Drop any mesh signals buffered for / from the leaver.
+    clearMeetingUserBuffer(meetingId, senderId);
+
     const activeParticipants = (
       await db.query(
         `SELECT mp.user_id FROM meeting_participants mp WHERE mp.meeting_id = $1 AND mp.status = 'joined'`,
@@ -2493,6 +2649,8 @@ async function handleChatMessage(
 
     // If no active participants, mark meeting ended (use WHERE to prevent double-update race)
     if (activeParticipants.length === 0) {
+      // Empty meeting — drop the whole mesh signal buffer.
+      clearMeetingBuffer(meetingId);
       await db.query(
         `UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`,
         [meetingId],
@@ -2595,6 +2753,9 @@ async function handleChatMessage(
       `UPDATE meeting_participants SET status = 'left', left_at = NOW() WHERE meeting_id = $1`,
       [meetingId],
     );
+
+    // Terminal transition — drop the whole mesh signal buffer for this meeting.
+    clearMeetingBuffer(meetingId);
 
     const activeParticipants = (
       await db.query(
@@ -2732,11 +2893,93 @@ async function handleChatMessage(
       "meeting_signal: relaying",
     );
 
+    // RELIABLE MESH DELIVERY (group-call parity with the 1:1 buffer): if the
+    // target peer has NO open socket on this instance (mid-join, cold start,
+    // or briefly reconnecting within the 15s grace window), buffer the OFFER /
+    // ICE so we can replay it the instant they (re)join / subscribe / signal
+    // ready. Without this the one offline pair never connects while the rest
+    // of the mesh does ("one tile stuck on Connecting…"). We STILL relay below
+    // (sendToUser also publishes cross-instance) so an already-subscribed peer
+    // on this or another instance receives it immediately.
+    if (
+      (signal.type === "offer" || signal.type === "candidate") &&
+      !hasOpenSocket(tenantId, targetUserId)
+    ) {
+      bufferMeetingSignal(
+        Number(meetingId),
+        senderId,
+        Number(targetUserId),
+        signal,
+      );
+      logger.debug(
+        { senderId, targetUserId, meetingId, signalType: signal.type },
+        "meeting_signal: buffered for offline peer",
+      );
+    }
+
     sendToUser(tenantId, targetUserId, "meeting_signal", {
       meetingId,
       fromUserId: senderId,
       signal,
     });
+  } else if (msg.type === "meeting_subscribe") {
+    // GROUP-CALL reliable-delivery handshake (mesh parity with `call_subscribe`).
+    // A (re)joining peer sends this once its WS handler is attached + it is
+    // ready to receive offers. We (1) replay any OFFER/ICE buffered for them
+    // while they were offline, and (2) tell every OTHER joined peer to
+    // (re)offer toward this user via `meeting_peer_ready` (idempotent under
+    // Perfect Negotiation). This closes the race where a peer's offer was
+    // emitted before the newcomer's handler was listening.
+    const { meetingId } = msg.data || {};
+    if (!meetingId) return;
+    if (!(await isMeetingMember(db, meetingId, senderId))) return;
+    replayMeetingSignals(Number(meetingId), senderId, (fromUserId, signal) => {
+      sendToUser(tenantId, senderId, "meeting_signal", {
+        meetingId,
+        fromUserId,
+        signal,
+      });
+    });
+    const others = (
+      await db.query(
+        `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined' AND user_id != $2`,
+        [meetingId, senderId],
+      )
+    ).rows;
+    for (const p of others) {
+      sendToUser(tenantId, p.user_id, "meeting_peer_ready", {
+        meetingId,
+        userId: senderId,
+      });
+    }
+  } else if (msg.type === "meeting_ready") {
+    // GROUP-CALL: the peer's RTCPeerConnection set is built and it is ready to
+    // (re)negotiate. Same effect as `meeting_subscribe` — replay buffered
+    // signals to this user and ask the other peers to (re)offer. Kept as a
+    // distinct verb so the client can signal "media acquired + PCs created"
+    // separately from "WS subscribed" (mirrors call_ready vs call_subscribe).
+    const { meetingId } = msg.data || {};
+    if (!meetingId) return;
+    if (!(await isMeetingMember(db, meetingId, senderId))) return;
+    replayMeetingSignals(Number(meetingId), senderId, (fromUserId, signal) => {
+      sendToUser(tenantId, senderId, "meeting_signal", {
+        meetingId,
+        fromUserId,
+        signal,
+      });
+    });
+    const others = (
+      await db.query(
+        `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined' AND user_id != $2`,
+        [meetingId, senderId],
+      )
+    ).rows;
+    for (const p of others) {
+      sendToUser(tenantId, p.user_id, "meeting_peer_ready", {
+        meetingId,
+        userId: senderId,
+      });
+    }
   } else if (msg.type === "meeting_add_participant") {
     // Organizer adds someone to an active meeting
     const { meetingId, targetUserId } = msg.data || {};

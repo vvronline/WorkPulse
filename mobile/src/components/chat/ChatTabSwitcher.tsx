@@ -48,10 +48,8 @@ export default function ChatTabSwitcher({
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   // `progress` drives native-driver visuals (opacity / transform). `layout`
-  // drives the JS-driven height + margin collapse — they MUST be separate
-  // Animated.Values because a single node can't mix native and layout drivers.
+  // drives the inline morph between tab rail and search field.
   const progress = useRef(new Animated.Value(searchOpen ? 1 : 0)).current;
-  const layout = useRef(new Animated.Value(searchOpen ? 1 : 0)).current;
   const searchInputRef = useRef<TextInput | null>(null);
 
   const tabs = useMemo<TabMeta[]>(
@@ -67,23 +65,13 @@ export default function ChatTabSwitcher({
   );
 
   useEffect(() => {
-    Animated.parallel([
-      Animated.timing(progress, {
-        toValue: searchOpen ? 1 : 0,
-        duration: searchOpen ? 220 : 180,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      // Height/margin can't run on the native driver — animate on JS so the
-      // panel physically collapses (no invisible band) when search is closed.
-      Animated.timing(layout, {
-        toValue: searchOpen ? 1 : 0,
-        duration: searchOpen ? 220 : 180,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
-      }),
-    ]).start();
-  }, [progress, layout, searchOpen]);
+    Animated.timing(progress, {
+      toValue: searchOpen ? 1 : 0,
+      duration: searchOpen ? 220 : 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [progress, searchOpen]);
 
   useEffect(() => {
     if (!searchOpen) {
@@ -96,37 +84,43 @@ export default function ChatTabSwitcher({
 
   const tabsOpacity = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, 0.72],
+    outputRange: [1, 0],
   });
   const tabsScale = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, 0.985],
+    outputRange: [1, 0.97],
   });
-  const searchTranslateY = progress.interpolate({
+  const tabsTranslateX = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [-8, 0],
+    outputRange: [0, -14],
   });
-  // Collapse the search panel's height (and its top margin) when closed so it
-  // never occupies an invisible band that pushes the conversation list down.
-  // The field is ~42px tall; the panel adds an 8px top margin when expanded.
-  const searchPanelHeight = layout.interpolate({
+  const searchOpacity = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, 42],
+    outputRange: [0, 1],
   });
-  const searchPanelMarginTop = layout.interpolate({
+  const searchTranslateX = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, 8],
+    outputRange: [14, 0],
+  });
+  const searchScale = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.97, 1],
+  });
+  const triggerOpacity = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0],
   });
 
   return (
     <View style={style}>
       <View style={styles.rail}>
         <Animated.View
+          pointerEvents={searchOpen ? "none" : "auto"}
           style={[
             styles.tabsWrap,
             {
               opacity: tabsOpacity,
-              transform: [{ scale: tabsScale }],
+              transform: [{ scale: tabsScale }, { translateX: tabsTranslateX }],
             },
           ]}
         >
@@ -176,40 +170,12 @@ export default function ChatTabSwitcher({
             );
           })}
         </Animated.View>
-        <Pressable
-          style={({ pressed }) => [
-            styles.searchBtn,
-            searchOpen && styles.searchBtnActive,
-            pressed && styles.tabPressed,
-          ]}
-          onPress={() => onSearchOpenChange(!searchOpen)}
-          hitSlop={8}
-        >
-          {searchOpen ? (
-            <X size={16} color={theme.chatSegmentTextActive} />
-          ) : (
-            <Search size={16} color={theme.chatSegmentText} />
-          )}
-        </Pressable>
-      </View>
-      {/* Outer node: JS-driven height/margin collapse only. A single Animated
-          node can't mix native + JS drivers, so the native-driven opacity /
-          translateY live on the INNER node below. */}
-      <Animated.View
-        pointerEvents={searchOpen ? "auto" : "none"}
-        style={[
-          styles.searchPanel,
-          {
-            height: searchPanelHeight,
-            marginTop: searchPanelMarginTop,
-          },
-        ]}
-      >
-        {/* Inner node: native-driven fade + slide. */}
         <Animated.View
+          pointerEvents={searchOpen ? "auto" : "none"}
           style={{
-            opacity: progress,
-            transform: [{ translateY: searchTranslateY }],
+            ...styles.searchInlineWrap,
+            opacity: searchOpacity,
+            transform: [{ translateX: searchTranslateX }, { scale: searchScale }],
           }}
         >
           <View style={styles.searchField}>
@@ -224,16 +190,34 @@ export default function ChatTabSwitcher({
               autoCapitalize="none"
               returnKeyType="search"
             />
-            {searchQuery.trim() ? (
-              <Pressable onPress={() => onSearchQueryChange("")} hitSlop={8}>
-                <X size={16} color={theme.textSecondary} />
-              </Pressable>
-            ) : (
-              <View style={styles.searchClearSpacer} />
-            )}
+            <Pressable
+              onPress={() => {
+                if (searchQuery.trim()) {
+                  onSearchQueryChange("");
+                  return;
+                }
+                onSearchOpenChange(false);
+              }}
+              hitSlop={8}
+            >
+              <X size={16} color={theme.textSecondary} />
+            </Pressable>
           </View>
         </Animated.View>
-      </Animated.View>
+        <Animated.View style={{ opacity: triggerOpacity }}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.searchBtn,
+              searchOpen && styles.searchBtnActive,
+              pressed && styles.tabPressed,
+            ]}
+            onPress={() => onSearchOpenChange(true)}
+            hitSlop={8}
+          >
+            <Search size={16} color={theme.chatSegmentText} />
+          </Pressable>
+        </Animated.View>
+      </View>
     </View>
   );
 }
@@ -241,6 +225,7 @@ export default function ChatTabSwitcher({
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
     rail: {
+      position: "relative",
       flexDirection: "row",
       alignItems: "center",
       gap: 6,
@@ -306,8 +291,13 @@ const makeStyles = (theme: Theme) =>
       backgroundColor: theme.chatSegmentActiveSurface,
       borderColor: theme.chatSegmentActiveBorder,
     },
-    searchPanel: {
-      overflow: "hidden",
+    searchInlineWrap: {
+      position: "absolute",
+      left: 6,
+      right: 54,
+      top: 6,
+      bottom: 6,
+      justifyContent: "center",
     },
     searchField: {
       flexDirection: "row",
@@ -325,10 +315,6 @@ const makeStyles = (theme: Theme) =>
       color: theme.text,
       fontSize: 14,
       paddingVertical: 0,
-    },
-    searchClearSpacer: {
-      width: 16,
-      height: 16,
     },
     badge: {
       position: "absolute",

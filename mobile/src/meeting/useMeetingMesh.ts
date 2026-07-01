@@ -8,8 +8,17 @@ import {
   RTCIceCandidate,
   MediaStream,
 } from "react-native-webrtc";
+import NetInfo from "@react-native-community/netinfo";
 import { socket, type WSMessage } from "../realtime/socket";
-import { getIceConfig } from "../features";
+import { getIceConfig, warmIceConfig } from "../features";
+import { hasRealTurn, applyPublicTurnPolicy } from "../realtime/callIceConfig";
+import {
+  peerConnectionReducer,
+  initialPeerPhase,
+  isPeerTerminal,
+  type PeerPhase,
+  type PeerEvent,
+} from "./peerConnectionMachine";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -53,6 +62,36 @@ const FALLBACK_ICE: any[] = [
   },
 ];
 
+// Phase 3.2 (G5) — per-peer connect timeout. If a peer still hasn't reached
+// `connected` after this window we stop the infinite spinner and flag the tile
+// "Couldn't connect — Retry". Cleared on connect / teardown / manual retry.
+const PEER_CONNECT_TIMEOUT_MS = 30_000;
+
+// Phase 4.1 — Opus audio cap. Prioritized: audio is pinned here and NEVER
+// governed down by peer count (unified with web `AUDIO_MAX_BITRATE`), so voice
+// always survives even when the video ladder squeezes at high participant counts.
+const AUDIO_MAX_BITRATE = 48_000;
+
+// Phase 4.2 — Active-speaker-driven video at high counts (unified with web
+// `useMeetingState`). A mesh only carries ~5–6 reliable video streams, so once
+// the REMOTE-peer count reaches this threshold we stop asking every peer for
+// full video and demote the non-priority tiles to `q` (thumbnail → effectively
+// audio+avatar). Below the threshold everyone keeps mid/full video (`h`/`f`).
+const HIGH_COUNT_VIDEO_THRESHOLD = 6;
+// Phase 4.2 — how long a peer stays in the "recent speaker" priority set after
+// it last held the floor, so brief pauses don't instantly drop them to a
+// thumbnail (hysteresis against back-and-forth conversation).
+const RECENT_SPEAKER_WINDOW_MS = 12_000;
+// Phase 4.2 — cap on how many peers may hold full video simultaneously at high
+// counts (dominant + recent speakers). Keeps the aggregate downlink bounded —
+// "only the dominant speaker + a few".
+const MAX_PRIORITY_VIDEO_PEERS = 4;
+// Phase 4.2 — a peer counts as "speaking" above this normalized audio level
+// (matches web's active-speaker threshold), and levels older than the staleness
+// window are ignored so a peer who went quiet drops out of the running.
+const ACTIVE_SPEAKER_LEVEL = 0.08;
+const ACTIVE_SPEAKER_STALE_MS = 2_000;
+
 export type MeetingParticipant = {
   userId: number | string;
   name: string;
@@ -60,6 +99,10 @@ export type MeetingParticipant = {
   stream: MediaStream | null;
   muted: boolean;
   videoOff: boolean;
+  // Phase 3.2 (G5) — set true once this peer's 30s connect timeout fires without
+  // ever reaching `connected`. The tile then shows a "Couldn't connect — Retry"
+  // button instead of an infinite spinner. Cleared on connect / manual retry.
+  connectFailed?: boolean;
 };
 
 export type MeetingStatus =
@@ -91,6 +134,27 @@ interface PeerEntry {
   negotiationDone?: boolean;
   disconnectTimer?: ReturnType<typeof setTimeout> | null;
   rampTimers?: ReturnType<typeof setTimeout>[];
+  // Phase 3.1 (P4.19) — relay-first fast-retry timer. Armed once per peer on
+  // the initial (non-relay) PC; if the peer isn't `connected` within ~5s we
+  // rebuild it TURN-only and re-offer. Cleared on connect / failed / teardown.
+  relayRetryTimer?: ReturnType<typeof setTimeout> | null;
+  // Phase 3.2 (G5) — per-peer 30s connect timeout. Armed once per peer; if the
+  // peer still isn't `connected` when it fires we stop the infinite spinner and
+  // flag the participant `connectFailed` so the tile shows a "Couldn't connect —
+  // Retry" button. Cleared on connect / teardown (superseded by `retryPeer`).
+  connectTimeoutTimer?: ReturnType<typeof setTimeout> | null;
+  // Perfect Negotiation (Phase 2.1) — per-peer glare guards. `makingOffer`
+  // marks our own offer-in-flight window so a colliding inbound offer is
+  // detected as glare; `polite` is the deterministic politeness role
+  // (polite = String(selfId) > String(remoteId)).
+  polite?: boolean;
+  makingOffer?: boolean;
+  // Phase 5.1 — per-peer connection phase, driven by the pure
+  // `peerConnectionReducer`. The single most important invariant is that the
+  // TERMINAL phase (`closed`) is ABSORBING: once `closePeer` marks this entry
+  // closed, a LATE `connected` from an RTCPeerConnection being torn down can no
+  // longer revive the removed participant tile (the mesh P3.14 effect race).
+  phase: PeerPhase;
 }
 
 // Normalize ids so a participant arriving as a number on one path and a numeric
@@ -128,7 +192,40 @@ export function useMeetingMesh({
   const pendingIceRef = useRef<Map<string, any[]>>(new Map());
   const iceServersRef = useRef<any[]>(FALLBACK_ICE);
   const iceLoadedRef = useRef(false);
+  // Phase 3.1 (P4.19) — per-peer set marking a peer we've escalated to TURN-only
+  // (`iceTransportPolicy:"relay"`). Set by the relay-first fast retry (and any
+  // future failed-rebuild path) so the rebuilt PC gathers relay candidates only.
+  const relayOnlyPeersRef = useRef<Set<string>>(new Set());
+  // Phase 4.2 — active-speaker + quality bookkeeping (parity with web
+  // `useMeetingState`). `audioLevelsRef`: latest normalized audio level per
+  // remote peer (populated from inbound `meeting_audio_level` broadcasts AND our
+  // own `getStats` inbound-audio polling so it also works in mobile-only calls).
+  // `recentSpeakersRef`: userId → last time that peer held the floor, for the
+  // high-count demotion hysteresis window. `lastRequestSentRef`: dedup of the
+  // quality level we last asked each peer for (so a steady state produces no WS
+  // traffic). `requestedQualityRef`: the level each remote last asked US to send
+  // them (applied to OUR outbound video sender toward that peer).
+  const audioLevelsRef = useRef<
+    Map<string, { level: number; at: number }>
+  >(new Map());
+  const recentSpeakersRef = useRef<Map<string, number>>(new Map());
+  const lastRequestSentRef = useRef<Map<string, string>>(new Map());
+  const requestedQualityRef = useRef<Map<string, string>>(new Map());
+  // Phase 2.4 (G6) — deterministic ICE-config gating state (ported from the 1:1
+  // path). `iceHasRealTurnRef`: the loaded config carries real provisioned TURN
+  // (not public Open Relay / STUN-only). `iceAllowPublicRef`: the server permits
+  // the public Open Relay fallback (default true for older servers).
+  // `firstNegotiationStartedRef`: the very first mesh offer/answer has begun
+  // (only that one is gated on genuine TURN).
+  const iceHasRealTurnRef = useRef(false);
+  const iceAllowPublicRef = useRef(true);
+  const firstNegotiationStartedRef = useRef(false);
   const joinedRef = useRef(false);
+  // Phase 2.2 — reliable-delivery handshake guards. `subscribedRef` ensures we
+  // send `meeting_subscribe` once per join; `readySentRef` ensures `meeting_ready`
+  // is sent once our PCs are built. Reset on (re)join.
+  const subscribedRef = useRef(false);
+  const readySentRef = useRef(false);
   // True once the user has left the lobby and we should fire `meeting_join`.
   const wantJoinRef = useRef(autoJoin);
   const [wantJoin, setWantJoin] = useState(autoJoin);
@@ -257,13 +354,62 @@ export function useMeetingMesh({
     };
   }, []);
 
-  const waitForIceConfig = useCallback(async (timeoutMs = 2000) => {
-    if (iceLoadedRef.current) return;
-    const start = Date.now();
-    while (!iceLoadedRef.current && Date.now() - start < timeoutMs) {
-      await new Promise((r) => setTimeout(r, 50));
+  // Phase 2.4 (G6) — ICE-config refresh that ALSO records the public-TURN policy
+  // (`allowPublicFallback`) + whether the config carries real, provisioned TURN
+  // (`hasRealTurn`) so the first-negotiation gate can decide whether to keep
+  // (briefly) waiting for genuine creds. Mirrors the 1:1 call screen. Warms the
+  // shared Cloudflare TURN cache (warmIceConfig) so a subsequent call resolves
+  // instantly.
+  const refreshIceConfig = useCallback(async () => {
+    try {
+      const warmed = await warmIceConfig();
+      const cfg = warmed ?? (await getIceConfig()).data;
+      const servers = (cfg as any)?.iceServers;
+      if (servers?.length) {
+        iceServersRef.current = servers;
+        iceAllowPublicRef.current =
+          (cfg as any).allowPublicFallback !== false;
+        iceHasRealTurnRef.current = hasRealTurn(cfg as any);
+      }
+    } catch {
+      /* keep defaults */
+    } finally {
+      iceLoadedRef.current = true;
     }
   }, []);
+
+  // Phase 2.4 (G6) — deterministic gate. Stage 1: wait for ANY config to load.
+  // Stage 2 (FIRST negotiation only): additionally wait — bounded to ~1.5s — for
+  // real, provisioned TURN, re-fetching once, so the initial mesh offer/answer
+  // never negotiates against the public-only fallback (which makes the first
+  // join hang on a relay-required network). A later ICE-restart / renegotiation
+  // proceeds promptly with whatever creds we have.
+  const waitForIceConfig = useCallback(
+    async (timeoutMs = 2000) => {
+      const start = Date.now();
+      if (!iceLoadedRef.current) {
+        while (!iceLoadedRef.current && Date.now() - start < timeoutMs) {
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      }
+      if (!firstNegotiationStartedRef.current && !iceHasRealTurnRef.current) {
+        const REAL_TURN_DEADLINE_MS = Math.max(timeoutMs, 1500);
+        let refetched = false;
+        while (
+          !iceHasRealTurnRef.current &&
+          Date.now() - start < REAL_TURN_DEADLINE_MS
+        ) {
+          if (!refetched) {
+            refetched = true;
+            void refreshIceConfig();
+          }
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      }
+      firstNegotiationStartedRef.current = true;
+    },
+    [refreshIceConfig],
+  );
 
   // ── Bitrate management (ported from web mesh + 1:1 call screen) ──────────
   // Uncapped video on a mobile uplink causes congestion → stalls, freezes and
@@ -288,7 +434,9 @@ export function useMeetingMesh({
             params.encodings[0].maxFramerate = 30;
             (params as any).degradationPreference = "maintain-framerate";
           } else {
-            params.encodings[0].maxBitrate = 48_000;
+            // Phase 4.1 — audio is prioritized: pinned at AUDIO_MAX_BITRATE and
+            // never scaled by the peer-count governor.
+            params.encodings[0].maxBitrate = AUDIO_MAX_BITRATE;
           }
           sender.setParameters?.(params).catch?.(() => {});
         }
@@ -299,16 +447,30 @@ export function useMeetingMesh({
     [],
   );
 
+  // Phase 4.1 — bandwidth governor. Unified with web
+  // `useMeetingState.videoBitrateForPeerCount` so both platforms cap the mesh
+  // uplink identically as the call grows (a mesh sends N−1 copies of our video,
+  // so an uncapped uplink saturates → the "very unstable and laggy" report and
+  // starves audio). `peersRef.current.size` is the number of REMOTE peers.
+  // Tiered caps: ≤3 → 500 kbps, 4–6 → 300 kbps, 7+ → 150 kbps. Audio is
+  // prioritized separately (pinned at `AUDIO_MAX_BITRATE` in `setVideoBitrate`)
+  // and never governed down by peer count so voice always survives.
   const targetBitrateForPeerCount = useCallback((): number => {
     const peerCount = peersRef.current.size;
-    return peerCount <= 1 ? 800_000 : peerCount <= 3 ? 500_000 : 350_000;
+    if (peerCount <= 3) return 500_000;
+    if (peerCount <= 6) return 300_000;
+    return 150_000;
   }, []);
 
   const applyBitrateRampUp = useCallback(
     (entry: PeerEntry) => {
       const pc = entry.pc;
-      const INITIAL = 300_000;
       const TARGET = targetBitrateForPeerCount();
+      // Phase 4.1 — start low for a fast, stable establishment then ramp to the
+      // governor's ceiling. Clamp the start to TARGET so at high participant
+      // counts (7+ → 150 kbps ceiling) we never open ABOVE the ceiling and
+      // immediately congest the uplink.
+      const INITIAL = Math.min(300_000, TARGET);
       const STEPS = 3;
       const STEP_MS = 1000;
       entry.rampTimers?.forEach((t) => clearTimeout(t));
@@ -432,18 +594,117 @@ export function useMeetingMesh({
     });
   }, []);
 
-  const closePeer = useCallback((key: string) => {
-    const entry = peersRef.current.get(key);
-    if (!entry) return;
-    if (entry.disconnectTimer) clearTimeout(entry.disconnectTimer);
-    entry.rampTimers?.forEach((t) => clearTimeout(t));
-    try {
-      entry.pc.close();
-    } catch {
-      /* ignore */
-    }
-    peersRef.current.delete(key);
+  // ── Phase 5.1 — per-peer state-machine dispatch ──────────────────────────
+  // Drive `entry.phase` through the pure `peerConnectionReducer`. The reducer's
+  // `closed` phase is ABSORBING, so once `closePeer` dispatches CLOSED any later
+  // event (e.g. a late CONNECTED from a PC being torn down) is a no-op — the
+  // removed participant tile can never be resurrected. Returns the new phase so
+  // callers can guard on it. Mutating `entry.phase` (a ref-held object) is safe
+  // because the phase drives imperative teardown decisions, not React render.
+  const dispatchPeer = useCallback(
+    (entry: PeerEntry, event: PeerEvent): PeerPhase => {
+      entry.phase = peerConnectionReducer(entry.phase, event);
+      return entry.phase;
+    },
+    [],
+  );
+
+  const closePeer = useCallback(
+    (key: string) => {
+      const entry = peersRef.current.get(key);
+      if (!entry) return;
+      // Phase 5.1 — mark the entry terminally closed BEFORE we tear it down so
+      // any in-flight async callback still holding this `entry` (a pending
+      // createOffer/answer chain, a getStats tick, or the onconnectionstatechange
+      // callback firing a late "connected") sees `isPeerTerminal(entry.phase)`
+      // and refuses to revive the removed tile.
+      dispatchPeer(entry, { type: "CLOSED" });
+      if (entry.disconnectTimer) clearTimeout(entry.disconnectTimer);
+      if (entry.relayRetryTimer) clearTimeout(entry.relayRetryTimer);
+      // Phase 3.2 (G5) — clear the connect-timeout timer on teardown.
+      if (entry.connectTimeoutTimer) clearTimeout(entry.connectTimeoutTimer);
+      entry.rampTimers?.forEach((t) => clearTimeout(t));
+      try {
+        entry.pc.close();
+      } catch {
+        /* ignore */
+      }
+      peersRef.current.delete(key);
+    },
+    [dispatchPeer],
+  );
+
+  // ── Phase 2.3 (G4) — reliable mesh-signal send ───────────────────────────
+  // The bare `socket.send` returns false (dropping the frame) when the WS isn't
+  // OPEN — an offer / answer / ICE candidate produced during a reconnect window
+  // was silently lost, leaving a peer stuck on "Connecting…". Route every mesh
+  // signaling frame through `sendWithRetry` instead: on the happy path it sends
+  // synchronously (preserving order), and during a blip it retries until the
+  // socket reopens or the budget expires. Fire-and-forget (void) so the WebRTC
+  // callbacks (onicecandidate, createOffer chains) stay non-blocking.
+  const sendSignal = useCallback((data: any) => {
+    void socket.sendWithRetry("meeting_signal", data, {
+      timeoutMs: 6000,
+      retryEveryMs: 200,
+    });
   }, []);
+
+  // ── Phase 4.2 — outbound quality request (dedup) ─────────────────────────
+  // Ask a remote peer to send US a given video quality (`q`/`h`/`f`). Deduped
+  // via `lastRequestSentRef` so a steady state produces no WS traffic. Mirrors
+  // web `useMeetingState.requestPeerQuality`.
+  const sendRequestQuality = useCallback(
+    (peerKey: string, level: "q" | "h" | "f") => {
+      if (!peerKey || !["q", "h", "f"].includes(level)) return;
+      if (lastRequestSentRef.current.get(peerKey) === level) return;
+      lastRequestSentRef.current.set(peerKey, level);
+      socket.send("meeting_request_quality", {
+        meetingId: meetingIdRef.current,
+        targetUserId: peerKey,
+        level,
+      });
+    },
+    [],
+  );
+
+  // ── Phase 4.2 — apply a peer's inbound quality request to OUR sender ──────
+  // A remote asked us to send them `q`/`h`/`f`; cap our outbound video sender
+  // toward that peer accordingly, BOUNDED by the Phase 4.1 governor ceiling for
+  // the current call size (so a "full" request can never push our uplink past
+  // what N−1 peers afford). Audio is never touched. Mirrors web
+  // `useMeetingState.applyQualityCapForPeer`.
+  const applyQualityCapForPeer = useCallback(
+    (peerKey: string) => {
+      const entry = peersRef.current.get(peerKey);
+      if (!entry) return;
+      const level = requestedQualityRef.current.get(peerKey) || "h";
+      const ceiling = targetBitrateForPeerCount();
+      const maxBitrate =
+        level === "q"
+          ? Math.min(150_000, ceiling)
+          : level === "h"
+            ? Math.min(300_000, ceiling)
+            : ceiling;
+      try {
+        const senders =
+          typeof (entry.pc as any).getSenders === "function"
+            ? (entry.pc as any).getSenders()
+            : [];
+        for (const sender of senders) {
+          if (!sender?.track || sender.track.kind !== "video") continue;
+          const params = sender.getParameters?.();
+          if (!params) continue;
+          if (!params.encodings || params.encodings.length === 0)
+            params.encodings = [{}];
+          params.encodings[0].maxBitrate = maxBitrate;
+          sender.setParameters?.(params).catch?.(() => {});
+        }
+      } catch {
+        /* setParameters not critical */
+      }
+    },
+    [targetBitrateForPeerCount],
+  );
 
   // ── Create / reuse a peer connection toward `remoteUserId` ───────────────
   const createPeer = useCallback(
@@ -462,10 +723,20 @@ export function useMeetingMesh({
       }
 
       const pc = new RTCPeerConnection({
-        iceServers: iceServersRef.current,
+        // Phase 2.4 (G6) — strip the public Open Relay TURN entries when the
+        // server forbids the public fallback. STUN is always kept.
+        iceServers: applyPublicTurnPolicy(
+          iceServersRef.current,
+          iceAllowPublicRef.current,
+        ),
         bundlePolicy: "max-bundle",
         rtcpMuxPolicy: "require",
         iceCandidatePoolSize: 4,
+        // Phase 3.1 (P4.19) — once escalated, this peer's rebuilt PC gathers
+        // TURN-relay candidates only (corporate-proxy / symmetric-NAT lifeline).
+        ...(relayOnlyPeersRef.current.has(key)
+          ? { iceTransportPolicy: "relay" }
+          : {}),
       } as any);
 
       const remoteStream = new MediaStream();
@@ -476,6 +747,16 @@ export function useMeetingMesh({
         negotiationDone: false,
         disconnectTimer: null,
         rampTimers: [],
+        // Perfect Negotiation (Phase 2.1): deterministic politeness per peer.
+        // The lexicographically-greater id is the POLITE peer (rolls back on an
+        // offer collision); the other is IMPOLITE (ignores the colliding offer,
+        // keeps its own). Stable + symmetric so both sides agree.
+        polite: normId(selfIdRef.current) > key,
+        makingOffer: false,
+        // Phase 5.1 — fresh peer starts in `connecting`. Transitions are driven
+        // through `dispatchPeer` (the pure reducer) at each lifecycle point; the
+        // `closed` phase is absorbing so a late `connected` can't revive it.
+        phase: initialPeerPhase(),
       };
       peersRef.current.set(key, entry);
 
@@ -497,7 +778,7 @@ export function useMeetingMesh({
 
       (pc as any).onicecandidate = (e: any) => {
         if (e.candidate) {
-          socket.send("meeting_signal", {
+          sendSignal({
             meetingId: meetingIdRef.current,
             targetUserId: remoteUserId,
             signal: { type: "candidate", candidate: e.candidate.toJSON() },
@@ -506,6 +787,10 @@ export function useMeetingMesh({
       };
 
       (pc as any).ontrack = (e: any) => {
+        // Phase 5.1 — terminal-absorption guard. If this peer was already closed
+        // (participant_left / teardown dispatched CLOSED), a late `ontrack` from
+        // the PC being torn down must NOT re-`upsert` the removed tile.
+        if (isPeerTerminal(entry.phase)) return;
         const track = e.track;
         if (
           track &&
@@ -546,7 +831,7 @@ export function useMeetingMesh({
                 try {
                   const offer = await pc.createOffer({ iceRestart: true });
                   await pc.setLocalDescription(offer);
-                  socket.send("meeting_signal", {
+                  sendSignal({
                     meetingId: meetingIdRef.current,
                     targetUserId: remoteUserId,
                     signal: { type: "offer", sdp: (pc as any).localDescription },
@@ -562,13 +847,35 @@ export function useMeetingMesh({
 
       (pc as any).onconnectionstatechange = () => {
         const st = (pc as any).connectionState;
+        // Phase 5.1 — terminal-absorption guard. Once this peer has been closed
+        // (participant_left / teardown), a LATE connectionState transition from
+        // the PC being torn down (classically a "connected" that lands a beat
+        // after we removed the tile) must be a no-op — it can neither revive the
+        // removed participant nor mutate global status.
+        if (isPeerTerminal(entry.phase)) return;
         if (st === "connected") {
+          // Phase 5.1 — record the live phase (connecting/reconnecting →
+          // connected) through the pure reducer.
+          dispatchPeer(entry, { type: "CONNECTED" });
           entry.negotiationDone = true;
           entry.iceRestartAttempted = false;
           if (entry.disconnectTimer) {
             clearTimeout(entry.disconnectTimer);
             entry.disconnectTimer = null;
           }
+          // Phase 3.1 (P4.19) — connected in time; cancel the relay-first
+          // fast-retry so it can't tear down a good PC.
+          if (entry.relayRetryTimer) {
+            clearTimeout(entry.relayRetryTimer);
+            entry.relayRetryTimer = null;
+          }
+          // Phase 3.2 (G5) — connected in time; cancel the connect timeout and
+          // clear any "Couldn't connect" flag on the tile.
+          if (entry.connectTimeoutTimer) {
+            clearTimeout(entry.connectTimeoutTimer);
+            entry.connectTimeoutTimer = null;
+          }
+          upsertParticipant(remoteUserId, { connectFailed: false });
           setStatus("connected");
           // Ramp the video bitrate up now that the link is established.
           applyBitrateRampUp(entry);
@@ -581,6 +888,11 @@ export function useMeetingMesh({
             screenSharing: false,
           });
         } else if (st === "disconnected") {
+          // Phase 5.1 — a previously live peer lost its transport; record the
+          // recovering phase (connected → reconnecting) so state reflects the
+          // grace/ICE-restart window.
+          if (entry.phase === "connected")
+            dispatchPeer(entry, { type: "RECONNECTING" });
           // Grace period: a temporary network hiccup is common on mobile.
           if (entry.disconnectTimer) clearTimeout(entry.disconnectTimer);
           entry.disconnectTimer = setTimeout(() => {
@@ -592,6 +904,20 @@ export function useMeetingMesh({
             }
           }, 8000);
         } else if (st === "failed" || st === "closed") {
+          // Phase 5.1 — the PC failed on its own (ICE gave up). Record the
+          // recoverable `failed` phase (RETRY / relay rebuild can revive it).
+          dispatchPeer(entry, { type: "FAILED" });
+          // Phase 3.1 (P4.19) — the fast-retry timer is redundant once we've
+          // reached `failed`/`closed`.
+          if (entry.relayRetryTimer) {
+            clearTimeout(entry.relayRetryTimer);
+            entry.relayRetryTimer = null;
+          }
+          // Phase 3.2 (G5) — the connect-timeout timer is redundant too.
+          if (entry.connectTimeoutTimer) {
+            clearTimeout(entry.connectTimeoutTimer);
+            entry.connectTimeoutTimer = null;
+          }
           // Drop the peer's media; a participant_left or rejoin will rebuild.
           upsertParticipant(remoteUserId, { stream: null });
         }
@@ -609,22 +935,76 @@ export function useMeetingMesh({
             // a pair and the call hangs on "Connecting…". This is THE fix for
             // mobile-started meetings and the mobile→desktop "never connects"
             // direction.
+            //
+            // Mark our offer-in-flight window (Perfect Negotiation, Phase 2.1)
+            // so a colliding inbound offer arriving before setLocalDescription
+            // completes is still detected as glare by handleSignal.
+            entry.makingOffer = true;
+            // Phase 2.4 (G6) — gate the FIRST offer on real TURN so the initial
+            // negotiation never runs against the public-only fallback.
+            await waitForIceConfig();
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-            socket.send("meeting_signal", {
+            sendSignal({
               meetingId: meetingIdRef.current,
               targetUserId: remoteUserId,
               signal: { type: "offer", sdp: (pc as any).localDescription },
             });
           } catch {
             /* connection-state handler will surface failures */
+          } finally {
+            entry.makingOffer = false;
           }
         })();
       }
 
+      // Phase 3.1 (P4.19) — relay-first fast retry. On the INITIAL (non-relay)
+      // PC, arm a one-shot ~5s timer: if this peer hasn't reached `connected` by
+      // then (a UDP/STUN path a corporate proxy / symmetric NAT silently
+      // blackholes), rebuild that ONE peer TURN-only (`iceTransportPolicy:
+      // "relay"`, via `relayOnlyPeersRef`) and re-offer as the initiator. This
+      // beats waiting for react-native-webrtc's own ICE-`failed` (15–30s) so
+      // relay-required mobile networks connect promptly. Skipped when the PC is
+      // already relay-only.
+      if (!relayOnlyPeersRef.current.has(key)) {
+        entry.relayRetryTimer = setTimeout(() => {
+          entry.relayRetryTimer = null;
+          if (peersRef.current.get(key) !== entry) return;
+          if ((pc as any).connectionState === "connected") return;
+          if (relayOnlyPeersRef.current.has(key)) return;
+          relayOnlyPeersRef.current.add(key);
+          closePeer(key);
+          createPeer(remoteUserId, true);
+        }, 5000);
+      }
+
+      // Phase 3.2 (G5) — per-peer 30s connect timeout. If this peer STILL hasn't
+      // reached `connected` when it fires, flag the participant `connectFailed`
+      // so the tile shows "Couldn't connect — Retry" instead of an infinite
+      // spinner. Cleared on connect / teardown. Skipped for relay-only rebuilds
+      // (those inherit the original arm's window via the participant flag).
+      if (!relayOnlyPeersRef.current.has(key)) {
+        entry.connectTimeoutTimer = setTimeout(() => {
+          entry.connectTimeoutTimer = null;
+          const cur = peersRef.current.get(key);
+          if (cur && (cur.pc as any).connectionState === "connected") return;
+          // Phase 5.1 — the connect budget expired; move to the recoverable
+          // `failed` phase (guarded against a closed peer by the reducer).
+          if (cur && !isPeerTerminal(cur.phase))
+            dispatchPeer(cur, { type: "FAILED" });
+          upsertParticipant(remoteUserId, { connectFailed: true });
+        }, PEER_CONNECT_TIMEOUT_MS);
+      }
+
       return entry;
     },
-    [upsertParticipant, closePeer, applyBitrateRampUp],
+    [
+      upsertParticipant,
+      closePeer,
+      applyBitrateRampUp,
+      sendSignal,
+      waitForIceConfig,
+    ],
   );
 
   const flushPendingIce = useCallback(
@@ -651,15 +1031,39 @@ export function useMeetingMesh({
     ) => {
       const key = normId(fromUserId);
       if (signal.type === "offer") {
+        // Perfect Negotiation (Phase 2.1) glare guard: an offer arriving while
+        // our own offer is in flight (or we're not stable) is a collision. The
+        // IMPOLITE peer ignores it (keeps its own offer); the POLITE peer rolls
+        // back its local offer then accepts. This governs ALL re-negotiation
+        // (ICE restart, future track changes) and kills the glare deadlock (G3).
+        const entry = peersRef.current.get(key);
+        const offerCollision =
+          !!entry?.makingOffer ||
+          (pc as any).signalingState !== "stable";
+        if (offerCollision) {
+          if (entry && !entry.polite) {
+            // Impolite peer — ignore the colliding offer.
+            return;
+          }
+          try {
+            await (pc as any).setLocalDescription({ type: "rollback" });
+          } catch {
+            /* some impls auto-rollback on setRemoteDescription(offer) */
+          }
+        }
         await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
         // Attach our local tracks AFTER setRemoteDescription so they bind to
         // the offer's transceivers (replaceTrack) rather than creating new
         // unmatched m-lines — the key fix that lets mobile↔web/desktop connect.
         await attachLocalTracks(pc, localStreamRef.current);
         await flushPendingIce(key, pc);
+        // Phase 2.4 (G6) — gate the FIRST answer on real TURN (mirrors the
+        // initiator gate) so the initial negotiation never runs against the
+        // public-only fallback.
+        await waitForIceConfig();
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        socket.send("meeting_signal", {
+        sendSignal({
           meetingId: meetingIdRef.current,
           targetUserId: fromUserId,
           signal: { type: "answer", sdp: (pc as any).localDescription },
@@ -686,7 +1090,7 @@ export function useMeetingMesh({
         }
       }
     },
-    [flushPendingIce, attachLocalTracks],
+    [flushPendingIce, attachLocalTracks, sendSignal, waitForIceConfig],
   );
 
   // ── WS message handling ──────────────────────────────────────────────────
@@ -766,6 +1170,40 @@ export function useMeetingMesh({
                 : "connecting"
               : "connected",
           );
+
+          // Phase 2.2 — our peer-connection set is now built; tell the server
+          // we're ready so it replays any buffered offer/ICE for us and asks the
+          // other peers to (re)offer toward us (the `meeting_peer_ready`
+          // fan-out). Idempotent via Perfect Negotiation; guarded to fire once.
+          if (!readySentRef.current && hasPeersToConnect) {
+            readySentRef.current = true;
+            socket.send("meeting_ready", { meetingId: meetingIdRef.current });
+          }
+          break;
+        }
+        case "meeting_peer_ready": {
+          // Phase 2.2 — the server tells us a peer (re)joined / became ready,
+          // asking US to (re)offer toward them. If we already have a live PC
+          // whose localDescription is an offer, re-send it once (idempotent via
+          // Perfect Negotiation). If we have a PC but it isn't offering (we're
+          // the answerer side), do nothing — they will offer. If no PC exists
+          // yet, create one as initiator so a dropped bootstrap offer recovers.
+          const readyUserId = data.userId;
+          if (readyUserId == null || normId(readyUserId) === selfKey) break;
+          const pk = normId(readyUserId);
+          const entry = peersRef.current.get(pk);
+          if (entry) {
+            const ld = (entry.pc as any).localDescription;
+            if (ld && ld.type === "offer") {
+              sendSignal({
+                meetingId: meetingIdRef.current,
+                targetUserId: readyUserId,
+                signal: { type: "offer", sdp: ld },
+              });
+            }
+          } else {
+            createPeer(readyUserId, true);
+          }
           break;
         }
         case "meeting_signal": {
@@ -790,6 +1228,34 @@ export function useMeetingMesh({
           });
           break;
         }
+        case "meeting_request_quality": {
+          // Phase 4.2 — a remote asked US to send them a given video quality.
+          // Record it and re-cap our outbound video sender toward that peer
+          // (bounded by the governor ceiling).
+          const { fromUserId, level } = data;
+          if (
+            fromUserId == null ||
+            normId(fromUserId) === selfKey ||
+            !["q", "h", "f"].includes(level)
+          )
+            break;
+          const fk = normId(fromUserId);
+          requestedQualityRef.current.set(fk, level);
+          applyQualityCapForPeer(fk);
+          break;
+        }
+        case "meeting_audio_level": {
+          // Phase 4.2 — a remote broadcast its current speaking level. Store it
+          // (keyed by normalized id) for the active-speaker selector.
+          const { userId, level } = data;
+          if (userId == null || normId(userId) === selfKey) break;
+          if (typeof level !== "number") break;
+          audioLevelsRef.current.set(normId(userId), {
+            level,
+            at: Date.now(),
+          });
+          break;
+        }
         case "meeting_participant_left": {
           const { userId } = data;
           if (userId == null) break;
@@ -805,21 +1271,21 @@ export function useMeetingMesh({
           break;
       }
     },
-    [createPeer, handleSignal, upsertParticipant, closePeer, removeParticipant],
+    [
+      createPeer,
+      handleSignal,
+      upsertParticipant,
+      closePeer,
+      removeParticipant,
+      sendSignal,
+      applyQualityCapForPeer,
+    ],
   );
 
-  // ── Load ICE config up front ─────────────────────────────────────────────
+  // ── Load ICE config up front (Phase 2.4 — also warms Cloudflare TURN) ─────
   useEffect(() => {
-    getIceConfig()
-      .then((r) => {
-        const servers = (r.data as any)?.iceServers;
-        if (servers?.length) iceServersRef.current = servers;
-      })
-      .catch(() => {})
-      .finally(() => {
-        iceLoadedRef.current = true;
-      });
-  }, []);
+    void refreshIceConfig();
+  }, [refreshIceConfig]);
 
   // ── Acquire media on mount for the lobby preview (does NOT join) ──────────
   useEffect(() => {
@@ -870,6 +1336,14 @@ export function useMeetingMesh({
       if (cancelled) return;
       if (ok) {
         joinedRef.current = true;
+        // Phase 2.2 — reliable-delivery handshake: announce we're subscribed so
+        // the server replays any buffered offer/ICE and tells the other peers to
+        // (re)offer toward us via `meeting_peer_ready`. Distinct from
+        // `meeting_ready` (PCs built) — this is "WS attached + listening".
+        if (!subscribedRef.current) {
+          subscribedRef.current = true;
+          socket.send("meeting_subscribe", { meetingId });
+        }
         // Announce our initial mic/cam state once joined so peers render the
         // correct muted/video-off badges from the first frame.
         setTimeout(() => {
@@ -911,6 +1385,9 @@ export function useMeetingMesh({
       socket.send("meeting_leave", { meetingId: meetingIdRef.current });
     }
     joinedRef.current = false;
+    // Phase 2.2 — reset the handshake guards so a later (re)join re-subscribes.
+    subscribedRef.current = false;
+    readySentRef.current = false;
     try {
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
     } catch {
@@ -919,6 +1396,9 @@ export function useMeetingMesh({
     localStreamRef.current = null;
     peersRef.current.forEach((entry) => {
       if (entry.disconnectTimer) clearTimeout(entry.disconnectTimer);
+      if (entry.relayRetryTimer) clearTimeout(entry.relayRetryTimer);
+      // Phase 3.2 (G5) — clear the connect-timeout timer on teardown.
+      if (entry.connectTimeoutTimer) clearTimeout(entry.connectTimeoutTimer);
       entry.rampTimers?.forEach((t) => clearTimeout(t));
       try {
         entry.pc.close();
@@ -928,6 +1408,9 @@ export function useMeetingMesh({
     });
     peersRef.current.clear();
     pendingIceRef.current.clear();
+    // Phase 3.1 (P4.19) — clear relay-escalation flags so a later (re)join
+    // starts fresh on the normal (STUN+TURN) path.
+    relayOnlyPeersRef.current.clear();
   }, []);
 
   useEffect(() => {
@@ -976,6 +1459,280 @@ export function useMeetingMesh({
     setUsingFrontCamera((v) => !v);
   }, []);
 
+  // ── Phase 3.2 (G5) — manual per-peer rebuild ─────────────────────────────
+  // Invoked from the tile's "Retry" button after the 30s connect timeout flagged
+  // the peer `connectFailed`. Tear the peer down completely, clear its recovery
+  // bookkeeping (relay escalation + queued ICE), reset the tile to a fresh
+  // connecting state, rebuild it as the initiator, and re-announce readiness so
+  // the server replays/asks the other side to (re)offer toward us.
+  const retryPeer = useCallback(
+    (peerId: number | string) => {
+      const key = normId(peerId);
+      closePeer(key);
+      relayOnlyPeersRef.current.delete(key);
+      pendingIceRef.current.delete(key);
+      upsertParticipant(peerId, { connectFailed: false, stream: null });
+      createPeer(peerId, true);
+      socket.send("meeting_ready", { meetingId: meetingIdRef.current });
+    },
+    [closePeer, upsertParticipant, createPeer],
+  );
+
+  // ── Phase 3.3 (G7) — global network-change ICE restart ───────────────────
+  // The web mesh already ICE-restarts every stable PC on `online` +
+  // `connection.change`. Mobile's equivalent triggers are (a) the realtime
+  // socket reopening after a drop and (b) RN NetInfo reporting connectivity
+  // returned. On either, ICE-restart every stable PC — `createOffer({iceRestart:
+  // true})` re-gathers candidates on the new network path so a Wi-Fi↔cellular
+  // handoff (or VPN flap) recovers instead of the tiles freezing until the peer
+  // eventually hits `failed`. Perfect Negotiation (Phase 2.1) makes the
+  // resulting offers glare-safe.
+  const restartAllPeers = useCallback(() => {
+    for (const [key, entry] of peersRef.current) {
+      const pc = entry.pc;
+      if ((pc as any).signalingState !== "stable") continue;
+      (async () => {
+        try {
+          entry.makingOffer = true;
+          const offer = await pc.createOffer({ iceRestart: true });
+          await pc.setLocalDescription(offer);
+          sendSignal({
+            meetingId: meetingIdRef.current,
+            targetUserId: key,
+            signal: { type: "offer", sdp: (pc as any).localDescription },
+          });
+        } catch {
+          /* connection-state handler will surface failures */
+        } finally {
+          entry.makingOffer = false;
+        }
+      })();
+    }
+  }, [sendSignal]);
+
+  useEffect(() => {
+    if (!wantJoin) return;
+    // Socket reopened (reconnect after a drop) → Phase 5.2 reconnect
+    // orchestration + Phase 3.3 ICE restart. On a WS reopen the server may have
+    // dropped our meeting membership (grace-expiry) and any peer that (re)joined
+    // while we were offline won't know about us, so first RE-ANNOUNCE ourselves:
+    // re-send `meeting_join` (re-registers us + re-fetches the authoritative
+    // `existingPeers`, which `meeting_participant_joined` reconciles — pruning
+    // phantoms and rebuilding missing PCs) then `meeting_subscribe` (replays any
+    // buffered offer/ICE + fans out `meeting_peer_ready` so the others re-offer
+    // toward us). THEN ICE-restart the PCs we still hold so a same-membership
+    // blip recovers immediately. Perfect Negotiation (2.1) keeps it glare-safe.
+    const offOpen = socket.onOpen(() => {
+      const mid = meetingIdRef.current;
+      if (mid != null && joinedRef.current) {
+        void socket.sendWithRetry(
+          "meeting_join",
+          { meetingId: mid },
+          { timeoutMs: 8000, retryEveryMs: 300 },
+        );
+        socket.send("meeting_subscribe", { meetingId: mid });
+      }
+      restartAllPeers();
+    });
+    // RN NetInfo: connectivity returned (Wi-Fi↔cellular handoff / airplane off).
+    let wasConnected = true;
+    const offNet = NetInfo.addEventListener((state) => {
+      const nowConnected = !!state.isConnected;
+      if (nowConnected && !wasConnected) restartAllPeers();
+      wasConnected = nowConnected;
+    });
+    return () => {
+      try {
+        offOpen();
+      } catch {
+        /* ignore */
+      }
+      try {
+        offNet();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [wantJoin, restartAllPeers]);
+
+  // ── Phase 4.2 — audio-level sampling + broadcast ─────────────────────────
+  // Poll each connected peer's inbound-audio `getStats` to derive a coarse
+  // speaking level per REMOTE peer (react-native-webrtc has no Web-Audio
+  // AnalyserNode, so we approximate from the RTP audio energy/level delta). We
+  // also broadcast OUR own level via `meeting_audio_level` so web/desktop peers
+  // (which key their active-speaker selector off that message) see us speak.
+  // Stored into `audioLevelsRef` keyed by normalized id, same shape web uses.
+  const prevAudioStatsRef = useRef<
+    Map<string, { bytes: number; at: number }>
+  >(new Map());
+  useEffect(() => {
+    if (!wantJoin) return;
+    let cancelled = false;
+    const sample = async () => {
+      if (cancelled) return;
+      // Remote peers: derive a level from inbound-audio byte-rate delta (a
+      // proxy for "is this peer producing audio energy right now").
+      for (const [key, entry] of peersRef.current) {
+        try {
+          const stats: any = await (entry.pc as any).getStats?.();
+          if (!stats) continue;
+          let bytes = 0;
+          let audioLevel: number | null = null;
+          stats.forEach((r: any) => {
+            if (r.type === "inbound-rtp" && r.kind === "audio") {
+              bytes += r.bytesReceived || 0;
+              if (typeof r.audioLevel === "number")
+                audioLevel = r.audioLevel;
+            }
+          });
+          const now = Date.now();
+          let level = 0;
+          if (audioLevel != null) {
+            // Native audioLevel (0..1) is the most accurate when present.
+            level = audioLevel;
+          } else {
+            const prev = prevAudioStatsRef.current.get(key);
+            prevAudioStatsRef.current.set(key, { bytes, at: now });
+            if (prev && now > prev.at) {
+              const kbps =
+                ((bytes - prev.bytes) * 8) / (now - prev.at); // bits/ms ≈ kbps
+              // Opus at ~a few kbps floor when silent, up to ~48 when active;
+              // normalize into a rough 0..1 speaking proxy.
+              level = Math.max(0, Math.min(1, (kbps - 6) / 30));
+            }
+          }
+          audioLevelsRef.current.set(key, { level, at: now });
+        } catch {
+          /* getStats not critical */
+        }
+      }
+    };
+    const t = setInterval(sample, 400);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [wantJoin]);
+
+  // ── Phase 4.2 — broadcast OUR speaking level ─────────────────────────────
+  // Mirror web's local audio-level publisher so remote peers' active-speaker
+  // selectors can promote us. We derive our own level from our first outbound
+  // audio sender's getStats (audioLevel when available), throttled like web.
+  useEffect(() => {
+    if (!wantJoin || muted) return;
+    let cancelled = false;
+    let lastSent = 0;
+    const sample = async () => {
+      if (cancelled) return;
+      const entry = peersRef.current.values().next().value as
+        | PeerEntry
+        | undefined;
+      if (!entry) return;
+      try {
+        const stats: any = await (entry.pc as any).getStats?.();
+        if (!stats) return;
+        let level = 0;
+        stats.forEach((r: any) => {
+          if (
+            (r.type === "media-source" || r.type === "outbound-rtp") &&
+            r.kind === "audio" &&
+            typeof r.audioLevel === "number"
+          ) {
+            level = Math.max(level, r.audioLevel);
+          }
+        });
+        const now = Date.now();
+        if (level > 0.05 && now - lastSent > 500) {
+          lastSent = now;
+          socket.send("meeting_audio_level", {
+            meetingId: meetingIdRef.current,
+            level: +level.toFixed(3),
+          });
+        }
+      } catch {
+        /* getStats not critical */
+      }
+    };
+    const t = setInterval(sample, 300);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [wantJoin, muted]);
+
+  // ── Phase 4.2 — Active-speaker-driven video demotion at high counts ──────
+  // Parity with web `useMeetingState`. Below `HIGH_COUNT_VIDEO_THRESHOLD` remote
+  // peers the mesh can carry everyone's video: the dominant speaker gets full
+  // video (`f`) and the rest get mid (`h`). At/above the threshold we upgrade
+  // ONLY a bounded priority set (dominant speaker + recent speakers, capped at
+  // `MAX_PRIORITY_VIDEO_PEERS`) to full video and demote everyone else to `q`
+  // (thumbnail → effectively audio+avatar). Runs on a short interval so the
+  // dominant speaker and recent-speaker windows update even when nobody new is
+  // talking; the per-peer `sendRequestQuality` is deduped so a steady state
+  // produces no WS traffic. (Mobile has no explicit `presenterId` — screenshare
+  // isn't a mobile feature — so the priority set is speaker-driven only.)
+  useEffect(() => {
+    if (!wantJoin) return;
+    const applyPolicy = () => {
+      const remoteKeys = Array.from(peersRef.current.keys());
+      if (remoteKeys.length === 0) return;
+
+      const now = Date.now();
+      // Determine the current dominant speaker from fresh audio levels.
+      let dominant: string | null = null;
+      let best = 0;
+      for (const [uid, { level, at }] of audioLevelsRef.current) {
+        if (now - at > ACTIVE_SPEAKER_STALE_MS) continue;
+        if (level < ACTIVE_SPEAKER_LEVEL) continue;
+        if (!peersRef.current.has(uid)) continue;
+        if (level > best) {
+          best = level;
+          dominant = uid;
+        }
+      }
+      if (dominant) recentSpeakersRef.current.set(dominant, now);
+      // Prune expired recent-speaker entries so the priority set shrinks back.
+      for (const [uid, at] of recentSpeakersRef.current) {
+        if (now - at > RECENT_SPEAKER_WINDOW_MS)
+          recentSpeakersRef.current.delete(uid);
+      }
+
+      const highCount = remoteKeys.length >= HIGH_COUNT_VIDEO_THRESHOLD;
+
+      if (!highCount) {
+        // Small call — everyone fits. Dominant speaker gets full video; the
+        // rest get mid.
+        for (const key of remoteKeys) {
+          sendRequestQuality(key, key === dominant ? "f" : "h");
+        }
+        return;
+      }
+
+      // High count — build the bounded priority set: dominant speaker first,
+      // then the most-recent speakers, up to `MAX_PRIORITY_VIDEO_PEERS`.
+      const priority = new Set<string>();
+      if (dominant && priority.size < MAX_PRIORITY_VIDEO_PEERS)
+        priority.add(dominant);
+      if (priority.size < MAX_PRIORITY_VIDEO_PEERS) {
+        const recent = Array.from(recentSpeakersRef.current.entries())
+          .filter(([uid]) => peersRef.current.has(uid))
+          .sort((a, b) => b[1] - a[1]);
+        for (const [uid] of recent) {
+          if (priority.size >= MAX_PRIORITY_VIDEO_PEERS) break;
+          priority.add(uid);
+        }
+      }
+
+      for (const key of remoteKeys) {
+        sendRequestQuality(key, priority.has(key) ? "f" : "q");
+      }
+    };
+
+    applyPolicy();
+    const t = setInterval(applyPolicy, 2_000);
+    return () => clearInterval(t);
+  }, [wantJoin, sendRequestQuality]);
+
   return {
     localStream,
     participants,
@@ -989,5 +1746,6 @@ export function useMeetingMesh({
     switchCamera,
     join,
     leave,
+    retryPeer,
   };
 }

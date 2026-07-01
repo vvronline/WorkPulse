@@ -70,6 +70,9 @@ export default function MeetingRoom() {
         // Phase 5 — Mesh quality: active-speaker + receiver-driven bitrate.
         activeSpeakerId,
         requestPeerQuality,
+        // Phase 3.2 (G5) — manual per-peer rebuild for the "Couldn't connect —
+        // Retry" tile.
+        retryPeer,
     } = useMeetingState({
         meetingId: session?.meetingId,
         code: session?.code || code,
@@ -303,6 +306,7 @@ export default function MeetingRoom() {
                                         quality={connectionQualities.get(participant.userId)}
                                         isActiveSpeaker={!isLocal && participant.userId === activeSpeakerId}
                                         isMini
+                                        onRetry={!isLocal ? () => retryPeer(participant.userId) : undefined}
                                     />
                                 ))}
                             </div>
@@ -323,6 +327,7 @@ export default function MeetingRoom() {
                                        calls back here so the sender can flip
                                        to 'q' (off-screen) or 'h' (visible). */
                                     onVisibilityChange={!isLocal ? (level: any) => requestPeerQuality(participant.userId, level) : undefined}
+                                    onRetry={!isLocal ? () => retryPeer(participant.userId) : undefined}
                                 />
                             ))}
                         </div>

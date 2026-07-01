@@ -99,6 +99,25 @@ export const makeStyles = (theme: Theme) =>
       fontSize: 12,
       fontWeight: "500",
     },
+    // Phase 3.2 (G5) — "Couldn't connect — Retry" tile state. Shown after the
+    // 30s per-peer connect timeout fires instead of an infinite spinner.
+    tileFailedText: {
+      color: "rgba(255,255,255,0.7)",
+      fontSize: 12,
+      fontWeight: "600",
+      textAlign: "center",
+    },
+    tileRetryBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      backgroundColor: theme.primary,
+      borderRadius: 16,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      marginTop: 8,
+    },
+    tileRetryText: { color: "#fff", fontSize: 12, fontWeight: "700" },
     tileFooter: {
       position: "absolute",
       bottom: 6,
