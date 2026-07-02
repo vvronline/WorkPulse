@@ -80,31 +80,50 @@ function parseMasterUrl(): MasterConnConfig {
  * Evict the least-recently-used pool if we're over the limit, or any pool
  * that has been idle longer than IDLE_TIMEOUT_MS.
  */
+/** A pool is "busy" when it has checked-out clients or queued waiters —
+ *  evicting it would kill in-flight queries. */
+function isPoolBusy(entry: PoolEntry): boolean {
+    const p = entry.pool as Pool & { totalCount: number; idleCount: number; waitingCount: number };
+    return p.waitingCount > 0 || (p.totalCount - p.idleCount) > 0;
+}
+
 function evictIfNeeded(): void {
     const now = Date.now();
-    // First evict stale pools
+    // First evict stale pools (skip any with in-flight work)
     for (const [dbName, entry] of poolCache) {
-        if (now - entry.lastUsed > IDLE_TIMEOUT_MS) {
+        if (now - entry.lastUsed > IDLE_TIMEOUT_MS && !isPoolBusy(entry)) {
             logger.info({ dbName }, "Evicting idle tenant pool");
             entry.pool.end().catch(() => { });
             poolCache.delete(dbName);
         }
     }
-    // Then evict LRU if still over limit
+    // Then evict LRU if still over limit. Prefer idle pools; only touch a
+    // busy pool as a last resort when EVERY cached pool is busy (otherwise
+    // the cache could grow unbounded past MAX_POOLS and exceed the DB's
+    // connection budget).
     while (poolCache.size >= MAX_POOLS) {
-        let oldestKey: string | null = null;
-        let oldestTime = Infinity;
+        let oldestIdleKey: string | null = null;
+        let oldestIdleTime = Infinity;
+        let oldestAnyKey: string | null = null;
+        let oldestAnyTime = Infinity;
         for (const [dbName, entry] of poolCache) {
-            if (entry.lastUsed < oldestTime) {
-                oldestTime = entry.lastUsed;
-                oldestKey = dbName;
+            if (entry.lastUsed < oldestAnyTime) {
+                oldestAnyTime = entry.lastUsed;
+                oldestAnyKey = dbName;
+            }
+            if (!isPoolBusy(entry) && entry.lastUsed < oldestIdleTime) {
+                oldestIdleTime = entry.lastUsed;
+                oldestIdleKey = dbName;
             }
         }
-        if (oldestKey) {
-            logger.info({ dbName: oldestKey }, "Evicting LRU tenant pool");
-            poolCache.get(oldestKey)!.pool.end().catch(() => { });
-            poolCache.delete(oldestKey);
-        }
+        const victim = oldestIdleKey || oldestAnyKey;
+        if (!victim) break;
+        logger.info({ dbName: victim, wasBusy: !oldestIdleKey }, "Evicting LRU tenant pool");
+        // pool.end() waits for checked-out clients to be released before
+        // closing, so even the busy-pool fallback doesn't kill in-flight
+        // queries — it just stops new checkouts.
+        poolCache.get(victim)!.pool.end().catch(() => { });
+        poolCache.delete(victim);
     }
 }
 

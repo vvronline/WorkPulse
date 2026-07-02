@@ -54,7 +54,13 @@ async function authMiddleware(req: any, res: Response, next: NextFunction): Prom
         return res.status(401).json({ error: "No token provided" });
     }
     try {
-        const decoded: any = jwt.verify(token, process.env.JWT_SECRET);
+        // The tenant-resolution middleware already verified this exact token
+        // (same cookie-then-bearer priority) and stashed the payload on
+        // req.decodedToken. Reuse it to avoid a second jwt.verify() per
+        // request; fall back to verifying here (which surfaces the proper
+        // expired/invalid error paths) when tenant middleware didn't run or
+        // verification failed there.
+        const decoded: any = req.decodedToken || jwt.verify(token, process.env.JWT_SECRET);
         const tokenVersion = decoded.tv ?? 0;
         const isPlatformUser = !!decoded.platform;
         const isVirtualImpersonation = !!decoded.impersonated && !!decoded.is_virtual;

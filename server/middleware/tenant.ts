@@ -43,6 +43,9 @@ async function resolveFromJwt(req: any): Promise<number | null> {
 
     try {
         const decoded: any = jwt.verify(token, process.env.JWT_SECRET);
+        // Stash the verified payload so the auth middleware doesn't have to
+        // run a second jwt.verify() on the same token for the same request.
+        req.decodedToken = decoded;
         if (decoded?.tenant_id) {
             return decoded.tenant_id;
         }
@@ -72,10 +75,13 @@ async function resolveFromDomain(host: string | undefined): Promise<any> {
     const cached = await redis.get(cacheKey);
     if (cached) return cached === "null" ? null : cached;
 
-    // Query master DB
+    // Query master DB. SELECT * so this path returns the SAME shape as the
+    // JWT-path resolution (getTenantById). The previous explicit column list
+    // silently dropped `plan` (and `is_default`, `suspended_reason`), which
+    // made requireFeature()/requireMinPlan() evaluate against an undefined
+    // plan for every tenant reached via custom domain.
     const res = await masterQuery(
-        `SELECT id, slug, db_name, db_host, status, features, max_users, max_storage_mb
-         FROM tenants WHERE custom_domain = $1 AND status != 'deleted'`,
+        `SELECT * FROM tenants WHERE custom_domain = $1 AND status != 'deleted'`,
         [domain],
     );
     const tenant = res.rows[0] || null;
@@ -254,7 +260,11 @@ function requireMinPlan(minPlan: string) {
 async function checkUserLimit(req: any, res: Response, next: NextFunction): Promise<void | Response> {
     if (!req.tenant || !req.tenant.max_users) return next(); // no limit
     try {
-        const countRes = await req.db.query("SELECT COUNT(*) as count FROM users WHERE is_active = TRUE");
+        // Exclude synthetic Platform Inspector rows (hidden_from_directory) —
+        // support-session artifacts must not eat into the tenant's seat quota.
+        const countRes = await req.db.query(
+            "SELECT COUNT(*) as count FROM users WHERE is_active = TRUE AND hidden_from_directory = FALSE",
+        );
         const current = parseInt(countRes.rows[0].count, 10);
         if (current >= req.tenant.max_users) {
             return res.status(403).json({

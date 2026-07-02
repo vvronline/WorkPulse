@@ -16,6 +16,29 @@ if (!process.env.JWT_SECRET) {
     logger.fatal("JWT_SECRET environment variable is not set. Server cannot start.");
     process.exit(1);
 }
+// A short secret makes JWT forgery via brute-force feasible. Enforce a
+// minimum length in production so a weak secret can never ship silently.
+if (process.env.NODE_ENV === "production" && process.env.JWT_SECRET.length < 32) {
+    logger.fatal("JWT_SECRET must be at least 32 characters in production. Server cannot start.");
+    process.exit(1);
+}
+
+// ── Global crash handlers ──────────────────────────────────────────────────
+// Without these, a single unhandled promise rejection (Node ≥15 default) or a
+// sync throw outside Express (WS handlers, background jobs, timers) kills the
+// process with an unstructured stack trace. We log via pino so the crash is
+// visible in log aggregation, then exit on uncaughtException so the
+// orchestrator (Railway/Docker) restarts us into a clean state.
+if (process.env.NODE_ENV !== "test") {
+    process.on("unhandledRejection", (reason) => {
+        logger.error({ err: reason }, "Unhandled promise rejection");
+    });
+    process.on("uncaughtException", (err) => {
+        logger.fatal({ err }, "Uncaught exception — exiting so the process manager restarts us");
+        // Give pino a beat to flush the fatal line before exiting.
+        setTimeout(() => process.exit(1), 200);
+    });
+}
 
 import express from "express";
 const helmet = require("helmet");
@@ -256,8 +279,15 @@ app.use("/uploads", authMiddleware, async (req: any, res: Response, next: NextFu
     const orgMatch = req.path.match(/\/org_(\d+)\//);
     if (orgMatch) {
         const pathOrgId = parseInt(orgMatch[1], 10);
-        const user = (await req.db.query("SELECT org_id FROM users WHERE id = $1", [req.userId])).rows[0];
-        if (!user || user.org_id !== pathOrgId) {
+        try {
+            const user = (await req.db.query("SELECT org_id FROM users WHERE id = $1", [req.userId])).rows[0];
+            if (!user || user.org_id !== pathOrgId) {
+                return res.status(403).json({ error: "Forbidden" });
+            }
+        } catch (err) {
+            // Fail CLOSED: if the org check can't run (e.g. master context on a
+            // pure multi-tenant deploy has no `users` table), never serve the file.
+            (req.log || logger).warn({ err }, "uploads org check failed — denying");
             return res.status(403).json({ error: "Forbidden" });
         }
     }
@@ -280,18 +310,46 @@ app.use("/api", (req: Request, res: Response, next: NextFunction) => {
     return res.status(403).json({ error: "Missing CSRF header" });
 });
 
-// Build a Redis-backed store factory; falls back to in-memory when Redis is unavailable
+// Build a Redis-backed store; falls back to in-memory when Redis is unavailable.
+//
+// IMPORTANT: the Redis client is resolved LAZILY inside sendCommand. The
+// limiters below are constructed at module-eval time, but `redis.initRedis()`
+// only runs later inside bootstrap() — resolving the client eagerly here
+// would always find `null` and silently pin every limiter to the per-instance
+// MemoryStore (breaking distributed rate limiting on multi-instance deploys).
+// `rate-limit-redis` only calls sendCommand at request time, by which point
+// the client exists. If Redis is still unreachable at call time, the command
+// rejects and `passOnStoreError` lets the request through rather than 500ing.
 function makeStore(prefix: string) {
-    const redisClient = redis.getClient();
-    if (redisClient) {
-        return new RedisStore({ sendCommand: (...args: unknown[]) => (redisClient as any).call(...args), prefix: `rl:${prefix}:` });
-    }
-    return undefined; // express-rate-limit uses MemoryStore by default
+    // No REDIS_URL configured (tests, local dev, single-instance deploys):
+    // let express-rate-limit use its built-in MemoryStore.
+    if (!process.env.REDIS_URL) return undefined;
+    return new RedisStore({
+        sendCommand: (...args: unknown[]) => {
+            const client = redis.getClient();
+            if (!client) return Promise.reject(new Error("Redis unavailable"));
+            return (client as any).call(...args);
+        },
+        prefix: `rl:${prefix}:`,
+    });
 }
 
-// Per-tenant rate limiting: include tenantId in the key so tenants can't exhaust each other's quotas
-const tenantKeyGen = (req: any) => `${req.tenantId || "master"}:${req.ip}`;
-const rlOpts = (prefix: string, max: number) => ({ windowMs: 15 * 60 * 1000, max, store: makeStore(prefix), keyGenerator: tenantKeyGen, validate: { keyGeneratorIpFallback: false } });
+// Per-tenant rate limiting: include tenantId in the key so tenants can't
+// exhaust each other's quotas. IPv6 addresses are normalised to their /64
+// subnet via ipKeyGenerator — otherwise a single IPv6 client could rotate
+// through its (effectively unlimited) addresses to bypass the auth limiter.
+const { ipKeyGenerator } = rateLimit;
+const tenantKeyGen = (req: any) => `${req.tenantId || "master"}:${ipKeyGenerator(req.ip || "")}`;
+const rlOpts = (prefix: string, max: number) => ({
+    windowMs: 15 * 60 * 1000,
+    max,
+    store: makeStore(prefix),
+    keyGenerator: tenantKeyGen,
+    validate: { keyGeneratorIpFallback: false },
+    // Never take the API down because the rate-limit backend hiccuped —
+    // fail open (the in-code auth/lockout protections still apply).
+    passOnStoreError: true,
+});
 const authLimiter = rateLimit({ ...rlOpts("auth", 15), message: { error: "Too many attempts. Please try again later." } });
 const registerLimiter = rateLimit({ ...rlOpts("reg", 10), message: { error: "Too many registration attempts. Please try again later." } });
 const forgotPasswordLimiter = rateLimit({ ...rlOpts("fp", 5), message: { error: "Too many password reset attempts. Please try again later." } });
@@ -361,14 +419,26 @@ app.get("/api/health", async (req: Request, res: Response) => {
         await masterQuery("SELECT 1");
         const detail = req.query.detail === "true";
         if (detail) {
+            // Migrations are applied PER-TENANT DATABASE, not to the master DB
+            // (the master only carries them on legacy single-DB deployments).
+            // Report the applied count for every active tenant and flag the
+            // deployment degraded if ANY tenant is behind. The legacy master
+            // count is included only when master actually hosts tenant tables.
             const { expectedMigrationCount } = require("./utils/migrationRunner");
-            const migResult = await masterQuery("SELECT COUNT(*)::int AS count FROM _migrations");
-            const appliedCount = migResult.rows[0]?.count || 0;
-            const migrationsOk = appliedCount >= expectedMigrationCount;
+            const tenants: Record<string, number> = {};
+            let minApplied = Infinity;
+            const sweep = await forEachTenant(async (db: DbContext, tenant: any) => {
+                const r = await db.query("SELECT COUNT(*)::int AS count FROM _migrations");
+                const count = r.rows[0]?.count || 0;
+                tenants[tenant.slug || tenant.db_name] = count;
+                if (count < minApplied) minApplied = count;
+            }, { label: "health-detail", includeLegacyMaster: true });
+            if (minApplied === Infinity) minApplied = 0;
+            const migrationsOk = sweep.failed === 0 && (sweep.ok === 0 || minApplied >= expectedMigrationCount);
             return res.status(migrationsOk ? 200 : 503).json({
                 status: migrationsOk ? "ok" : "degraded",
                 time: new Date().toISOString(),
-                migrations: { applied: appliedCount, expected: expectedMigrationCount },
+                migrations: { expected: expectedMigrationCount, minApplied, tenants, unreachableTenants: sweep.failed },
             });
         }
         res.json({ status: "ok", time: new Date().toISOString() });
@@ -561,7 +631,7 @@ if (require.main === module) {
     (async () => {
         await bootstrap();
         const httpServer = http.createServer(app);
-        setupWebSocket(httpServer);
+        const wss = setupWebSocket(httpServer);
 
         // Collaboration WebSocket server (Yjs/Hocuspocus) on /collab path
         await createCollaborationServer(httpServer);
@@ -572,16 +642,39 @@ if (require.main === module) {
 
         initJobs({ autoClockOut, cleanupTokens });
 
+        let shuttingDown = false;
+        async function cleanupResources(): Promise<void> {
+            await shutdownJobs();
+            await redis.shutdown();
+            await destroyAllPools();
+            await pool.end();
+        }
         async function shutdown() {
+            // Re-entry guard: SIGTERM + SIGINT (or a repeated signal) must not
+            // run the cleanup twice — a double `pool.end()` throws.
+            if (shuttingDown) return;
+            shuttingDown = true;
             logger.info("Shutting down gracefully...");
+
+            // Long-lived WebSocket connections hold the HTTP server open
+            // indefinitely — `httpServer.close()` only stops NEW connections.
+            // Terminate WS clients so close() can actually complete.
+            try { wss?.clients?.forEach((client: any) => client.terminate()); } catch { /* best-effort */ }
+            try { httpServer.closeIdleConnections?.(); } catch { /* Node <18.2 */ }
+
+            const forceExit = setTimeout(async () => {
+                logger.warn("Graceful shutdown timed out — forcing exit");
+                try { await cleanupResources(); } catch { /* best-effort */ }
+                process.exit(0);
+            }, 5000);
+
             httpServer.close(async () => {
-                await shutdownJobs();
-                await redis.shutdown();
-                await destroyAllPools();
-                await pool.end();
+                clearTimeout(forceExit);
+                try { await cleanupResources(); } catch (err) {
+                    logger.error({ err }, "Cleanup during shutdown failed");
+                }
                 process.exit(0);
             });
-            setTimeout(async () => { await shutdownJobs(); await redis.shutdown(); await destroyAllPools(); await pool.end(); process.exit(1); }, 5000);
         }
         process.on("SIGTERM", shutdown);
         process.on("SIGINT", shutdown);
