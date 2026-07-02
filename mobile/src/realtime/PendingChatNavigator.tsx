@@ -10,23 +10,38 @@
  * writes the pendingChat store instead of firing a flaky `Linking.openURL` deep
  * link) needs a mounted listener to perform the navigation.
  *
- * This component:
- *   1. Subscribes to pendingChat SET events so a warm tap routes IMMEDIATELY.
- *   2. Also checks once on mount / when auth resolves (covers a route stashed
- *      just before this mounted, or one that arrived while unauthenticated).
+ * ROOT-CAUSE HARDENING ("tap works when minimized, but not after back-button
+ * exit / from the killed state"): the previous implementation CONSUMED the
+ * pending route and WIPED the persisted copy the moment it *scheduled* the
+ * `router.push` — before the push actually executed. But a notification tap
+ * fires the Notifee background event (and therefore `setPendingChat`) BEFORE
+ * the Android activity has resumed; a `router.push` dispatched while the app
+ * is not active is silently dropped by React Navigation. With the route
+ * already consumed, the tap was permanently lost and the app just restored
+ * whatever screen it was on (dashboard after a back-button exit; the
+ * dashboard redirect after a killed cold start whose staging landed late).
+ *
+ * The fix follows Signal-Android's "process the intent on resume" model:
+ *   1. NAVIGATE-THEN-CONSUME: the route stays staged until we VERIFY (via the
+ *      live pathname) that the target thread actually mounted. Only then is it
+ *      consumed + the persisted copy cleared. A dropped push leaves the route
+ *      intact for a retry.
+ *   2. APPSTATE RESUME RETRY: every transition to `active` re-runs the consume
+ *      logic (rehydrating from SecureStore when the in-memory copy is empty),
+ *      so a push that was dropped while the activity was still resuming is
+ *      retried the moment the app is genuinely in the foreground.
+ *   3. BOUNDED RETRIES: each staged route gets a few verification/retry
+ *      cycles; a route that can never land (e.g. auth lost) is abandoned after
+ *      the cap so it can't hijack a later app open (the persisted TTL also
+ *      bounds this to 60s).
  *
  * It routes a concrete conversation STRAIGHT to `/chat/[id]` (the exact 1:1/group
- * thread) rather than hopping through `/(tabs)/chat?openConversationId=…` and
- * relying on the chat tab's effect to then push the thread — that second hop was
- * unreliable on a cold/killed launch (the chat tab isn't mounted yet), landing
- * the user on the chat LIST instead of the tapped conversation. The thread's own
- * back handler (useChatThread.goBackToChatList) falls back to `/(tabs)/chat`, so
- * back/gesture still returns to the chat list instead of exiting the app. A 2+
- * unread GROUP-SUMMARY tap (no single target) still opens the chat LIST.
+ * thread). A 2+ unread GROUP-SUMMARY tap (no single target) opens the chat LIST.
  */
 
-import { useEffect } from "react";
-import { useRouter } from "expo-router";
+import { useEffect, useRef } from "react";
+import { AppState } from "react-native";
+import { usePathname, useRouter } from "expo-router";
 import { useAuth } from "../auth/AuthContext";
 import {
   consumePendingChat,
@@ -35,111 +50,212 @@ import {
   subscribePendingChat,
   loadPersistedPendingChat,
   clearPersistedPendingChat,
+  type PendingChatRoute,
 } from "./pendingChat";
 import { notificationLogger, NotificationState } from "../utils/notificationLogger";
 
+/** How long to wait after a push before verifying the pathname landed. */
+const VERIFY_DELAY_MS = 700;
+/** Max push attempts per staged route before giving up. */
+const MAX_ATTEMPTS = 4;
+
 export default function PendingChatNavigator() {
   const router = useRouter();
+  const pathname = usePathname();
   const { user, loading } = useAuth();
 
-  useEffect(() => {
-    // Guard so we never double-navigate for the same pending route (the mount
-    // check and the subscription could otherwise both fire).
-    let navigating = false;
+  // Live pathname readable from timers (avoids stale-closure reads during the
+  // post-push verification).
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
 
-    const routeToChat = (route: { conversationId: string; dedupeKey?: string; openChatList?: boolean }): boolean => {
-      if (navigating) {
-        if (route.dedupeKey) {
-          notificationLogger.info("pending_chat_navigation_deferred", {
-            source: "PendingChatNavigator",
-            dedupeKey: route.dedupeKey,
-            conversationId: route.conversationId,
-            metadata: { reason: "navigation_in_progress" },
-          });
-        }
-        return false;
+  // Attempt bookkeeping for the CURRENTLY staged route. Keyed by a stable
+  // route signature so a genuinely NEW tap resets the counter.
+  const attemptRef = useRef<{ key: string; count: number }>({ key: "", count: 0 });
+  // Re-entrancy guard so overlapping triggers (subscription + AppState +
+  // verification retry) never schedule duplicate pushes.
+  const navigatingRef = useRef(false);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const routeKey = (route: PendingChatRoute): string =>
+      route.openChatList && !route.conversationId
+        ? "chat:list"
+        : `chat:${route.conversationId}`;
+
+    const isAtTarget = (route: PendingChatRoute): boolean => {
+      const p = pathnameRef.current || "";
+      if (route.openChatList || !route.conversationId) {
+        // Chat list target: the tabs chat screen.
+        return p === "/chat" || p.endsWith("/chat");
       }
-      navigating = true;
-      // Defer one tick so the navigation tree is fully mounted before pushing.
-      setTimeout(() => {
-        try {
-          if (route.dedupeKey) {
-            notificationLogger.logStateTransition(route.dedupeKey, route.conversationId, NotificationState.NAVIGATION_STARTED, { target: "chat", source: "PendingChatNavigator" });
-          }
-          // A 2+ unread GROUP-SUMMARY tap (openChatList, no single target thread)
-          // opens the chat LIST — never the dashboard.
-          if (route.openChatList || !route.conversationId) {
-            router.push({ pathname: "/(tabs)/chat", params: {} });
-          } else {
-            // A concrete conversation → open the EXACT thread DIRECTLY instead of
-            // hopping through `/(tabs)/chat?openConversationId=…` and relying on the
-            // chat tab's effect to then push it. That second hop was unreliable on a
-            // cold/killed launch (the chat tab isn't mounted yet), landing the user
-            // on the chat LIST instead of the tapped conversation. The thread's own
-            // back handler (useChatThread.goBackToChatList) falls back to
-            // `/(tabs)/chat`, so back-navigation still returns to the chat list.
-            router.push({
-              pathname: "/chat/[id]",
-              params: { id: String(route.conversationId) },
-            });
-          }
-        } finally {
-          // Allow a subsequent (genuinely new) tap to navigate again.
-          navigating = false;
-          // If another tap arrived while navigation was in-flight, it remained
-          // pending instead of being consumed. Retry once the router is free.
-          setTimeout(() => {
-            tryConsume();
-          }, 0);
-        }
-      }, 0);
-      return true;
+      return p === `/chat/${route.conversationId}`;
     };
 
-    const tryConsume = () => {
+    const finalizeSuccess = (route: PendingChatRoute) => {
+      consumePendingChat();
+      void clearPersistedPendingChat();
+      attemptRef.current = { key: "", count: 0 };
+      if (route.dedupeKey) {
+        notificationLogger.logStateTransition(
+          route.dedupeKey,
+          String(route.conversationId || ""),
+          NotificationState.ROUTE_CONSUMED,
+          { source: "PendingChatNavigator" },
+        );
+      }
+    };
+
+    const tryConsume = async (trigger: string) => {
+      if (disposed || navigatingRef.current) return;
       // Only route when signed in; otherwise leave the route stashed so it is
       // consumed once auth resolves (the effect re-runs on `user` change).
       if (loading || !user) return;
-      const route = peekPendingChat();
-      // Accept a concrete conversationId OR an `openChatList` marker (2+ unread
-      // summary tap — routes to the chat LIST, never the dashboard).
-      if (!route || (!route.conversationId && !route.openChatList)) return;
-      const normalizedRoute = { ...route, conversationId: String(route.conversationId || "") };
-      if (!routeToChat(normalizedRoute)) return;
-      consumePendingChat();
-      void clearPersistedPendingChat();
-      if (route.dedupeKey) {
-        notificationLogger.logStateTransition(route.dedupeKey, String(route.conversationId), NotificationState.ROUTE_CONSUMED, { source: "PendingChatNavigator" });
+
+      // In-memory first; rehydrate the SecureStore copy when empty. This is
+      // what recovers a killed-state tap whose staging landed AFTER
+      // app/index.tsx's cold-start window, and a route from a previous retry
+      // cycle after the process was suspended.
+      let route = peekPendingChat();
+      if (!route || (!route.conversationId && !route.openChatList)) {
+        const persisted = await loadPersistedPendingChat();
+        if (disposed) return;
+        if (!persisted || (!persisted.conversationId && !persisted.openChatList)) return;
+        setPendingChat(persisted);
+        route = persisted;
       }
+
+      // Already showing the target (e.g. the cold-start redirect in
+      // app/index.tsx landed it, or a previous retry succeeded while this
+      // trigger was queued) → just consume, no push.
+      if (isAtTarget(route)) {
+        finalizeSuccess(route);
+        return;
+      }
+
+      // Attempt bookkeeping — reset for a new route, cap retries for the same.
+      const key = routeKey(route);
+      if (attemptRef.current.key !== key) {
+        attemptRef.current = { key, count: 0 };
+      }
+      if (attemptRef.current.count >= MAX_ATTEMPTS) {
+        notificationLogger.warn("pending_chat_navigation_abandoned", {
+          source: "PendingChatNavigator",
+          dedupeKey: route.dedupeKey,
+          conversationId: String(route.conversationId || ""),
+          metadata: { attempts: attemptRef.current.count, trigger },
+        });
+        // Give up: consume so a dead route can't hijack a later app open.
+        consumePendingChat();
+        void clearPersistedPendingChat();
+        attemptRef.current = { key: "", count: 0 };
+        return;
+      }
+      attemptRef.current.count += 1;
+
+      // A push dispatched while the app is NOT active is silently dropped by
+      // React Navigation (the exact failure after a back-button exit, where
+      // the tap event fires before the activity resumes). Don't burn the
+      // attempt — leave the route staged; the AppState `active` listener
+      // below re-triggers the moment the app is genuinely resumed.
+      if (AppState.currentState !== "active") {
+        attemptRef.current.count -= 1;
+        notificationLogger.info("pending_chat_navigation_deferred", {
+          source: "PendingChatNavigator",
+          dedupeKey: route.dedupeKey,
+          conversationId: String(route.conversationId || ""),
+          metadata: { reason: "app_not_active", appState: AppState.currentState, trigger },
+        });
+        return;
+      }
+
+      navigatingRef.current = true;
+      const targetRoute = route;
+      if (targetRoute.dedupeKey) {
+        notificationLogger.logStateTransition(
+          targetRoute.dedupeKey,
+          String(targetRoute.conversationId || ""),
+          NotificationState.NAVIGATION_STARTED,
+          { target: "chat", source: "PendingChatNavigator", attempt: attemptRef.current.count, trigger },
+        );
+      }
+
+      // Defer one tick so the navigation tree is fully mounted before pushing.
+      setTimeout(() => {
+        try {
+          if (targetRoute.openChatList || !targetRoute.conversationId) {
+            // 2+ unread GROUP-SUMMARY tap (no single target) → the chat LIST.
+            router.push({ pathname: "/(tabs)/chat", params: {} });
+          } else {
+            // Concrete conversation → open the EXACT thread DIRECTLY. The
+            // thread's back handler (useChatThread.goBackToChatList) falls
+            // back to `/(tabs)/chat`, so back still returns to the chat list.
+            router.push({
+              pathname: "/chat/[id]",
+              params: { id: String(targetRoute.conversationId) },
+            });
+          }
+        } catch (err) {
+          notificationLogger.warn("pending_chat_navigation_push_threw", {
+            source: "PendingChatNavigator",
+            dedupeKey: targetRoute.dedupeKey,
+            conversationId: String(targetRoute.conversationId || ""),
+            metadata: { error: err instanceof Error ? err.message : String(err) },
+          });
+        }
+
+        // NAVIGATE-THEN-CONSUME: verify the push actually LANDED before
+        // consuming. React Navigation can silently drop a push dispatched
+        // while the activity was still resuming — in that case the route
+        // stays staged and the next trigger (AppState active / this retry)
+        // tries again.
+        setTimeout(() => {
+          navigatingRef.current = false;
+          if (disposed) return;
+          if (isAtTarget(targetRoute)) {
+            finalizeSuccess(targetRoute);
+          } else {
+            notificationLogger.warn("pending_chat_navigation_not_landed", {
+              source: "PendingChatNavigator",
+              dedupeKey: targetRoute.dedupeKey,
+              conversationId: String(targetRoute.conversationId || ""),
+              metadata: {
+                attempt: attemptRef.current.count,
+                pathname: pathnameRef.current,
+              },
+            });
+            // Retry (bounded by MAX_ATTEMPTS in tryConsume).
+            void tryConsume("verify_retry");
+          }
+        }, VERIFY_DELAY_MS);
+      }, 0);
     };
 
     // 1) React immediately to a warm/background-but-alive tap.
     const unsubscribe = subscribePendingChat(() => {
-      tryConsume();
+      void tryConsume("subscription");
     });
 
-    // 2) Also check once now (a route may have been stashed just before mount,
-    //    or this effect re-ran because auth just resolved).
-    tryConsume();
+    // 2) SIGNAL-PARITY RESUME HOOK: retry whenever the app becomes ACTIVE.
+    //    This recovers the "back-button exit" tap (event fired before the
+    //    activity resumed → push dropped) and any killed-state staging that
+    //    landed after the cold-start window.
+    const appStateSub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void tryConsume("app_active");
+    });
 
-    // 3) SAFETY NET for the killed-state race: if the dashboard mounted before
-    //    the pending route was staged in MEMORY (the SecureStore write / the
-    //    dispatcher's getInitialNotification() read finished a beat after the
-    //    root redirect), the in-memory peek above finds nothing. Rehydrate the
-    //    PERSISTED route once and re-run — this guarantees a notification tap
-    //    always lands in the exact conversation, regardless of app state.
-    if (!loading && user && !peekPendingChat()) {
-      void loadPersistedPendingChat().then((persisted) => {
-        if (!persisted) return;
-        if (!persisted.conversationId && !persisted.openChatList) return;
-        // Only act on FRESH persisted routes (staged within the last minute)
-        // so a stale, never-cleared entry can't hijack a normal app open.
-        setPendingChat(persisted);
-        tryConsume();
-      });
-    }
+    // 3) Also check once now (a route may have been stashed just before mount,
+    //    or this effect re-ran because auth just resolved). tryConsume itself
+    //    rehydrates the persisted copy when the in-memory one is empty, so the
+    //    old separate one-shot SecureStore check is folded in.
+    void tryConsume("mount");
 
-    return unsubscribe;
+    return () => {
+      disposed = true;
+      unsubscribe();
+      appStateSub.remove();
+    };
   }, [user, loading, router]);
 
   return null;
