@@ -57,7 +57,7 @@ function classifySubmitErr(message: string, code?: string): { kind: SubmitErrKin
         (!code && lower.includes("face"));
     if (isLocation) return { kind: "location", title: "Location Mismatch" };
     if (isFace) return { kind: "face", title: "Face Mismatch" };
-    return { kind: "generic", title: "Clock-In Failed" };
+    return { kind: "generic", title: "Login Failed" };
 }
 
 interface ClockInPayload {
@@ -226,7 +226,7 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
         } catch (e) {
             const err = e as { response?: { data?: { error?: string; code?: string } } };
             const data = err?.response?.data;
-            const msg = data?.error || "Clock-in failed. Please try again.";
+            const msg = data?.error || "Login failed. Please try again.";
             setSubmitErr({ message: msg, code: data?.code });
             setStep("face");
         }
@@ -252,7 +252,7 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
         <div className={s.backdrop} onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose?.(); }}>
             <div className={s.modal} role="dialog" aria-modal="true">
                 <div className={s.head}>
-                    <h3><ShieldCheck size={18} /> Verify Clock-In</h3>
+                    <h3><ShieldCheck size={18} /> Verify Login</h3>
                     <button className={s.close} onClick={onClose} disabled={busy} aria-label="Close">
                         <X size={18} />
                     </button>
@@ -355,7 +355,7 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
                                 // rejection, so a mismatch doesn't auto-retry
                                 // into the face-attempt rate limit.
                                 autoCapture={!submitErr}
-                                captureLabel="Verify & Clock In"
+                                captureLabel="Verify & Login"
                                 capturingLabel="Verifying..."
                                 onCapture={handleFaceCapture}
                                 disabled={step === "submitting"}

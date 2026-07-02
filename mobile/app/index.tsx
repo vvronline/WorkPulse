@@ -90,6 +90,33 @@ export default function Index() {
         };
       }
 
+      // CONCRETE-THREAD PREFERENCE: when the launch resolved to the fuzzy
+      // "open chat list" summary route (2+ unread chats), the user may still
+      // have tapped a SPECIFIC child notification — its background PRESS event
+      // persists the exact conversation, but that async SecureStore write can
+      // land a beat AFTER the dispatcher's read. Do a short bounded re-check
+      // for a concrete pendingChat route and prefer it over the list, so a
+      // child tap always opens that exact thread. A genuine summary tap (no
+      // concrete route ever appears) still opens the chat list after ~600ms.
+      if (chat?.openChatList) {
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const concrete =
+            peekPendingChat() ?? (await loadPersistedPendingChat());
+          if (cancelled) return;
+          if (concrete?.conversationId && !concrete.openChatList) {
+            notificationLogger.info("cold_start_summary_upgraded_to_thread", {
+              source: "app_index_cold_start",
+              dedupeKey: concrete.dedupeKey,
+              conversationId: String(concrete.conversationId),
+              metadata: { attempt },
+            });
+            chat = concrete;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+
       // Bounded retry for the SecureStore-persisted route. On a LOCKED + KILLED
       // device the full-screen-intent AUTO-launches this activity the instant
       // the notification is posted; although displayIncomingCall persists the

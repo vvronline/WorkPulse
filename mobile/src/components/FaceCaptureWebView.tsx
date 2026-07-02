@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -22,10 +22,14 @@ import { useTheme } from "../theme/ThemeProvider";
  *
  * Flow:
  *   1. WebView opens the front camera via getUserMedia and shows a live preview.
- *   2. On "Capture", it runs TinyFaceDetector + FaceLandmark68 +
+ *   2. When `autoCapture` is on, a lightweight detector polls the live video
+ *      (~2x/sec) and automatically captures once a face has been steadily in
+ *      frame — no button press needed (mirrors the web client's FaceCapture
+ *      autoCapture behaviour). The manual button remains as a fallback.
+ *   3. On capture, it runs TinyFaceDetector + FaceLandmark68 +
  *      FaceRecognitionNet and posts a 128-length number[] back to RN via
  *      window.ReactNativeWebView.postMessage.
- *   3. RN forwards it to `onCapture(descriptor)`.
+ *   4. RN forwards it to `onCapture(descriptor)`.
  *
  * The raw camera frame NEVER leaves the device — only the embedding (which is
  * not reversible to a photo) is surfaced.
@@ -37,6 +41,10 @@ type Props = {
   onCapture: (descriptor: number[]) => void;
   onError?: (message: string) => void;
   disabled?: boolean;
+  /** Automatically capture once a face is steadily detected in frame. */
+  autoCapture?: boolean;
+  /** Bump this to re-arm the capture button after a failed submit. */
+  resetNonce?: number;
 };
 
 // face-api fork that ships a self-contained, version-matched model set.
@@ -53,10 +61,18 @@ const FACEAPI_VERSION = "1.7.15";
 const FACEAPI_CDN = `https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACEAPI_VERSION}/dist/face-api.js`;
 const MODEL_URL = `https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACEAPI_VERSION}/model`;
 
+// Auto-capture tuning (mirrors client/src/components/attendance/FaceCapture.tsx):
+// poll the video ~2x/sec with the cheap detector and fire once we've seen a
+// confident face on N consecutive polls (avoids capturing a half-turned face
+// mid-motion).
+const AUTO_POLL_MS = 500;
+const AUTO_CONSECUTIVE_HITS = 2;
+
 function buildHtml(
   theme: Theme,
   captureLabel: string,
   capturingLabel: string,
+  autoCapture: boolean,
 ): string {
   return `<!DOCTYPE html>
 <html>
@@ -116,6 +132,12 @@ function buildHtml(
   var btn = document.getElementById("btn");
   var stream = null;
   var modelsReady = false;
+  // Auto-capture loop state.
+  var autoCapture = ${autoCapture ? "true" : "false"};
+  var autoTimer = null;
+  var autoHits = 0;
+  var capturing = false;
+  var captured = false;
 
   function post(obj) {
     if (window.ReactNativeWebView) {
@@ -129,6 +151,52 @@ function buildHtml(
     post({ type: "error", message: msg });
   }
   function setStatus(msg) { statusEl.textContent = msg; }
+
+  function readyStatus() {
+    if (autoCapture) {
+      setStatus("Position your face in the frame");
+    } else {
+      setStatus("Center your face and tap " + ${JSON.stringify(captureLabel)});
+    }
+  }
+
+  function stopAuto() {
+    if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+    autoHits = 0;
+  }
+
+  // Cheap face-presence poll (detector only — no landmarks/descriptor).
+  // After ${AUTO_CONSECUTIVE_HITS} consecutive confident hits we run the
+  // full capture automatically.
+  async function autoPoll() {
+    if (!autoCapture || !modelsReady || capturing || captured) return;
+    try {
+      var det = await faceapi.detectSingleFace(
+        video,
+        new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 })
+      );
+      if (!autoCapture || capturing || captured) return;
+      if (det && det.score >= 0.5) {
+        autoHits++;
+        setStatus("Face detected — capturing…");
+        if (autoHits >= ${AUTO_CONSECUTIVE_HITS}) {
+          autoHits = 0;
+          capture();
+          return;
+        }
+      } else {
+        autoHits = 0;
+        readyStatus();
+      }
+    } catch (_) { /* model hiccup — keep polling */ }
+    autoTimer = setTimeout(autoPoll, ${AUTO_POLL_MS});
+  }
+
+  function scheduleAuto() {
+    stopAuto();
+    if (!autoCapture || !modelsReady || capturing || captured) return;
+    autoTimer = setTimeout(autoPoll, ${AUTO_POLL_MS});
+  }
 
   async function start() {
     try {
@@ -155,15 +223,18 @@ function buildHtml(
       });
       await Promise.all([modelsP, cameraP]);
       modelsReady = true;
-      setStatus("Center your face and tap " + ${JSON.stringify(captureLabel)});
+      readyStatus();
       btn.disabled = false;
+      scheduleAuto();
     } catch (e) {
       showError((e && e.message) ? e.message : "Camera access failed. Allow camera permission.");
     }
   }
 
   async function capture() {
-    if (!modelsReady) return;
+    if (!modelsReady || capturing) return;
+    capturing = true;
+    stopAuto();
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> ${capturingLabel}';
     setStatus("Detecting face…");
@@ -178,37 +249,54 @@ function buildHtml(
         showError("No face detected. Ensure good lighting and try again.");
         btn.disabled = false;
         btn.textContent = ${JSON.stringify(captureLabel)};
+        capturing = false;
+        scheduleAuto();
         return;
       }
       var descriptor = Array.prototype.slice.call(det.descriptor);
+      captured = true;
+      capturing = false;
       post({ type: "descriptor", descriptor: descriptor });
       setStatus("Captured ✓");
     } catch (e) {
       showError((e && e.message) ? e.message : "Face detection failed. Try again.");
       btn.disabled = false;
       btn.textContent = ${JSON.stringify(captureLabel)};
+      capturing = false;
+      scheduleAuto();
     }
   }
 
   function resetButton() {
     btn.disabled = false;
     btn.textContent = ${JSON.stringify(captureLabel)};
-    setStatus("Center your face and tap " + ${JSON.stringify(captureLabel)});
+    readyStatus();
   }
 
-  // Allow RN to re-arm the button after a failed submit.
-  document.addEventListener("message", function (ev) {
+  function handleRnMessage(ev) {
     try {
       var msg = JSON.parse(ev.data);
-      if (msg && msg.type === "reset") resetButton();
+      if (!msg) return;
+      if (msg.type === "reset") {
+        // Re-arm after a failed submit. "auto" (when present) toggles the
+        // auto-capture loop — RN disables it after the first server
+        // rejection so a mismatch doesn't auto-retry into the
+        // face-attempt rate limit.
+        captured = false;
+        capturing = false;
+        if (typeof msg.auto === "boolean") autoCapture = msg.auto;
+        resetButton();
+        scheduleAuto();
+      } else if (msg.type === "setAuto") {
+        if (typeof msg.auto === "boolean") autoCapture = msg.auto;
+        if (autoCapture) { scheduleAuto(); } else { stopAuto(); if (modelsReady && !capturing && !captured) readyStatus(); }
+      }
     } catch (_) {}
-  });
-  window.addEventListener("message", function (ev) {
-    try {
-      var msg = JSON.parse(ev.data);
-      if (msg && msg.type === "reset") resetButton();
-    } catch (_) {}
-  });
+  }
+
+  // RN → WebView messages (Android fires on document, iOS on window).
+  document.addEventListener("message", handleRnMessage);
+  window.addEventListener("message", handleRnMessage);
 
   btn.addEventListener("click", capture);
   start();
@@ -223,6 +311,8 @@ export default function FaceCaptureWebView({
   onCapture,
   onError,
   disabled,
+  autoCapture = false,
+  resetNonce = 0,
 }: Props) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -230,7 +320,37 @@ export default function FaceCaptureWebView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const html = buildHtml(theme, captureLabel, capturingLabel);
+  // Capture the initial autoCapture value once — later changes are pushed
+  // into the live WebView via postMessage instead of re-building the HTML
+  // (which would remount the WebView and restart the camera).
+  const initialAutoRef = useRef(autoCapture);
+  const html = useMemo(
+    () => buildHtml(theme, captureLabel, capturingLabel, initialAutoRef.current),
+    [theme, captureLabel, capturingLabel],
+  );
+
+  // Re-arm the in-WebView capture button after a failed submit. The parent
+  // bumps `resetNonce`; we forward the (possibly updated) autoCapture flag so
+  // the auto loop is disabled after the first server rejection.
+  const lastResetRef = useRef(resetNonce);
+  useEffect(() => {
+    if (resetNonce === lastResetRef.current) return;
+    lastResetRef.current = resetNonce;
+    webRef.current?.postMessage(
+      JSON.stringify({ type: "reset", auto: autoCapture }),
+    );
+  }, [resetNonce, autoCapture]);
+
+  // Keep the in-WebView auto-capture flag in sync when it changes without a
+  // reset (e.g. the parent toggles it off).
+  const lastAutoRef = useRef(autoCapture);
+  useEffect(() => {
+    if (autoCapture === lastAutoRef.current) return;
+    lastAutoRef.current = autoCapture;
+    webRef.current?.postMessage(
+      JSON.stringify({ type: "setAuto", auto: autoCapture }),
+    );
+  }, [autoCapture]);
 
   // `onPermissionRequest` is an Android-only prop not present in the shipped
   // type defs — pass it through an untyped object spread.
@@ -260,7 +380,9 @@ export default function FaceCaptureWebView({
 
   // Re-arm the in-WebView capture button (call after a failed submit).
   function reset() {
-    webRef.current?.postMessage(JSON.stringify({ type: "reset" }));
+    webRef.current?.postMessage(
+      JSON.stringify({ type: "reset", auto: autoCapture }),
+    );
   }
 
   return (

@@ -770,6 +770,9 @@ export default function ChatScreen() {
       item.last_format_type === "system" && item.last_metadata?.type === "call"
         ? callPreviewMeta(item.last_metadata)
         : null;
+    // Delivery tick for the caller's OWN last message — rendered on the
+    // right edge of the bottom row, directly under the timestamp.
+    const listTick = callPreview ? null : renderListTick(item);
     return (
       <Pressable
         key={item.id}
@@ -830,7 +833,6 @@ export default function ChatScreen() {
               </View>
             ) : attachment ? (
               <View style={styles.previewRow}>
-                {renderListTick(item)}
                 {attachment.icon}
                 <Text style={styles.preview} numberOfLines={1}>
                   {attachment.label}
@@ -838,12 +840,14 @@ export default function ChatScreen() {
               </View>
             ) : (
               <View style={styles.previewRow}>
-                {item.last_message ? renderListTick(item) : null}
                 <Text style={styles.preview} numberOfLines={1}>
                   {item.last_message || "No messages yet"}
                 </Text>
               </View>
             )}
+            {/* Delivery tick pinned to the row's right edge, directly under the
+                timestamp (web parity). */}
+            {listTick ? <View style={styles.listTick}>{listTick}</View> : null}
             {item.unread_count > 0 ? (
               <View style={styles.unread}>
                 <Text style={styles.unreadText}>
@@ -1507,6 +1511,9 @@ const makeStyles = (theme: Theme) =>
       gap: 8,
     },
     previewRow: { flex: 1, flexDirection: "row", alignItems: "center", gap: 5 },
+    // Right-edge slot for the own-message delivery tick so it sits directly
+    // under the timestamp in the top row.
+    listTick: { marginLeft: 6, flexShrink: 0 },
     preview: { flex: 1, fontSize: 13, color: theme.textSecondary },
     unread: {
       minWidth: 20,

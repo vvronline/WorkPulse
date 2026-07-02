@@ -2065,6 +2065,18 @@ class NotifeeService {
 
     if (!isPress && !isAction) return false;
 
+    // OBSERVABILITY-ONLY validation (root-cause fix for "tapping some users'
+    // message notifications does nothing / opens the wrong screen"): the strict
+    // validator hard-requires messageId + senderName + dedupeKey, but a tap on
+    // the per-conversation GROUP SUMMARY (which Android frequently delivers
+    // instead of the tapped child) carries only { conversationId, type,
+    // dedupeKey } — and some legacy/updated payloads omit fields too.
+    // Previously a failed validation `return false`d and the tap was SILENTLY
+    // DROPPED: no pending route staged, nothing navigated. Routing genuinely
+    // needs only the conversationId (Signal-Android's ConversationIntents
+    // model), so we now LOG the validation failure for observability but
+    // continue routing. Reply/mark-read actions below still no-op safely when
+    // their required fields are absent.
     const validationResult = NotificationPayloadValidator.validate(data, 'tap_handler');
     if (!validationResult.ok) {
       notificationLogger.warn('tap_payload_validation_failed', {
@@ -2075,10 +2087,16 @@ class NotifeeService {
           reason: validationResult.reason,
           missing: validationResult.missing,
           invalid: validationResult.invalid,
+          routedAnyway: true,
         },
       });
-      return false;
     }
+
+    // Stable fallback dedupeKey (same synthesis as the cold-start dispatcher)
+    // so logging/idempotency keep working when the payload omitted it.
+    const dedupeKey: string =
+      data.dedupeKey ||
+      (data.messageId ? `msg:${data.messageId}` : `chat:${conversationId}`);
 
     if (data.dedupeKey && conversationId) {
       notificationLogger.logNotificationTapped(data.dedupeKey, conversationId, data.messageId);
@@ -2251,7 +2269,7 @@ class NotifeeService {
     try {
       await persistPendingChat({
         conversationId: String(conversationId),
-        dedupeKey: data.dedupeKey,
+        dedupeKey,
         messageId: data.messageId,
       });
     } catch {
@@ -2259,7 +2277,7 @@ class NotifeeService {
     }
     setPendingChat({
       conversationId: String(conversationId),
-      dedupeKey: data.dedupeKey,
+      dedupeKey,
       messageId: data.messageId,
     });
     notificationLogger.info("notification_tap_route_staged", {
@@ -2275,8 +2293,8 @@ class NotifeeService {
     });
 
     // LOG: Tap event — route persisted to pending chat
-    if (data.dedupeKey && conversationId) {
-      notificationLogger.logStateTransition(data.dedupeKey, conversationId, NotificationState.ROUTE_PERSISTED, { action: 'body_tap_message' });
+    if (conversationId) {
+      notificationLogger.logStateTransition(dedupeKey, conversationId, NotificationState.ROUTE_PERSISTED, { action: 'body_tap_message' });
     }
 
     // Mark the conversation read on open (matches in-app behaviour).

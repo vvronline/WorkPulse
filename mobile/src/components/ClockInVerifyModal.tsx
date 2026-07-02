@@ -62,6 +62,8 @@ export default function ClockInVerifyModal({
   const [locErr, setLocErr] = useState<string | null>(null);
   const [submitErr, setSubmitErr] = useState<ClockInErrorInfo | null>(null);
   const [busy, setBusy] = useState(false);
+  // Bumped after a failed submit to re-arm the WebView capture button.
+  const [resetNonce, setResetNonce] = useState(0);
 
   useEffect(() => {
     if (!visible) return;
@@ -133,6 +135,10 @@ export default function ClockInVerifyModal({
       const info = clockInErrorInfo(e);
       setSubmitErr(info);
       setStep(info.kind === "location" && needsLocation ? "location" : "face");
+      // Re-arm the capture button; auto-capture stays off after the first
+      // rejection (autoCapture prop is now false) so a mismatch doesn't
+      // auto-retry into the face-attempt rate limit.
+      setResetNonce((n) => n + 1);
     }
   }
 
@@ -155,7 +161,7 @@ export default function ClockInVerifyModal({
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <ShieldCheck size={18} color={theme.primary} />
-              <Text style={styles.title}>Verify Clock-In</Text>
+              <Text style={styles.title}>Verify Login</Text>
             </View>
             <Pressable onPress={onClose} hitSlop={8} disabled={busy}>
               <X size={22} color={theme.textSecondary} />
@@ -267,7 +273,7 @@ export default function ClockInVerifyModal({
                 {step === "submitting" ? (
                   <View style={styles.submittingRow}>
                     <ActivityIndicator color={theme.primary} />
-                    <Text style={styles.submittingText}>Clocking in…</Text>
+                    <Text style={styles.submittingText}>Logging in…</Text>
                   </View>
                 ) : null}
               </>
@@ -284,7 +290,13 @@ export default function ClockInVerifyModal({
               pointerEvents={step === "location" ? "none" : "auto"}
             >
               <FaceCaptureWebView
-                captureLabel="Verify & Clock In"
+                // Auto-capture as soon as a face is steadily in frame — but
+                // only until the first server rejection, so a mismatch
+                // doesn't auto-retry into the face-attempt rate limit
+                // (mirrors the web client's ClockInVerifyModal).
+                autoCapture={!submitErr}
+                resetNonce={resetNonce}
+                captureLabel="Verify & Login"
                 capturingLabel="Verifying…"
                 onCapture={handleFaceCapture}
                 disabled={step !== "face"}

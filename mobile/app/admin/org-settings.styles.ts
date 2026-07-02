@@ -172,6 +172,47 @@ export const makeStyles = (theme: Theme) =>
     fontWeight: "700",
     color: theme.text,
   },
+  // Attendance: office address search (Nominatim)
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: theme.inputBg,
+    borderWidth: 1,
+    borderColor: theme.inputBorder,
+    borderRadius: theme.radiusSm,
+    paddingHorizontal: 12,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 12,
+    color: theme.text,
+    fontSize: 15,
+  },
+  searchResults: {
+    backgroundColor: theme.surface,
+    borderWidth: 1,
+    borderColor: theme.glassBorder,
+    borderRadius: theme.radiusSm,
+    overflow: "hidden",
+  },
+  searchResultRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.border,
+  },
+  searchResultText: { flex: 1, fontSize: 13, color: theme.text },
+  searchErr: {
+    fontSize: 12,
+    color: theme.danger,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  locNote: { fontSize: 12, color: theme.success },
   // Attendance: location + map
   locBtnRow: { flexDirection: "row", gap: 12 },
   mapHintRow: {
@@ -296,4 +337,5 @@ export const makeStyles = (theme: Theme) =>
   },
   brandingBannerText: { flex: 1, fontSize: 13, fontWeight: "600" },
 });
+
 

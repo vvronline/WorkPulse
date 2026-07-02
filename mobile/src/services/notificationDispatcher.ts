@@ -24,7 +24,11 @@ import {
   loadPersistedPendingCall,
   type PendingCallRoute,
 } from '../realtime/pendingCall';
-import { persistPendingChat, setPendingChat } from '../realtime/pendingChat';
+import {
+  persistPendingChat,
+  setPendingChat,
+  loadPersistedPendingChat,
+} from '../realtime/pendingChat';
 import {
   getPendingCallAction,
   clearPendingCallAction,
@@ -151,6 +155,46 @@ class NotificationDispatcherService {
         });
         this.state.initialized = true;
         return;
+      }
+
+      // CONCRETE-THREAD PREFERENCE (root-cause fix for "tapping a specific
+      // chat's notification opens the chat list instead of that thread" when
+      // 2+ chats are unread): with multiple unread conversations Android often
+      // returns the GROUP SUMMARY (openChatList) from getInitialNotification()
+      // even though the user tapped a SPECIFIC child. The child's background
+      // PRESS event, however, persists the EXACT conversation to the
+      // pendingChat store. If such a fresh concrete route exists, prefer it —
+      // and critically, do NOT let stageRoute() overwrite it with the fuzzy
+      // "open chat list" route. A genuine summary tap (no concrete child
+      // route) still opens the chat list.
+      if (route.openChatList) {
+        const persistedChat = await loadPersistedPendingChat();
+        if (persistedChat?.conversationId && !persistedChat.openChatList) {
+          const concrete: NotificationRoute = {
+            type: 'message',
+            conversationId: String(persistedChat.conversationId),
+            messageId: persistedChat.messageId,
+            timestamp: Date.now(),
+            dedupeKey:
+              persistedChat.dedupeKey || `chat:${persistedChat.conversationId}`,
+            sourceState,
+          };
+          notificationLogger.info('summary_route_replaced_by_concrete_child', {
+            source: 'dispatch',
+            dedupeKey: concrete.dedupeKey,
+            conversationId: concrete.conversationId,
+            metadata: { sourceState, reason: 'child_press_route_persisted' },
+          });
+          // Re-stage the concrete route (refreshes its in-memory copy +
+          // subscriber notification) and capture it instead of the list route.
+          setPendingChat({
+            conversationId: concrete.conversationId,
+            dedupeKey: concrete.dedupeKey,
+            messageId: concrete.messageId,
+          });
+          await this.captureRoute(concrete, sourceState, startTime);
+          return;
+        }
       }
 
       await this.stageRoute(route, payload, pressActionId);

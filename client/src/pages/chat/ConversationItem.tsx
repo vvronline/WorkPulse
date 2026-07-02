@@ -56,10 +56,12 @@ function ListTick({ conv, userId }: { conv: any; userId?: number | string }) {
     if (conv.last_format_type === "system" || conv.last_deleted) return null;
     const read = !!conv.last_message_read;
     const delivered = !!conv.last_message_delivered;
+    // Sits on the right edge of the preview row, directly under the timestamp.
     const style: CSSProperties = {
         display: "inline-flex",
         verticalAlign: "middle",
-        marginRight: "4px",
+        marginLeft: "auto",
+        paddingLeft: "6px",
         flexShrink: 0,
         color: read ? "var(--primary)" : "var(--text-muted, #8a8f98)",
     };
@@ -165,8 +167,15 @@ export default function ConversationItem({
                     {typingUsers[c.id] ? (
                         <span className={s.typing}>typing...</span>
                     ) : (
-                        <span className={c.unread_count > 0 ? s.unread : ""}>
-                            <ListTick conv={c} userId={userId} />
+                        <span
+                            className={c.unread_count > 0 ? s.unread : ""}
+                            style={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                minWidth: 0,
+                            }}
+                        >
                             {c.is_group && c.last_sender_name && !c.last_deleted
                                 ? `${c.last_sender_name.split(" ")[0]}: `
                                 : ""}
@@ -179,6 +188,7 @@ export default function ConversationItem({
                                     : "No messages yet"}
                         </span>
                     )}
+                    {!typingUsers[c.id] && <ListTick conv={c} userId={userId} />}
                     {c.unread_count > 0 && <span className={s.badge}>{c.unread_count}</span>}
                 </div>
             </div>

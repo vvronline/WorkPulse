@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
@@ -29,6 +29,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  Search,
   Trash2,
   UserCog,
   Wifi,
@@ -62,6 +63,11 @@ import {
   type OrgRole,
 } from "../../src/admin";
 import { getCurrentOrg } from "../../src/features";
+import {
+  reverseGeocode,
+  searchPlaces,
+  type PlaceResult,
+} from "../../src/utils/geocode";
 import { makeStyles } from "./org-settings.styles";
 
 const ACCENT_PRESETS = [
@@ -251,6 +257,20 @@ export default function OrgSettingsScreen() {
   const [officeRadius, setOfficeRadius] = useState("");
   const [officeAddress, setOfficeAddress] = useState("");
   const [locating, setLocating] = useState(false);
+  const [locNote, setLocNote] = useState<string | null>(null);
+  // Abort any in-flight reverse-geocode when a newer pick supersedes it, so
+  // an older (slower) lookup can't clobber the address of a newer location.
+  const reverseAbortRef = useRef<AbortController | null>(null);
+
+  // Office address search (OpenStreetMap Nominatim — mirrors the web's
+  // OfficeLocationSettings place search).
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<PlaceResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchErr, setSearchErr] = useState<string | null>(null);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Office Wi-Fi allow-list (Wi-Fi-first attendance).
   const [wifiVerifyOn, setWifiVerifyOn] = useState(false);
@@ -413,8 +433,97 @@ export default function OrgSettingsScreen() {
 
   /* ── Attendance verification ── */
 
+  /**
+   * Apply a freshly-picked location (from "use my location", a map tap, or a
+   * search result): store the rounded coords, then reverse-geocode to fill
+   * the office address so the pin and the human-readable address stay in
+   * sync however the location was chosen. Aborts any older lookup so a slow
+   * response can't overwrite a newer pick. Mirrors the web client's
+   * OfficeLocationSettings.applyPickedLocation.
+   */
+  async function applyPickedLocation(rawLat: number, rawLng: number) {
+    const roundedLat = Number(rawLat.toFixed(6));
+    const roundedLng = Number(rawLng.toFixed(6));
+    setOfficeLat(roundedLat.toFixed(6));
+    setOfficeLng(roundedLng.toFixed(6));
+
+    if (reverseAbortRef.current) reverseAbortRef.current.abort();
+    const ac = new AbortController();
+    reverseAbortRef.current = ac;
+    const resolved = await reverseGeocode(roundedLat, roundedLng, {
+      signal: ac.signal,
+    });
+    if (ac.signal.aborted) return;
+    if (resolved) {
+      setOfficeAddress(resolved);
+      setSearchQuery(resolved);
+    }
+  }
+
+  // Debounced Nominatim place search. Polite usage: 400 ms delay + abort on
+  // retype (same tuning as the web client).
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    const q = searchQuery.trim();
+    if (q.length < 3) {
+      setSearchResults([]);
+      setSearching(false);
+      setSearchErr(null);
+      return;
+    }
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        if (searchAbortRef.current) searchAbortRef.current.abort();
+        const ac = new AbortController();
+        searchAbortRef.current = ac;
+        setSearching(true);
+        setSearchErr(null);
+        const results = await searchPlaces(q, { signal: ac.signal });
+        setSearchResults(results);
+        setSearchOpen(true);
+      } catch (err: any) {
+        if (err?.name !== "AbortError") {
+          setSearchResults([]);
+          setSearchErr("Search failed. Please try again.");
+        }
+      } finally {
+        setSearching(false);
+      }
+    }, 400);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchQuery]);
+
+  function pickSearchResult(r: PlaceResult) {
+    const la = Number(r.lat);
+    const lo = Number(r.lon);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
+    setOfficeLat(la.toFixed(6));
+    setOfficeLng(lo.toFixed(6));
+    if (r.display_name) {
+      setOfficeAddress(r.display_name);
+      setSearchQuery(r.display_name);
+    }
+    setSearchOpen(false);
+    setSearchResults([]);
+  }
+
+  function clearSearch() {
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchOpen(false);
+    setSearchErr(null);
+  }
+
+  // Hard ceiling for the location acquisition — indoors a high-accuracy GPS
+  // fix can take forever; we always settle within this window (same pattern
+  // as src/utils/officeSignals.ts).
+  const LOCATE_TIMEOUT_MS = 12000;
+
   async function useMyLocation() {
     setLocating(true);
+    setLocNote(null);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
@@ -424,11 +533,46 @@ export default function OrgSettingsScreen() {
         );
         return;
       }
-      const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-      setOfficeLat(pos.coords.latitude.toFixed(6));
-      setOfficeLng(pos.coords.longitude.toFixed(6));
+      // Fast path: a recent cached fix returns instantly and works indoors.
+      let coords: { latitude: number; longitude: number; accuracy?: number | null } | null =
+        null;
+      try {
+        const last = await Location.getLastKnownPositionAsync({
+          maxAge: 60000,
+        });
+        if (last) coords = last.coords;
+      } catch {
+        /* fall through to an active request */
+      }
+      if (!coords) {
+        // Active request: Balanced accuracy (cell/Wi-Fi based) resolves
+        // indoors, raced against a hard timeout so this never hangs.
+        const pos = await Promise.race([
+          Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          }),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "Location request timed out. Move near a window and try again, or tap the map / search instead.",
+                  ),
+                ),
+              LOCATE_TIMEOUT_MS,
+            ),
+          ),
+        ]);
+        coords = pos.coords;
+      }
+      const acc = coords.accuracy;
+      setLocNote(
+        acc != null
+          ? `Location set (±${Math.round(acc)} m). Address filled from the pin — adjust if needed.`
+          : "Location set. Address filled from the pin — adjust if needed.",
+      );
+      // Fills lat/lng immediately, then reverse-geocodes the office address.
+      await applyPickedLocation(coords.latitude, coords.longitude);
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Failed to read current location");
     } finally {
@@ -1007,6 +1151,55 @@ export default function OrgSettingsScreen() {
               thumbColor="#fff"
             />
           </View>
+          {/* Office address search (Nominatim) — pick a result to fill the
+              address + coordinates, mirroring the web client. */}
+          <Text style={styles.fieldLabel}>Search office address</Text>
+          <View style={styles.searchWrap}>
+            <Search size={15} color={theme.textMuted} />
+            <TextInput
+              style={styles.searchInput}
+              value={searchQuery}
+              onChangeText={(t) => {
+                setSearchQuery(t);
+                setSearchOpen(true);
+              }}
+              onFocus={() => {
+                scrollFocusedIntoView();
+                if (searchResults.length > 0) setSearchOpen(true);
+              }}
+              placeholder="Search for a place or address"
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {searching ? (
+              <ActivityIndicator size="small" color={theme.primary} />
+            ) : searchQuery ? (
+              <Pressable onPress={clearSearch} hitSlop={8}>
+                <X size={15} color={theme.textMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+          {searchOpen && (searchResults.length > 0 || searchErr) ? (
+            <View style={styles.searchResults}>
+              {searchErr ? (
+                <Text style={styles.searchErr}>{searchErr}</Text>
+              ) : (
+                searchResults.map((r) => (
+                  <Pressable
+                    key={String(r.place_id)}
+                    style={styles.searchResultRow}
+                    onPress={() => pickSearchResult(r)}
+                  >
+                    <MapPin size={13} color={theme.textSecondary} />
+                    <Text style={styles.searchResultText} numberOfLines={2}>
+                      {r.display_name}
+                    </Text>
+                  </Pressable>
+                ))
+              )}
+            </View>
+          ) : null}
           <Text style={styles.fieldLabel}>Office address (optional)</Text>
           <TextInput
             style={styles.input}
@@ -1053,6 +1246,7 @@ export default function OrgSettingsScreen() {
               </Text>
             </Pressable>
           </View>
+          {locNote ? <Text style={styles.locNote}>{locNote}</Text> : null}
           <Text style={styles.fieldLabel}>Geofence radius (metres)</Text>
           <TextInput
             style={styles.input}
@@ -1102,8 +1296,9 @@ export default function OrgSettingsScreen() {
                         Number.isFinite(d.lat) &&
                         Number.isFinite(d.lng)
                       ) {
-                        setOfficeLat(Number(d.lat).toFixed(6));
-                        setOfficeLng(Number(d.lng).toFixed(6));
+                        // Sets lat/lng immediately, then reverse-geocodes to
+                        // keep the office address in sync with the pin.
+                        void applyPickedLocation(Number(d.lat), Number(d.lng));
                       }
                     } catch {
                       /* ignore malformed messages */

@@ -63,13 +63,13 @@ export function clockInErrorInfo(err: unknown): ClockInErrorInfo {
   if (!e?.response) {
     return {
       kind: "generic",
-      title: "Clock-In Failed",
+      title: "Login Failed",
       message:
         "Couldn't reach the server. Check your connection and try again.",
     };
   }
 
-  const msg = serverMessage || "Clock-in failed. Please try again.";
+  const msg = serverMessage || "Login failed. Please try again.";
 
   // Prefer the stable code; fall back to sniffing the message text.
   const lower = msg.toLowerCase();
@@ -90,5 +90,5 @@ export function clockInErrorInfo(err: unknown): ClockInErrorInfo {
   if (isFace) {
     return { kind: "face", title: "Face Mismatch", message: msg };
   }
-  return { kind: "generic", title: "Clock-In Failed", message: msg };
+  return { kind: "generic", title: "Login Failed", message: msg };
 }
