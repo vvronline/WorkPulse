@@ -132,7 +132,6 @@ App.jsx (lazy-loaded pages wrapped in Suspense → PageSkeleton fallback)
 │
 ├── PUBLIC ROUTES (redirect to / if authenticated)
 │   ├── /login                   → Login.jsx
-│   ├── /register                → Register.jsx
 │   ├── /forgot-password         → ForgotPassword.jsx
 │   └── /reset-password/:token   → ResetPassword.jsx
 │
@@ -156,8 +155,13 @@ App.jsx (lazy-loaded pages wrapped in Suspense → PageSkeleton fallback)
 │   ├── /admin                   → Admin.jsx  (minRole: hr_admin)
 │   └── /manager                 → ManagerDashboard.jsx  (minRole: team_lead, or has_reports)
 │
-└── /* catch-all                 → Navigate to /
+└── /* catch-all                 → null for keep-alive paths (rendered by KeepAlive),
+                                   Navigate to / for genuinely unknown URLs,
+                                   Navigate to /login when unauthenticated
 ```
+
+> **Note:** there is no `/register` route — self-serve registration was removed.
+> User enrollment is admin-only (Admin → Add People, or platform console for tenants).
 
 ### Client Folder Structure
 
@@ -308,7 +312,6 @@ client/src/
 │
 ├── pages/
 │   ├── Login.jsx                  # Login form
-│   ├── Register.jsx               # Registration form
 │   ├── ForgotPassword.jsx         # Forgot password flow
 │   ├── ResetPassword.jsx          # Reset password (via email token)
 │   ├── SetEmail.jsx               # Set email for OAuth users
@@ -1012,8 +1015,8 @@ Multi-participant meeting rooms with WebRTC mesh topology.
 ```
 api.js function groups:
 │
-├── Auth (7)
-│   register, login, logoutUser, refreshToken, forgotPassword, resetPassword, getRegistrationMode
+├── Auth (5)
+│   login, logoutUser, refreshToken, forgotPassword, resetPassword
 │
 ├── Tracker (14)
 │   getStatus, clockIn, breakStart, breakEnd, clockOut,
@@ -1056,8 +1059,6 @@ api.js function groups:
 │   updateUserAssignment, toggleUserActive, deleteAdminUser, adminResetPassword,
 │   getRoleChangeRequests, approveRoleChange, rejectRoleChange, cancelRoleChange,
 │   getAuditLogs, getAdminStats,
-│   getRegistrationSettings, updateRegistrationSettings,
-│   getInviteCodes, createInviteCode, deactivateInviteCode,
 │   getAdminTaskLabels, createAdminTaskLabel, updateAdminTaskLabel, deleteAdminTaskLabel,
 │   importUsers, getPayPeriods, createPayPeriod, deletePayPeriod
 │

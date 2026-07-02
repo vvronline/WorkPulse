@@ -63,7 +63,7 @@ const NAV_INDEX: NavItem[] = [
     { icon: RefreshCw, title: "Role Requests", sub: "Pending role change requests", path: "/admin?tab=role-requests", keywords: "role promotion request pending", minRole: "hr_admin" },
     { icon: Wallet, title: "Payroll", sub: "Pay periods & payroll export", path: "/admin?tab=payroll", keywords: "pay salary export hours period payroll", minRole: "hr_admin" },
     { icon: Building, title: "Org Structure", sub: "Departments, teams & org chart", path: "/admin?tab=structure", keywords: "departments teams structure chart", minRole: "super_admin" },
-    { icon: Building, title: "Tenant Management", sub: "Manage tenants, organizations & databases", path: "/admin?tab=tenants", keywords: "org tenant company organizations database", minRole: "platform_admin" },
+    { icon: Building, title: "Tenant Management", sub: "Manage tenants, organizations & databases", path: "/tenants", keywords: "org tenant company organizations database platform console", minRole: "platform_admin" },
     { icon: ClipboardList, title: "Leave Policies", sub: "Configure leave quotas & accrual", path: "/attendance#leaves", keywords: "policy accrual quota configure sick", minRole: "hr_admin" },
     { icon: Users, title: "All Leave Balances", sub: "View all employees' leave balances", path: "/attendance#leaves", keywords: "all balances employees leave", minRole: "hr_admin" },
 ];

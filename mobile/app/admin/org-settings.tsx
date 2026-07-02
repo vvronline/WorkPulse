@@ -31,7 +31,6 @@ import {
   RotateCcw,
   Trash2,
   UserCog,
-  UserPlus,
   Wifi,
   X,
 } from "lucide-react-native";
@@ -47,35 +46,23 @@ import { useBranding, useTheme } from "../../src/theme/ThemeProvider";
 import { useAuth } from "../../src/auth/AuthContext";
 import { uploadUrl } from "../../src/config";
 import {
-  createInviteCode,
   createOrgRole,
-  deactivateInviteCode,
   deleteBrandingLogo,
   deleteOrgRole,
   getBranding,
   getEmailTemplates,
-  getInviteCodes,
   getOrgRoles,
-  getRegistrationSettings,
   revertEmailTemplate,
   updateBrandingAccent,
   updateEmailTemplate,
   updateOrgRole,
   updateOrgSettings,
-  updateRegistrationSettings,
   uploadBrandingLogo,
   type EmailTemplate,
-  type InviteCode,
   type OrgRole,
 } from "../../src/admin";
 import { getCurrentOrg } from "../../src/features";
 import { makeStyles } from "./org-settings.styles";
-
-const REGISTRATION_MODES = [
-  { value: "open", label: "Open — anyone can register" },
-  { value: "invite", label: "Invite only" },
-  { value: "closed", label: "Closed — admins create users" },
-];
 
 const ACCENT_PRESETS = [
   "#2383e2",
@@ -229,7 +216,6 @@ function workDaysToCsv(set: Set<number>): string {
 }
 
 // Stable empty references for read-only, query-derived lists.
-const EMPTY_CODES: InviteCode[] = [];
 const EMPTY_ROLES: OrgRole[] = [];
 const EMPTY_TEMPLATES: EmailTemplate[] = [];
 
@@ -286,9 +272,6 @@ export default function OrgSettingsScreen() {
   } | null>(null);
   const [brandingSaving, setBrandingSaving] = useState(false);
 
-  // Registration
-  const [regMode, setRegMode] = useState("open");
-
   // Roles
   const [roleModal, setRoleModal] = useState(false);
   const [editingRole, setEditingRole] = useState<OrgRole | null>(null);
@@ -306,27 +289,18 @@ export default function OrgSettingsScreen() {
   const { data: orgData, isLoading: loading } = useQuery({
     queryKey: ["admin", "orgSettings"],
     queryFn: async () => {
-      const [orgR, brandR, regR, codesR, rolesR, tmplR] =
-        await Promise.allSettled([
-          getCurrentOrg(),
-          getBranding(),
-          getRegistrationSettings(),
-          getInviteCodes(),
-          getOrgRoles(),
-          getEmailTemplates(),
-        ]);
+      const [orgR, brandR, rolesR, tmplR] = await Promise.allSettled([
+        getCurrentOrg(),
+        getBranding(),
+        getOrgRoles(),
+        getEmailTemplates(),
+      ]);
       const org =
         orgR.status === "fulfilled" && orgR.value.data ? orgR.value.data : null;
       const branding =
         brandR.status === "fulfilled" && brandR.value.data
           ? brandR.value.data
           : null;
-      const registration =
-        regR.status === "fulfilled" ? (regR.value.data?.mode ?? null) : null;
-      const inviteCodes =
-        codesR.status === "fulfilled" && Array.isArray(codesR.value.data)
-          ? codesR.value.data
-          : EMPTY_CODES;
       const roles =
         rolesR.status === "fulfilled"
           ? (rolesR.value.data?.roles ?? EMPTY_ROLES)
@@ -338,8 +312,6 @@ export default function OrgSettingsScreen() {
       return {
         org,
         branding,
-        registration,
-        inviteCodes,
         roles,
         emailTemplates,
       };
@@ -347,7 +319,6 @@ export default function OrgSettingsScreen() {
   });
 
   // Read-only, query-derived lists.
-  const inviteCodes = orgData?.inviteCodes ?? EMPTY_CODES;
   const roles = orgData?.roles ?? EMPTY_ROLES;
   const templates = orgData?.emailTemplates ?? EMPTY_TEMPLATES;
 
@@ -389,7 +360,6 @@ export default function OrgSettingsScreen() {
       if (b.accent_color) setAccent(b.accent_color);
       setLogoUrl(b.logo_url ?? null);
     }
-    if (orgData.registration) setRegMode(orgData.registration);
   }, [orgData]);
 
   /* ── General ── */
@@ -720,55 +690,6 @@ export default function OrgSettingsScreen() {
     } finally {
       setBrandingSaving(false);
     }
-  }
-
-  /* ── Registration ── */
-
-  async function saveRegMode(mode: string | number | null) {
-    if (!mode) return;
-    setRegMode(String(mode));
-    try {
-      await updateRegistrationSettings(String(mode));
-    } catch (e: any) {
-      Alert.alert("Error", e?.response?.data?.error || "Failed to update");
-    }
-  }
-
-  async function newInviteCode() {
-    setBusy(true);
-    try {
-      await createInviteCode({ expires_in_days: 7 });
-      await queryClient.invalidateQueries({
-        queryKey: ["admin", "orgSettings"],
-      });
-    } catch (e: any) {
-      Alert.alert(
-        "Error",
-        e?.response?.data?.error || "Failed to create invite code",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function removeInviteCode(c: InviteCode) {
-    Alert.alert("Deactivate code", `Deactivate "${c.code}"?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Deactivate",
-        style: "destructive",
-        onPress: () =>
-          deactivateInviteCode(c.id)
-            .then(() =>
-              queryClient.invalidateQueries({
-                queryKey: ["admin", "orgSettings"],
-              }),
-            )
-            .catch((e: any) =>
-              Alert.alert("Error", e?.response?.data?.error || "Failed"),
-            ),
-      },
-    ]);
   }
 
   /* ── Roles ── */
@@ -1382,57 +1303,6 @@ export default function OrgSettingsScreen() {
               {busy ? "Saving…" : "Save attendance settings"}
             </Text>
           </Pressable>
-        </View>
-      ) : null}
-
-      {/* ── Registration ── */}
-      {isSuper ? (
-        <View style={styles.section}>
-          <View style={styles.sectionTitleRow}>
-            <UserPlus size={15} color={theme.textSecondary} />
-            <Text style={styles.sectionTitle}>Registration</Text>
-          </View>
-          <Dropdown
-            label="Registration mode"
-            value={regMode}
-            options={REGISTRATION_MODES}
-            onChange={saveRegMode}
-          />
-          <View style={styles.subHeaderRow}>
-            <Text style={styles.subHeader}>Invite codes</Text>
-            <Pressable style={styles.addBtn} onPress={newInviteCode}>
-              <Plus size={14} color={theme.primary} />
-              <Text style={styles.addBtnText}>Generate</Text>
-            </Pressable>
-          </View>
-          {inviteCodes.length === 0 ? (
-            <Text style={styles.hint}>No invite codes.</Text>
-          ) : (
-            inviteCodes.map((c) => (
-              <View key={c.id} style={styles.itemRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.codeText}>{c.code}</Text>
-                  <Text style={styles.itemMeta}>
-                    {c.is_active === false ? "inactive · " : ""}
-                    {c.uses ?? 0}
-                    {c.max_uses ? `/${c.max_uses}` : ""} uses
-                    {c.expires_at
-                      ? ` · expires ${new Date(c.expires_at).toLocaleDateString()}`
-                      : ""}
-                  </Text>
-                </View>
-                {c.is_active !== false ? (
-                  <Pressable
-                    style={styles.iconBtn}
-                    onPress={() => removeInviteCode(c)}
-                    hitSlop={6}
-                  >
-                    <Trash2 size={15} color={theme.danger} />
-                  </Pressable>
-                ) : null}
-              </View>
-            ))
-          )}
         </View>
       ) : null}
 

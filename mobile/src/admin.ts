@@ -328,43 +328,6 @@ export function updateBrandingAccent(accent_color: string) {
   return api.put("/branding", { accent_color });
 }
 
-/* ───────────────────────── Admin: Registration settings ───────────────────────── */
-
-export function getRegistrationSettings() {
-  return api.get<{ mode: string }>("/admin/registration-settings");
-}
-
-export function updateRegistrationSettings(mode: string) {
-  return api.put("/admin/registration-settings", { mode });
-}
-
-export type InviteCode = {
-  id: number;
-  code: string;
-  role?: string;
-  max_uses?: number | null;
-  uses?: number;
-  expires_at?: string | null;
-  created_at?: string;
-  is_active?: boolean;
-};
-
-export function getInviteCodes() {
-  return api.get<InviteCode[]>("/admin/invite-codes");
-}
-
-export function createInviteCode(data: {
-  role?: string;
-  max_uses?: number;
-  expires_in_days?: number;
-}) {
-  return api.post<InviteCode>("/admin/invite-codes", data);
-}
-
-export function deactivateInviteCode(id: number | string) {
-  return api.delete(`/admin/invite-codes/${id}`);
-}
-
 /* ───────────────────────── Platform Access (impersonation) ───────────────────────── */
 
 // Mirrors server/routes/platformAccess.ts `publicRow()`.

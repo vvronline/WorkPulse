@@ -1,4 +1,4 @@
-import axios from "axios";
+ import axios from "axios";
 import type { AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from "axios";
 import NProgress from "nprogress";
 import "nprogress/nprogress.css";
@@ -63,7 +63,6 @@ export const trendingGiphy = (type: "gifs" | "stickers" = "gifs") =>
     API.get<{ results: GiphyMedia[] }>("/giphy/trending", { params: { type } });
 
 // Auth
-export const register = (data: AnyData) => API.post("/auth/register", data);
 export const login = (data: AnyData) => API.post("/auth/login", data);
 export const logoutUser = () => API.post("/auth/logout");
 export const refreshToken = () => API.post("/auth/refresh");
@@ -471,14 +470,6 @@ export const cancelRoleChange = (id: number | string) =>
     API.post(`/admin/role-requests/${id}/cancel`);
 export const getAuditLogs = (params?: Params) => API.get("/admin/audit-logs", { params });
 export const getAdminStats = () => API.get("/admin/stats");
-export const getRegistrationSettings = () => API.get("/admin/registration-settings");
-export const updateRegistrationSettings = (mode: string) =>
-    API.put("/admin/registration-settings", { mode });
-export const getInviteCodes = () => API.get("/admin/invite-codes");
-export const createInviteCode = (data: AnyData) => API.post("/admin/invite-codes", data);
-export const deactivateInviteCode = (id: number | string) =>
-    API.delete(`/admin/invite-codes/${id}`);
-export const getRegistrationMode = () => API.get("/auth/registration-mode");
 export const getAdminTaskLabels = () => API.get("/admin/task-labels");
 export const createAdminTaskLabel = (data: AnyData) => API.post("/admin/task-labels", data);
 export const updateAdminTaskLabel = (id: number | string, data: AnyData) =>

@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect } from "react";
+ import React, { Suspense, lazy, useEffect } from "react";
 import {
   BrowserRouter,
   Routes,
@@ -92,34 +92,48 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   return !isAuthenticated ? <>{children}</> : <Navigate to="/" />;
 }
 
+// Keep-alive paths that map to static protected pages
+const KEEP_ALIVE_PATHS = [
+  "/",
+  "/attendance",
+  "/tasks",
+  "/calendar",
+  "/notes",
+  "/chat",
+  "/admin",
+  "/manager",
+  "/organization",
+  "/set-email",
+  "/tenants",
+  // Legacy redirect paths — must stay in this list so KeepAlive remains mounted
+  // during the brief redirect transition; without it Chat unmounts and resets
+  // call state / closes the WebSocket, breaking in-progress calls.
+  "/leaves",
+  "/analytics",
+  "/manual-entry",
+  "/leave-policy",
+];
+
 function KeepAliveRoutes() {
   const { pathname } = useLocation();
-
-  // Keep-alive paths that map to static protected pages
-  const KEEP_ALIVE_PATHS = [
-    "/",
-    "/attendance",
-    "/tasks",
-    "/calendar",
-    "/notes",
-    "/chat",
-    "/admin",
-    "/manager",
-    "/organization",
-    "/set-email",
-    "/tenants",
-    // Legacy redirect paths — must stay in this list so KeepAlive remains mounted
-    // during the brief redirect transition; without it Chat unmounts and resets
-    // call state / closes the WebSocket, breaking in-progress calls.
-    "/leaves",
-    "/analytics",
-    "/manual-entry",
-    "/leave-policy",
-  ];
 
   const isKeepAlivePath = KEEP_ALIVE_PATHS.includes(pathname);
 
   return isKeepAlivePath ? <KeepAlive /> : null;
+}
+
+/**
+ * Catch-all handler. Keep-alive pages (/, /admin, /chat, …) are rendered by
+ * the globally-mounted <KeepAliveRoutes /> and intentionally have NO <Route>
+ * entry, so the "*" route matches them — render null so the keep-alive page
+ * shows through. Any OTHER unknown URL is a genuine 404: redirect home
+ * instead of leaving the user on a blank shell.
+ */
+function CatchAll() {
+  const { isAuthenticated } = useAuth() as any;
+  const { pathname } = useLocation();
+  if (!isAuthenticated) return <Navigate to="/login" />;
+  return KEEP_ALIVE_PATHS.includes(pathname) ? null : <Navigate to="/" replace />;
 }
 
 function AppRoutes() {
@@ -274,10 +288,7 @@ function AppRoutes() {
               path="/leave-policy"
               element={<Navigate to="/attendance#leaves" replace />}
             />
-            <Route
-              path="*"
-              element={isAuthenticated ? null : <Navigate to="/login" />}
-            />
+            <Route path="*" element={<CatchAll />} />
           </Routes>
         </Suspense>
       </ErrorBoundary>

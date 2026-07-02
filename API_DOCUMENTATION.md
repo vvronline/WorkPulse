@@ -46,11 +46,24 @@ Base path: `/api/auth`
 ### GET `/api/auth/registration-mode`
 Get the current registration mode for the platform.
 
+> **Deprecated** — self-serve registration has been removed from all clients
+> (web, mobile, desktop). User enrollment is admin-only: tenant admins create
+> users via Admin → Add People (`POST /api/admin/users` / bulk import), and
+> platform admins provision users via the platform console
+> (`POST /api/admin/tenants/:id/users`). The endpoint remains for backward
+> compatibility only.
+
 - **Auth**: None
 - **Response**: `{ mode: "open" | "closed" | "invite_only" }`
 
 ### POST `/api/auth/register`
 Register a new user account.
+
+> **Deprecated** — no first-party client calls this endpoint anymore (the
+> registration UI was removed). It is retained server-side for backward
+> compatibility and is effectively disabled unless the tenant's
+> `registration_mode` is explicitly set to `open` or `invite_only`
+> (default is `invite_only`, requiring an admin-generated code).
 
 - **Auth**: None
 - **Rate Limit**: 10/15min
