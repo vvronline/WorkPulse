@@ -463,6 +463,8 @@ class PushNotificationService {
             senderId: number;
             senderName: string;
             senderAvatar?: string;
+            isGroup?: boolean;
+            groupName?: string;
             messagePreview: string;
             unreadCount?: number; // T031: Server-authoritative unread count
         },
@@ -479,6 +481,10 @@ class PushNotificationService {
 
         const preview = messageData.messagePreview.substring(0, 150);
         const unreadCount = messageData.unreadCount || 1;
+    const isGroup = Boolean(messageData.isGroup);
+    const groupName = (messageData.groupName || "").trim();
+    const notificationTitle = isGroup ? groupName || "Group" : messageData.senderName;
+    const notificationBody = isGroup ? `${messageData.senderName}: ${preview}` : preview;
 
         // ANDROID DATA-ONLY (messages): chat messages are sent DATA-ONLY on
         // Android (no top-level `notification` block, no `android.notification`)
@@ -503,18 +509,20 @@ class PushNotificationService {
             // NOT applied to the Android multicast because androidDataOnly is set
             // below (see sendToDevices).
             notification: {
-                title: messageData.senderName,
-                body: preview,
+                title: notificationTitle,
+                body: notificationBody,
             },
             androidDataOnly: true,
             data: this.buildCommonData({
                 type: "chat_message",
-                title: messageData.senderName,
+                title: notificationTitle,
                 body: preview,
                 conversationId: String(messageData.conversationId),
                 messageId: String(messageData.messageId),
                 senderId: String(messageData.senderId),
                 senderName: messageData.senderName,
+                isGroup: String(isGroup),
+                groupName,
                 // Carry the sender's avatar so the mobile client can render it as
                 // the notification largeIcon (chat-avatar parity with calls, which
                 // already send callerAvatar). Empty string when the sender has no
@@ -540,8 +548,8 @@ class PushNotificationService {
                 payload: {
                     aps: {
                         alert: {
-                            title: messageData.senderName,
-                            body: preview,
+                            title: notificationTitle,
+                            body: notificationBody,
                         },
                         badge: unreadCount,
                         sound: "default",

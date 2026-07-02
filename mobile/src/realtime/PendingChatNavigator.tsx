@@ -46,7 +46,6 @@ import { useAuth } from "../auth/AuthContext";
 import {
   consumePendingChat,
   peekPendingChat,
-  setPendingChat,
   subscribePendingChat,
   loadPersistedPendingChat,
   clearPersistedPendingChat,
@@ -122,7 +121,6 @@ export default function PendingChatNavigator() {
         const persisted = await loadPersistedPendingChat();
         if (disposed) return;
         if (!persisted || (!persisted.conversationId && !persisted.openChatList)) return;
-        setPendingChat(persisted);
         route = persisted;
       }
 

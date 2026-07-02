@@ -16,7 +16,6 @@ import {
   consumePendingChat,
   peekPendingChat,
   loadPersistedPendingChat,
-  clearPersistedPendingChat,
   type PendingChatRoute,
 } from "../src/realtime/pendingChat";
 import { notificationLogger, NotificationState } from "../src/utils/notificationLogger";
@@ -139,7 +138,10 @@ export default function Index() {
       if (!route && (chat?.conversationId || chat?.openChatList)) {
         notificationDispatcher.consumeRoute();
         consumePendingChat();
-        void clearPersistedPendingChat();
+        // Do not clear the persisted copy here. The root redirect can race with
+        // auth hydration or Android activity resume after a killed/back-button
+        // notification launch. PendingChatNavigator clears it only after the
+        // target /chat route is actually mounted, leaving a retry path alive.
         if (chat.dedupeKey) {
           notificationLogger.logStateTransition(chat.dedupeKey, String(chat.conversationId), NotificationState.ROUTE_CONSUMED, { source: "app_index_cold_start" });
         }

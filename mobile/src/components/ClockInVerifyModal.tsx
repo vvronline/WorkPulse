@@ -1,5 +1,5 @@
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -19,6 +19,7 @@ import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import FaceCaptureWebView from "./FaceCaptureWebView";
 import { getOfficeSignals, type Position } from "../utils/officeSignals";
+import { getCurrentOrg } from "../features";
 import { clockIn, getTrackerStatus, type ClockInPayload } from "../tracker";
 import {
   clockInErrorInfo,
@@ -33,6 +34,30 @@ type Props = {
   onClose: () => void;
   onSuccess: () => void;
 };
+
+type OfficeGeofence = { lat: number; lng: number; radiusM: number };
+
+/** Great-circle distance between two coordinates, in metres. */
+function haversineM(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function formatDistance(m: number): string {
+  if (m >= 1000) return `${(m / 1000).toFixed(1)} km`;
+  return `${Math.round(m)} m`;
+}
 
 /**
  * RN equivalent of client/src/components/attendance/ClockInVerifyModal.tsx.
@@ -60,10 +85,19 @@ export default function ClockInVerifyModal({
   );
   const [location, setLocation] = useState<Position | null>(null);
   const [locErr, setLocErr] = useState<string | null>(null);
+  // True when the client-side geofence pre-check (or a server geofence
+  // rejection) determined the user is outside the office radius — the
+  // location step then shows a clear "you are X from the office" error
+  // instead of the spinner, and hides "Continue anyway" (the server would
+  // reject it anyway).
+  const [outsideGeofence, setOutsideGeofence] = useState(false);
   const [submitErr, setSubmitErr] = useState<ClockInErrorInfo | null>(null);
   const [busy, setBusy] = useState(false);
   // Bumped after a failed submit to re-arm the WebView capture button.
   const [resetNonce, setResetNonce] = useState(0);
+  // Org office coordinates + radius, fetched in parallel with the GPS
+  // request so we can geofence-check locally BEFORE running the face scan.
+  const orgGeoRef = useRef<Promise<OfficeGeofence | null> | null>(null);
 
   useEffect(() => {
     if (!visible) return;
@@ -71,21 +105,67 @@ export default function ClockInVerifyModal({
     setStep(needsLocation ? "location" : "face");
     setLocation(null);
     setLocErr(null);
+    setOutsideGeofence(false);
     setSubmitErr(null);
     setBusy(false);
     if (needsLocation) {
+      // Kick off the org geofence fetch in parallel with the GPS request.
+      orgGeoRef.current = fetchOrgGeofence();
       requestSignals();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
+  async function fetchOrgGeofence(): Promise<OfficeGeofence | null> {
+    try {
+      const { data } = await getCurrentOrg();
+      const lat = Number(data?.office_latitude);
+      const lng = Number(data?.office_longitude);
+      const radius = Number(data?.office_radius_m);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      return {
+        lat,
+        lng,
+        radiusM: Number.isFinite(radius) && radius > 0 ? radius : 200,
+      };
+    } catch {
+      // Org fetch failed — skip the local pre-check; server stays
+      // authoritative on submit.
+      return null;
+    }
+  }
+
   async function requestSignals() {
     setLocErr(null);
+    setOutsideGeofence(false);
     setBusy(true);
     try {
       const { location: loc, error } = await getOfficeSignals();
       if (loc) {
         setLocation(loc);
+        // Client-side geofence pre-check: if the org's office coordinates are
+        // known and the fix (even allowing for its accuracy) is clearly
+        // outside the radius, fail fast with a specific message INSTEAD of
+        // wasting the user's time on a face scan the server will reject.
+        const office = await (orgGeoRef.current ?? Promise.resolve(null));
+        if (office) {
+          const dist = haversineM(
+            loc.latitude,
+            loc.longitude,
+            office.lat,
+            office.lng,
+          );
+          const acc = loc.accuracy ?? 0;
+          if (dist - acc > office.radiusM) {
+            setOutsideGeofence(true);
+            setLocErr(
+              `You're not at the office — you are ~${formatDistance(dist)} away ` +
+                `(allowed radius ${office.radiusM} m). Move to the office and ` +
+                `try again, or switch to remote mode.`,
+            );
+            return;
+          }
+        }
         setStep("face");
       } else {
         setLocErr(error?.message || "Could not get your location.");
@@ -134,7 +214,16 @@ export default function ClockInVerifyModal({
       // can fix it (move closer / re-scan their face).
       const info = clockInErrorInfo(e);
       setSubmitErr(info);
-      setStep(info.kind === "location" && needsLocation ? "location" : "face");
+      if (info.kind === "location" && needsLocation) {
+        // Show the server's geofence rejection ON the location step —
+        // previously we switched to the location step without an error, so
+        // it rendered the "Detecting your location…" spinner forever.
+        setOutsideGeofence(true);
+        setLocErr(info.message);
+        setStep("location");
+      } else {
+        setStep("face");
+      }
       // Re-arm the capture button; auto-capture stays off after the first
       // rejection (autoCapture prop is now false) so a mismatch doesn't
       // auto-retry into the face-attempt rate limit.
@@ -145,6 +234,7 @@ export default function ClockInVerifyModal({
   // Skip a failed location step and try the face scan anyway (server decides).
   function skipLocation() {
     setLocErr(null);
+    setOutsideGeofence(false);
     setStep("face");
   }
 
@@ -195,7 +285,14 @@ export default function ClockInVerifyModal({
               <View style={styles.locBox}>
                 {locErr ? (
                   <>
-                    <AlertTriangle size={28} color={theme.danger} />
+                    {outsideGeofence ? (
+                      <MapPin size={28} color={theme.danger} />
+                    ) : (
+                      <AlertTriangle size={28} color={theme.danger} />
+                    )}
+                    {outsideGeofence ? (
+                      <Text style={styles.locErrTitle}>Not at the office</Text>
+                    ) : null}
                     <Text style={styles.locErr}>{locErr}</Text>
                     <View style={styles.locBtnRow}>
                       <Pressable
@@ -207,15 +304,17 @@ export default function ClockInVerifyModal({
                           {busy ? "Requesting…" : "Try again"}
                         </Text>
                       </Pressable>
-                      <Pressable
-                        style={styles.secondaryBtn}
-                        onPress={skipLocation}
-                        disabled={busy}
-                      >
-                        <Text style={styles.secondaryBtnText}>
-                          Continue anyway
-                        </Text>
-                      </Pressable>
+                      {!outsideGeofence ? (
+                        <Pressable
+                          style={styles.secondaryBtn}
+                          onPress={skipLocation}
+                          disabled={busy}
+                        >
+                          <Text style={styles.secondaryBtnText}>
+                            Continue anyway
+                          </Text>
+                        </Pressable>
+                      ) : null}
                     </View>
                   </>
                 ) : (
@@ -396,6 +495,7 @@ const makeStyles = (theme: Theme) =>
   body: { gap: 10 },
   locBox: { alignItems: "center", gap: 14, paddingVertical: 30 },
   locText: { color: theme.textSecondary, fontSize: 14 },
+  locErrTitle: { color: theme.danger, fontSize: 15, fontWeight: "700" },
   locErr: { color: theme.danger, fontSize: 13, textAlign: "center" },
   locBtnRow: { flexDirection: "row", gap: 10 },
   primaryBtn: {

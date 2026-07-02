@@ -1286,9 +1286,16 @@ class NotifeeService {
       return;
     }
     
-    const title =
-      payload.title || data.title || data.senderName || "New message";
-    const body = payload.body || data.body || "";
+    const body = data.body || payload.body || "";
+    const senderName =
+      data.senderName || payload.title || data.title || "New message";
+    const isExplicitGroup =
+      data.isGroup === "true" ||
+      data.isGroup === "1" ||
+      Boolean(data.groupName);
+    const groupTitle = data.groupName || (isExplicitGroup ? data.title : "");
+    const title = isExplicitGroup ? groupTitle || "Group" : senderName;
+    const notificationBody = isExplicitGroup && body ? `${senderName}: ${body}` : body;
     if (!title && !body) return;
 
     await this.ensureChannels();
@@ -1310,9 +1317,6 @@ class NotifeeService {
       ? messageConversationNotificationId(conversationId)
       : id;
 
-    const senderName =
-      data.senderName || data.title || payload.title || "New message";
-
     // Accumulate the conversation's recent lines so the notification can render
     // them as an expandable MessagingStyle (history), mirroring Signal. Persisted
     // in MMKV because the headless FCM task has no React/zustand state.
@@ -1325,7 +1329,8 @@ class NotifeeService {
       : [{ text: body, senderName, timestamp: Date.now() }];
 
     const distinctSenders = new Set(threadMessages.map((m) => m.senderName));
-    const isGroupThread = distinctSenders.size > 1;
+  const isGroupThread = isExplicitGroup || distinctSenders.size > 1;
+  const messagingTitle = groupTitle || title;
 
     // Build the MessagingStyle from the accumulated history. `personIcon` (the
     // locally-cached sender avatar) is attached on the SECOND post once the
@@ -1349,7 +1354,7 @@ class NotifeeService {
       // For a multi-sender (group) conversation, show the group title so the
       // expanded view reads like a group thread.
       ...(isGroupThread
-        ? { group: true, title: data.title || senderName }
+        ? { group: true, title: messagingTitle }
         : {}),
     });
 
@@ -1416,7 +1421,7 @@ class NotifeeService {
         await notifee.displayNotification({
           ...(notificationId ? { id: notificationId } : {}),
           title,
-          body,
+          body: notificationBody,
           data: { ...data } as Record<string, string>,
           android: baseAndroid(largeIconOpts),
         });
@@ -1433,7 +1438,7 @@ class NotifeeService {
           await notifee.displayNotification({
             ...(notificationId ? { id: notificationId } : {}),
             title,
-            body,
+            body: notificationBody,
             data: { ...data } as Record<string, string>,
             android: {
               channelId: MESSAGE_CHANNEL_ID,
@@ -1453,7 +1458,7 @@ class NotifeeService {
             await notifee.displayNotification({
               ...(notificationId ? { id: notificationId } : {}),
               title,
-              body,
+              body: notificationBody,
               data: { ...data } as Record<string, string>,
               android: {
                 channelId: "default",
@@ -1490,8 +1495,8 @@ class NotifeeService {
     if (conversationId) {
       try {
         const map = recordActiveConversation(conversationId, {
-          title: isGroupThread ? data.title || senderName : senderName,
-          latestBody: body,
+          title: isGroupThread ? messagingTitle : senderName,
+          latestBody: notificationBody,
         });
         await this.postGroupSummary(map);
       } catch (err) {

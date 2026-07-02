@@ -1384,6 +1384,13 @@ router.post(
         return res.status(403).json({ error: "Not a participant" });
       }
 
+      const conversation = (
+        await req.db!.query(
+          "SELECT is_group, name AS group_name FROM conversations WHERE id = $1",
+          [convId],
+        )
+      ).rows[0];
+
       const content = String(req.body.content ?? "").trim();
       if (!content)
         return res.status(400).json({ error: "Message content required" });
@@ -1515,6 +1522,8 @@ router.post(
                   senderId: req.userId,
                   senderName: sender?.full_name || "Unknown",
                   senderAvatar: sender?.avatar,
+                  isGroup: Boolean(conversation?.is_group),
+                  groupName: conversation?.group_name || undefined,
                   messagePreview: content.substring(0, 150),
                   unreadCount: unreadTotal,
                 },

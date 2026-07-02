@@ -62,11 +62,17 @@ const FACEAPI_CDN = `https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACEAPI
 const MODEL_URL = `https://cdn.jsdelivr.net/npm/@vladmandic/face-api@${FACEAPI_VERSION}/model`;
 
 // Auto-capture tuning (mirrors client/src/components/attendance/FaceCapture.tsx):
-// poll the video ~2x/sec with the cheap detector and fire once we've seen a
-// confident face on N consecutive polls (avoids capturing a half-turned face
-// mid-motion).
-const AUTO_POLL_MS = 500;
+// poll the video with the cheap detector and fire once we've seen a confident
+// face on N consecutive polls (avoids capturing a half-turned face
+// mid-motion). The first poll fires IMMEDIATELY once models/camera are ready
+// (no initial delay) and the interval is short so auto-verification kicks in
+// with minimal lag.
+const AUTO_POLL_MS = 300;
 const AUTO_CONSECUTIVE_HITS = 2;
+// While auto-capture is active the manual button is hidden. If no face has
+// been auto-captured within this grace window, the manual button is revealed
+// as a fallback (the auto loop keeps polling in the background).
+const AUTO_FALLBACK_BTN_MS = 7000;
 
 function buildHtml(
   theme: Theme,
@@ -107,6 +113,7 @@ function buildHtml(
     background: ${theme.primary}; color: #fff; font-size: 15px; font-weight: 600;
   }
   #btn:disabled { opacity: 0.5; }
+  #btn.hidden { display: none; }
   .spinner {
     width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3);
     border-top-color: #fff; border-radius: 50%; display: inline-block;
@@ -120,7 +127,7 @@ function buildHtml(
   <div id="videoBox"><video id="video" autoplay muted playsinline></video></div>
   <div id="status">Loading face models…</div>
   <div id="err"></div>
-  <button id="btn" disabled>${captureLabel}</button>
+  <button id="btn" class="${autoCapture ? "hidden" : ""}" disabled>${captureLabel}</button>
 </div>
 
 <script src="${FACEAPI_CDN}"></script>
@@ -138,6 +145,9 @@ function buildHtml(
   var autoHits = 0;
   var capturing = false;
   var captured = false;
+  // Fallback timer: reveals the manual button if auto-capture hasn't fired
+  // within the grace window (user's face not detected — bad light, angle…).
+  var fallbackTimer = null;
 
   function post(obj) {
     if (window.ReactNativeWebView) {
@@ -152,9 +162,25 @@ function buildHtml(
   }
   function setStatus(msg) { statusEl.textContent = msg; }
 
+  // The manual button is hidden while auto-capture is running; it is shown
+  // only when auto mode is off (e.g. after a server rejection), when a
+  // capture attempt fails, or after the fallback grace window elapses.
+  function showBtn() {
+    btn.classList.remove("hidden");
+    if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
+  }
+  function hideBtn() { btn.classList.add("hidden"); }
+  function armFallbackBtn() {
+    if (fallbackTimer) clearTimeout(fallbackTimer);
+    fallbackTimer = setTimeout(function () {
+      fallbackTimer = null;
+      if (!captured && !capturing) showBtn();
+    }, ${AUTO_FALLBACK_BTN_MS});
+  }
+
   function readyStatus() {
     if (autoCapture) {
-      setStatus("Position your face in the frame");
+      setStatus("Position your face in the frame — verifying automatically…");
     } else {
       setStatus("Center your face and tap " + ${JSON.stringify(captureLabel)});
     }
@@ -195,7 +221,9 @@ function buildHtml(
   function scheduleAuto() {
     stopAuto();
     if (!autoCapture || !modelsReady || capturing || captured) return;
-    autoTimer = setTimeout(autoPoll, ${AUTO_POLL_MS});
+    // Fire the first detection poll immediately — waiting a full interval
+    // before even starting added avoidable lag to the auto login.
+    autoTimer = setTimeout(autoPoll, 0);
   }
 
   async function start() {
@@ -225,6 +253,7 @@ function buildHtml(
       modelsReady = true;
       readyStatus();
       btn.disabled = false;
+      if (autoCapture) { hideBtn(); armFallbackBtn(); } else { showBtn(); }
       scheduleAuto();
     } catch (e) {
       showError((e && e.message) ? e.message : "Camera access failed. Allow camera permission.");
@@ -249,6 +278,7 @@ function buildHtml(
         showError("No face detected. Ensure good lighting and try again.");
         btn.disabled = false;
         btn.textContent = ${JSON.stringify(captureLabel)};
+        showBtn();
         capturing = false;
         scheduleAuto();
         return;
@@ -262,6 +292,7 @@ function buildHtml(
       showError((e && e.message) ? e.message : "Face detection failed. Try again.");
       btn.disabled = false;
       btn.textContent = ${JSON.stringify(captureLabel)};
+      showBtn();
       capturing = false;
       scheduleAuto();
     }
@@ -281,15 +312,24 @@ function buildHtml(
         // Re-arm after a failed submit. "auto" (when present) toggles the
         // auto-capture loop — RN disables it after the first server
         // rejection so a mismatch doesn't auto-retry into the
-        // face-attempt rate limit.
+        // face-attempt rate limit. When auto is off the manual button is
+        // revealed ("auto login failed → show the manual verify button").
         captured = false;
         capturing = false;
         if (typeof msg.auto === "boolean") autoCapture = msg.auto;
         resetButton();
+        if (autoCapture) { hideBtn(); armFallbackBtn(); } else { showBtn(); }
         scheduleAuto();
       } else if (msg.type === "setAuto") {
         if (typeof msg.auto === "boolean") autoCapture = msg.auto;
-        if (autoCapture) { scheduleAuto(); } else { stopAuto(); if (modelsReady && !capturing && !captured) readyStatus(); }
+        if (autoCapture) {
+          if (!captured && !capturing) { hideBtn(); armFallbackBtn(); }
+          scheduleAuto();
+        } else {
+          stopAuto();
+          showBtn();
+          if (modelsReady && !capturing && !captured) readyStatus();
+        }
       }
     } catch (_) {}
   }

@@ -201,7 +201,10 @@ async function chatMessage({
   // ── 2. Authorisation: sender must be in the conversation ───────────
   const participant = (
     await db.query(
-      "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
+      `SELECT c.is_group, c.name AS group_name
+         FROM conversation_participants cp
+         JOIN conversations c ON c.id = cp.conversation_id
+        WHERE cp.conversation_id = $1 AND cp.user_id = $2`,
       [conversationId, senderId],
     )
   ).rows[0];
@@ -316,6 +319,8 @@ async function chatMessage({
             senderId,
             senderName: sender?.full_name || "Unknown",
             senderAvatar: sender?.avatar,
+            isGroup: Boolean(participant.is_group),
+            groupName: participant.group_name || undefined,
             messagePreview: content.trim().substring(0, 150),
             unreadCount: unreadTotal,
           })
