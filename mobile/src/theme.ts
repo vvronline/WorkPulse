@@ -115,6 +115,10 @@ export function makeTheme(accent: string = DEFAULT_ACCENT) {
     // text); incoming is a flat, borderless dark surface. No tails — grouping
     // is conveyed purely through corner-radius variation.
     chatOutBg: primary,
+    // Very light org-accent wash for OWN (sent) message bubbles so they read
+    // subtly branded against incoming bubbles without the loud solid fill.
+    chatOutBgSubtle: withAlpha(primary, 0.14),
+    chatOutBorderSubtle: withAlpha(primary, 0.16),
     chatInBg: "#2a2a2e",
     chatBubbleBorder: "transparent",
     // Translucent white for the outgoing bubble footer (time / edited / ticks)

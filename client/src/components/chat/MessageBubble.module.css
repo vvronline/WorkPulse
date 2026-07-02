@@ -94,10 +94,13 @@
 }
 /* Mine – clean neutral fill (Signal-style, no brand color), squared top-right */
 .myBubble {
-    background: var(--surface-hover);
+    /* Very light org-accent wash so SENT bubbles read subtly branded against
+       received ones (which keep the neutral surface). color-mix keeps this
+       tracking the tenant's --primary accent automatically. */
+    background: color-mix(in srgb, var(--primary) 14%, var(--surface-hover));
     color: var(--text);
     border-radius: 16px 4px 16px 16px;
-    border: none;
+    border: 1px solid color-mix(in srgb, var(--primary) 16%, transparent);
 }
 /* Theirs – clean neutral surface, squared top-left */
 .theirBubble {
@@ -189,7 +192,9 @@
 .groupStart .myBubble::after {
     top: 0;
     right: -7px;
-    background: var(--surface-hover);
+    /* Match the tinted own-bubble fill so the tail doesn't read as a
+       different color. */
+    background: color-mix(in srgb, var(--primary) 14%, var(--surface-hover));
 }
 .groupStart .theirBubble::after {
     top: 0;

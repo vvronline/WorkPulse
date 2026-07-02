@@ -22,6 +22,7 @@ import PushNotificationListener from "../src/realtime/PushNotificationListener";
 import PushNotificationInitializer from "../src/realtime/PushNotificationInitializer";
 import PendingCallNavigator from "../src/realtime/PendingCallNavigator";
 import PendingChatNavigator from "../src/realtime/PendingChatNavigator";
+import ChatCacheSync from "../src/realtime/ChatCacheSync";
 import OngoingCallBanner from "../src/realtime/OngoingCallBanner";
 import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 import { nativeCallService } from "../src/services/nativeCallService";
@@ -93,7 +94,17 @@ function ThemedStack() {
       />
       <Stack.Screen
         name="chat/[id]"
-        options={{ ...headerScreen, animation: "slide_from_right" }}
+        options={{
+          ...headerScreen,
+          // Signal-style smooth open: iOS-style push everywhere with a short,
+          // tuned duration + full-screen swipe-back. `freezeOnBlur` stops the
+          // (heavy) chat list re-rendering underneath while the thread is on
+          // top, which is what used to make the slide-in stutter.
+          animation: "slide_from_right",
+          animationDuration: 220,
+          fullScreenGestureEnabled: true,
+          freezeOnBlur: true,
+        }}
       />
       <Stack.Screen
         name="chat/new"
@@ -333,6 +344,7 @@ export default function RootLayout() {
               <PushNotificationListener />
               <PendingCallNavigator />
               <PendingChatNavigator />
+              <ChatCacheSync />
               <OngoingCallBanner />
               <ImpersonationBanner />
               <UpdateChecker />

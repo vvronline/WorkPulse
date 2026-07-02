@@ -502,9 +502,14 @@ const makeStyles = (theme: Theme) =>
       paddingVertical: 8,
       gap: 2,
     },
-    // Own messages — clean neutral fill (no brand color), borderless.
+    // Own messages — a VERY light org-accent wash (tenant brand) so sent
+    // bubbles read subtly branded against incoming ones, without the loud
+    // solid accent fill. A hairline accent border keeps the edge defined on
+    // dark surfaces.
     bubbleMine: {
-      backgroundColor: theme.bgElevated,
+      backgroundColor: theme.chatOutBgSubtle,
+      borderWidth: 1,
+      borderColor: theme.chatOutBorderSubtle,
     },
     // Incoming messages — flat neutral surface, borderless.
     bubbleTheirs: {
@@ -517,21 +522,18 @@ const makeStyles = (theme: Theme) =>
       paddingVertical: 0,
       overflow: "hidden",
     },
-    // Emoji-only text messages keep the jumbo glyphs but still render on a
-    // bubble surface so they don't feel detached from the thread.
+    // Emoji-only text messages (Signal JUMBOMOJI): NO bubble at all — the
+    // glyphs float directly on the thread background, frameless and
+    // borderless, exactly like Signal/WhatsApp. The old translucent bordered
+    // box read as a washed-out frame around the emoji.
     bubbleEmojiOnly: {
-      borderWidth: 1,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
+      backgroundColor: "transparent",
+      borderWidth: 0,
+      paddingHorizontal: 2,
+      paddingVertical: 0,
     },
-    bubbleEmojiOnlyMine: {
-      backgroundColor: "rgba(255,255,255,0.12)",
-      borderColor: "rgba(255,255,255,0.18)",
-    },
-    bubbleEmojiOnlyTheirs: {
-      backgroundColor: "rgba(255,255,255,0.06)",
-      borderColor: "rgba(255,255,255,0.1)",
-    },
+    bubbleEmojiOnlyMine: {},
+    bubbleEmojiOnlyTheirs: {},
     bubblePending: { opacity: 0.7 },
     sender: {
       // Signal-Android group sender name (13sp).

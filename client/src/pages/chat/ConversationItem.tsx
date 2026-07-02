@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { Pin, Star, Users, Trash2 } from "lucide-react";
 import { ChatAvatar } from "../../components/chat";
 import { fmtTime, getConvName, getConvAvatar, isUserOnline } from "./chatUtils";
@@ -37,11 +38,77 @@ interface ConversationItemProps {
     onlineUsers: any;
     userStatusMap?: Record<string, string>;
     convMenu: any;
+    userId?: number | string;
     onOpen: (c: any) => void;
     onMenuToggle: (id: number | string) => void;
     onPin: (id: number | string) => void;
     onFav: (id: number | string) => void;
     onDelete: (c: any) => void;
+}
+
+/**
+ * Signal-style conversation-list delivery tick for the caller's OWN last
+ * message: sent (bare ✓) → delivered (circled ✓) → read (accent-filled ✓).
+ * Mirrors the in-thread DeliveryStatus glyphs so both screens read the same.
+ */
+function ListTick({ conv, userId }: { conv: any; userId?: number | string }) {
+    if (userId == null || Number(conv.last_sender_id) !== Number(userId)) return null;
+    if (conv.last_format_type === "system" || conv.last_deleted) return null;
+    const read = !!conv.last_message_read;
+    const delivered = !!conv.last_message_delivered;
+    const style: CSSProperties = {
+        display: "inline-flex",
+        verticalAlign: "middle",
+        marginRight: "4px",
+        flexShrink: 0,
+        color: read ? "var(--primary)" : "var(--text-muted, #8a8f98)",
+    };
+    if (read) {
+        return (
+            <span style={style} title="Read" aria-label="Read">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                    <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.1" />
+                    <circle cx="8" cy="8" r="5.2" fill="currentColor" />
+                    <path
+                        d="M5.4 8.1l1.8 1.8L10.7 6"
+                        stroke="var(--read-check-bg, #fff)"
+                        strokeWidth="1.4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                    />
+                </svg>
+            </span>
+        );
+    }
+    if (delivered) {
+        return (
+            <span style={style} title="Delivered" aria-label="Delivered">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                    <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.3" />
+                    <path
+                        d="M4.6 8.2l2.2 2.2L11.4 5.6"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                    />
+                </svg>
+            </span>
+        );
+    }
+    return (
+        <span style={style} title="Sent" aria-label="Sent">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <path
+                    d="M3.5 8.5l3 3 6-7"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+            </svg>
+        </span>
+    );
 }
 
 export default function ConversationItem({
@@ -51,6 +118,7 @@ export default function ConversationItem({
     onlineUsers,
     userStatusMap = {},
     convMenu,
+    userId,
     onOpen,
     onMenuToggle,
     onPin,
@@ -98,6 +166,7 @@ export default function ConversationItem({
                         <span className={s.typing}>typing...</span>
                     ) : (
                         <span className={c.unread_count > 0 ? s.unread : ""}>
+                            <ListTick conv={c} userId={userId} />
                             {c.is_group && c.last_sender_name && !c.last_deleted
                                 ? `${c.last_sender_name.split(" ")[0]}: `
                                 : ""}

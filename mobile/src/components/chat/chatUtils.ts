@@ -42,6 +42,18 @@ export function isEmojiOnlyMessage(
   return t.replace(EMOJI_SEQ_RE, "").trim().length === 0;
 }
 
+/**
+ * Number of emoji graphemes in an emoji-only message (0 when the text isn't
+ * emoji-only). Drives the Signal-style JUMBOMOJI size tiers: a single emoji
+ * renders largest, 2–3 medium, 4+ smaller — exactly like Signal-Android's
+ * EmojiTextView jumbomoji scaling.
+ */
+export function emojiOnlyCount(text?: string | null): number {
+  if (!isEmojiOnlyMessage(text)) return 0;
+  const matches = (text || "").trim().match(EMOJI_SEQ_RE);
+  return matches ? matches.length : 0;
+}
+
 export function isImageFile(m: ChatMessage): boolean {
   if (m.file_type && m.file_type.startsWith("image/")) return true;
   const name = (m.file_name || m.file_url || "").toLowerCase();

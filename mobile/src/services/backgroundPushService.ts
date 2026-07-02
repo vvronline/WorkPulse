@@ -322,6 +322,28 @@ class BackgroundPushService {
         data.type === "chat_message" ||
         data.type === "message" ||
         Boolean(data.conversationId || data.messageId);
+
+      // PREFETCH-ON-PUSH (Signal parity): warm the on-device message cache for
+      // this conversation in the background so that when the user taps the
+      // notification the thread paints INSTANTLY from disk — with the new
+      // message already present — instead of showing stale history / a spinner
+      // while the network round-trip runs ("opening a chat takes time to show
+      // the message"). Best-effort: failures (offline, auth not hydrated yet in
+      // a headless task) are silently ignored; the thread's own load() covers it.
+      if (isChatMessage && data.conversationId) {
+        void (async () => {
+          try {
+            const convId = Number(data.conversationId);
+            if (!convId) return;
+            const { getMessages } = await import("../features");
+            const { setCachedMessages } = await import("../storage/chatCache");
+            const r = await getMessages(convId);
+            if (r.data?.length) setCachedMessages(convId, r.data);
+          } catch {
+            /* best-effort prefetch */
+          }
+        })();
+      }
       
       // DEDUPLICATION CHECK: Skip duplicate messages in rapid bursts
       // This prevents "spam" where the server retries the same message multiple times

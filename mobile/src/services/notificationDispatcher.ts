@@ -223,6 +223,43 @@ class NotificationDispatcherService {
   }
 
   /**
+   * Wait until the dispatcher has FINISHED its one-shot
+   * getInitialNotification() read (route found OR none), up to `timeoutMs`.
+   *
+   * WHY: app/index.tsx used to wait a fixed 600ms for a ROUTE. On a killed
+   * cold start the JS bundle + Notifee's getInitialNotification() can easily
+   * take longer than 600ms — the root route then gave up, redirected to the
+   * dashboard, and the tapped conversation never opened ("notification tap
+   * from killed state opens the dashboard"). Waiting on the INITIALIZED flag
+   * (with a generous cap) means the cold-start decision is made only after
+   * the dispatcher has definitively answered "was this launch a notification
+   * tap?" — no more racing the read.
+   *
+   * Resolves with the captured route (may be null when the launch was NOT a
+   * notification tap — the common case, which resolves as soon as the read
+   * completes, typically well under the cap).
+   */
+  async waitForInitialization(
+    timeoutMs: number = 3000,
+  ): Promise<NotificationRoute | null> {
+    const startTime = Date.now();
+    if (this.state.initialized) return this.getRoute();
+    return new Promise((resolve) => {
+      const checkInterval = setInterval(() => {
+        if (this.state.initialized) {
+          clearInterval(checkInterval);
+          resolve(this.getRoute());
+          return;
+        }
+        if (Date.now() - startTime >= timeoutMs) {
+          clearInterval(checkInterval);
+          resolve(this.getRoute());
+        }
+      }, 50);
+    });
+  }
+
+  /**
    * Peek at the route without consuming it
    * Safe for any component to call
    */

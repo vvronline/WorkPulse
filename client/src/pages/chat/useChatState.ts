@@ -229,6 +229,11 @@ export default function useChatState() {
                                           last_sender_id: d.senderId,
                                           last_message_at: d.createdAt,
                                           last_deleted: null,
+                                          // A brand-new message hasn't been
+                                          // read/delivered yet — reset the
+                                          // sidebar tick to "sent".
+                                          last_message_read: false,
+                                          last_message_delivered: false,
                                           unread_count: isActive
                                               ? 0
                                               : ((c.unread_count as number) ||
@@ -476,6 +481,17 @@ export default function useChatState() {
                             ...prev,
                             [d.userId as string]: d.readAt,
                         }));
+                    }
+                    // Sidebar read receipt (Signal parity): a peer reading the
+                    // conversation flips the list row's tick to "read" live.
+                    if (d.userId !== user?.id) {
+                        setConversations((prev) =>
+                            prev.map((c) =>
+                                c.id === d.conversationId
+                                    ? { ...c, last_message_read: true }
+                                    : c,
+                            ),
+                        );
                     }
                     break;
                 }

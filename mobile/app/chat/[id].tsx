@@ -18,7 +18,6 @@ import {
   MoreVertical,
   Phone,
   Pin,
-  Search,
   Star,
   Trash2,
   Video as VideoIcon,
@@ -257,14 +256,11 @@ export default function ChatThread() {
                   // Voice/video call buttons. Shown for 1:1 AND group chats —
                   // the native call screen is single-remote-peer (first member
                   // to answer connects), exactly mirroring the web ChatHeader,
-                  // which also enables calls for groups. The 3-dot overflow menu
-                  // (search / pinned / files / saved / clear chat) is available
-                  // everywhere too.
+                  // which also enables calls for groups. Search lives ONLY in
+                  // the 3-dot overflow menu (search / pinned / files / saved /
+                  // clear chat) — the duplicate header search icon was removed.
                   headerRight: () => (
                     <View style={styles.headerActions}>
-                      <Pressable onPress={c.openSearch} hitSlop={8}>
-                        <Search size={20} color={theme.primary} />
-                      </Pressable>
                       <Pressable
                         onPress={() => c.startCall("voice")}
                         hitSlop={8}

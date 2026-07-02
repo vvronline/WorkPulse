@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
+import Svg, { Circle as SvgCircle, Path as SvgPath } from "react-native-svg";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import {
   Archive,
@@ -281,6 +282,17 @@ export default function ChatScreen() {
       const off = socket.subscribe((msg) => {
         // Debounced refresh instead of a full fetch per message.
         if (msg.type === "chat_message") scheduleRefresh();
+        // Live read receipt on the conversation LIST (Signal parity): when a
+        // peer reads a conversation, flip the row's tick to "read" instantly
+        // instead of waiting for the next full list refresh.
+        if (msg.type === "chat_read_receipt" && msg.data?.conversationId) {
+          const cid = Number(msg.data.conversationId);
+          setItems((prev) =>
+            prev.map((c) =>
+              c.id === cid ? { ...c, last_message_read: true } : c,
+            ),
+          );
+        }
         // Keep peer status badges live (mirrors web userStatusMap upkeep).
         if (msg.type === "user_status" && msg.data?.userId) {
           setUserStatusMap((prev) => ({
@@ -693,6 +705,56 @@ export default function ChatScreen() {
     );
   }
 
+  // Signal-style conversation-list delivery tick for the caller's OWN last
+  // message: sent (bare ✓) → delivered (circled ✓) → read (accent filled ✓✓).
+  // Mirrors the in-thread MsgTicks glyphs so the two screens read identically.
+  function renderListTick(item: Conversation) {
+    if (!user || Number(item.last_sender_id) !== Number(user.id)) return null;
+    if (item.last_format_type === "system") return null;
+    const read = !!item.last_message_read;
+    const delivered = !!item.last_message_delivered;
+    if (read) {
+      return (
+        <Svg width={14} height={14} viewBox="0 0 16 16" fill="none">
+          <SvgCircle cx={8} cy={8} r={7} stroke={theme.primary} strokeWidth={1.1} />
+          <SvgCircle cx={8} cy={8} r={5.2} fill={theme.primary} />
+          <SvgPath
+            d="M5.4 8.1l1.8 1.8L10.7 6"
+            stroke="#fff"
+            strokeWidth={1.4}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </Svg>
+      );
+    }
+    if (delivered) {
+      return (
+        <Svg width={14} height={14} viewBox="0 0 16 16" fill="none">
+          <SvgCircle cx={8} cy={8} r={7} stroke={theme.textMuted} strokeWidth={1.3} />
+          <SvgPath
+            d="M4.6 8.2l2.2 2.2L11.4 5.6"
+            stroke={theme.textMuted}
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </Svg>
+      );
+    }
+    return (
+      <Svg width={14} height={14} viewBox="0 0 16 16" fill="none">
+        <SvgPath
+          d="M3.5 8.5l3 3 6-7"
+          stroke={theme.textMuted}
+          strokeWidth={1.6}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </Svg>
+    );
+  }
+
   function renderConv(item: Conversation) {
     const name = convName(item);
     const selected = selectedIds.has(item.id);
@@ -768,15 +830,19 @@ export default function ChatScreen() {
               </View>
             ) : attachment ? (
               <View style={styles.previewRow}>
+                {renderListTick(item)}
                 {attachment.icon}
                 <Text style={styles.preview} numberOfLines={1}>
                   {attachment.label}
                 </Text>
               </View>
             ) : (
-              <Text style={styles.preview} numberOfLines={1}>
-                {item.last_message || "No messages yet"}
-              </Text>
+              <View style={styles.previewRow}>
+                {item.last_message ? renderListTick(item) : null}
+                <Text style={styles.preview} numberOfLines={1}>
+                  {item.last_message || "No messages yet"}
+                </Text>
+              </View>
             )}
             {item.unread_count > 0 ? (
               <View style={styles.unread}>

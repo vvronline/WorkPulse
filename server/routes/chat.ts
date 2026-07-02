@@ -1060,6 +1060,19 @@ router.get("/conversations", auth, async (req: Request, res: Response) => {
                 m.deleted_at AS last_deleted,
                 m.format_type AS last_format_type,
                 m.metadata AS last_metadata,
+                -- Read receipt for the conversation LIST (Signal parity): when
+                -- the latest message was sent by the caller, these let the list
+                -- row render sent/delivered/read ticks WITHOUT opening the
+                -- thread. read = any OTHER participant's last_read_at is at or
+                -- after the message; delivered = the message's delivered_to
+                -- array is non-empty.
+                (SELECT EXISTS (
+                    SELECT 1 FROM message_reads mr2
+                    WHERE mr2.conversation_id = c.id
+                      AND mr2.user_id != $1
+                      AND mr2.last_read_at >= m.created_at
+                )) AS last_message_read,
+                COALESCE(jsonb_array_length(m.delivered_to), 0) > 0 AS last_message_delivered,
                 COALESCE(mr.last_read_at, '1970-01-01'::timestamptz) AS last_read_at,
                 (SELECT COUNT(*)::int FROM messages msg
                  WHERE msg.conversation_id = c.id
@@ -1108,7 +1121,7 @@ router.get("/conversations", auth, async (req: Request, res: Response) => {
             LEFT JOIN LATERAL (
                 SELECT lm.content, lm.sender_id, lm.created_at, lm.file_url,
                        lm.file_type, lm.file_name, lm.deleted_at,
-                       lm.format_type, lm.metadata,
+                       lm.format_type, lm.metadata, lm.delivered_to,
                        usr.full_name AS sender_name
                 FROM messages lm
                 JOIN users usr ON usr.id = lm.sender_id

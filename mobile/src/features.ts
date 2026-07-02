@@ -438,6 +438,11 @@ export type Conversation = {
   last_file_type?: string | null;
   last_file_name?: string | null;
   last_format_type?: string | null;
+  // Conversation-list read receipt for the caller's own last message (Signal
+  // parity): whether any OTHER participant has read / been delivered the
+  // latest message. Only meaningful when last_sender_id === current user.
+  last_message_read?: boolean;
+  last_message_delivered?: boolean;
   last_metadata?: {
     type?: string;
     callType?: string;

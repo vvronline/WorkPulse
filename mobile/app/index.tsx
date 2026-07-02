@@ -64,7 +64,16 @@ export default function Index() {
     let cancelled = false;
     (async () => {
       const routeDecisionStartedAt = Date.now();
-      const dispatcherRoute = await notificationDispatcher.waitForRoute(600);
+      // Wait for the dispatcher's one-shot getInitialNotification() read to
+      // FINISH (route found OR "not a notification launch") instead of the old
+      // fixed 600ms route-wait. On a killed cold start the read can easily
+      // exceed 600ms — the root then gave up and redirected to the dashboard,
+      // which is exactly the "tapping a message notification from the killed
+      // state opens the dashboard" bug. The normal (non-notification) launch
+      // resolves the moment the read completes, so this adds no delay to a
+      // plain app open; 3s is a hard safety cap only.
+      const dispatcherRoute =
+        await notificationDispatcher.waitForInitialization(3000);
       if (cancelled) return;
 
       let route = peekPendingCall();

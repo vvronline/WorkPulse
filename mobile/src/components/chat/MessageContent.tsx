@@ -3,7 +3,7 @@ import { Linking, StyleSheet, Text } from "react-native";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
-import { isEmojiOnlyMessage } from "./chatUtils";
+import { emojiOnlyCount } from "./chatUtils";
 
 // Linkify regex — matches http(s):// URLs as well as bare www. URLs (Signal's
 // LinkifyText recognises both). Used with a global flag to tokenize the body
@@ -77,7 +77,7 @@ export default function MessageContent({
     () => (deleted ? null : tokenize(message.content || "")),
     [deleted, message.content],
   );
-  const emojiOnly = !deleted && isEmojiOnlyMessage(message.content);
+  const emojiCount = deleted ? 0 : emojiOnlyCount(message.content);
   if (!message.content && !deleted) return null;
   return (
     <Text
@@ -86,8 +86,11 @@ export default function MessageContent({
         // WhatsApp-style: own bubbles use the accent fill, so text is white.
         mine && !deleted && styles.contentMine,
         deleted && styles.deleted,
-        // Signal-style: standalone emoji messages render at 42 sp (jumbo).
-        emojiOnly && styles.emojiOnly,
+        // Signal JUMBOMOJI size tiers: a single emoji renders largest, 2–3
+        // medium, 4–5 smaller (mirrors Signal-Android EmojiTextView scaling).
+        emojiCount === 1 && styles.emojiOnly1,
+        (emojiCount === 2 || emojiCount === 3) && styles.emojiOnly3,
+        emojiCount >= 4 && styles.emojiOnly5,
       ]}
     >
       {deleted
@@ -121,5 +124,9 @@ const makeStyles = (theme: Theme) =>
     // white text just gets an underline so it stays legible.
     link: { color: theme.primaryLight, textDecorationLine: "underline" },
     linkMine: { color: "#fff", textDecorationLine: "underline" },
-    emojiOnly: { fontSize: 42, lineHeight: 50 },
+    // Signal-style jumbomoji tiers (frameless — see MessageBubble
+    // bubbleEmojiOnly): 1 emoji = largest, 2–3 = medium, 4–5 = smaller.
+    emojiOnly1: { fontSize: 48, lineHeight: 58 },
+    emojiOnly3: { fontSize: 38, lineHeight: 46 },
+    emojiOnly5: { fontSize: 30, lineHeight: 38 },
   });

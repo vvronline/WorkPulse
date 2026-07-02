@@ -81,7 +81,9 @@ export default function ChatHeader({
     };
 
     const overflowItems: OverflowItem[] = [
-        { label: "Search messages", icon: Search, action: onToggleSearch, mobileOnly: true },
+        // Search lives ONLY here (all screen sizes) — the duplicate inline
+        // header search icon was removed to keep a single entry point.
+        { label: "Search messages", icon: Search, action: onToggleSearch },
         { label: "Pinned messages", icon: Pin, action: onTogglePinned },
         { label: "Shared files", icon: FolderOpen, action: onToggleSharedFiles },
         { label: "Saved messages", icon: Star, action: onToggleStarred },
@@ -143,20 +145,14 @@ export default function ChatHeader({
                         </button>
                     </>
                 )}
-                {/* Desktop-only: search button inline */}
-                <span className={s.desktopActions}>
-                    <button onClick={onToggleSearch} title="Search messages">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.5" />
-                            <path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                        </svg>
-                    </button>
-                    {activeConv.is_group && (
+                {/* Desktop-only inline actions (search moved to the 3-dot menu) */}
+                {activeConv.is_group && (
+                    <span className={s.desktopActions}>
                         <button onClick={onGroupEdit} title="Group settings">
                             <Settings size={16} />
                         </button>
-                    )}
-                </span>
+                    </span>
+                )}
                 {/* 3-dot menu: visible on all screen sizes */}
                 <div className={s.moreWrapper} ref={moreRef}>
                     <button className={s.moreBtn} onClick={() => setMoreOpen((v) => !v)} aria-label="More options">

@@ -72,6 +72,7 @@ export default function ChatSidebar({
         onlineUsers,
         userStatusMap,
         convMenu,
+        userId,
         onMenuToggle,
         onPin: onPinConv,
         onFav: onFavConv,

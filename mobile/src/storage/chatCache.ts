@@ -58,8 +58,41 @@ export function setCachedMessages(
     storage.remove(`${THREAD_PREFIX}${conversationId}`);
     return;
   }
-  const trimmed = messages.slice(0, MAX_CACHED_MESSAGES);
+  // Messages are stored OLDEST-FIRST (mirrors GET /messages). Keep the NEWEST
+  // page when trimming — slice from the END. (The previous `slice(0, MAX)`
+  // kept the oldest 50 and silently dropped the newest messages whenever the
+  // array grew past the cap, so a reopened chat painted stale history.)
+  const trimmed =
+    messages.length > MAX_CACHED_MESSAGES
+      ? messages.slice(messages.length - MAX_CACHED_MESSAGES)
+      : messages;
   storage.set(`${THREAD_PREFIX}${conversationId}`, JSON.stringify(trimmed));
+}
+
+/**
+ * Append a single freshly-arrived message to a conversation's cached page.
+ *
+ * Called from the live `chat_message` WS handler (chat list screen) so the
+ * on-disk cache stays CURRENT even while the thread screen isn't mounted —
+ * previously the cache was only rewritten by the thread's own network load,
+ * so opening a chat right after a message arrived painted a stale page and
+ * the new message only appeared after the background refresh ("takes time to
+ * show the messages"). Dedupes by id/clientMsgId; no-op when the thread has
+ * never been cached (the thread's own load will seed it).
+ */
+export function appendCachedMessage(
+  conversationId: number,
+  message: ChatMessage,
+): void {
+  const existing = getCachedMessages(conversationId);
+  if (!existing) return; // cold cache — let the thread's load() seed it
+  const dupe = existing.some(
+    (m) =>
+      (message.id != null && m.id === message.id) ||
+      (message.clientMsgId != null && m.clientMsgId === message.clientMsgId),
+  );
+  if (dupe) return;
+  setCachedMessages(conversationId, [...existing, message]);
 }
 
 export function clearCachedMessages(conversationId: number): void {

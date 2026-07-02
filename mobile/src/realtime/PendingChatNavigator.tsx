@@ -31,7 +31,9 @@ import { useAuth } from "../auth/AuthContext";
 import {
   consumePendingChat,
   peekPendingChat,
+  setPendingChat,
   subscribePendingChat,
+  loadPersistedPendingChat,
   clearPersistedPendingChat,
 } from "./pendingChat";
 import { notificationLogger, NotificationState } from "../utils/notificationLogger";
@@ -119,6 +121,23 @@ export default function PendingChatNavigator() {
     // 2) Also check once now (a route may have been stashed just before mount,
     //    or this effect re-ran because auth just resolved).
     tryConsume();
+
+    // 3) SAFETY NET for the killed-state race: if the dashboard mounted before
+    //    the pending route was staged in MEMORY (the SecureStore write / the
+    //    dispatcher's getInitialNotification() read finished a beat after the
+    //    root redirect), the in-memory peek above finds nothing. Rehydrate the
+    //    PERSISTED route once and re-run — this guarantees a notification tap
+    //    always lands in the exact conversation, regardless of app state.
+    if (!loading && user && !peekPendingChat()) {
+      void loadPersistedPendingChat().then((persisted) => {
+        if (!persisted) return;
+        if (!persisted.conversationId && !persisted.openChatList) return;
+        // Only act on FRESH persisted routes (staged within the last minute)
+        // so a stale, never-cleared entry can't hijack a normal app open.
+        setPendingChat(persisted);
+        tryConsume();
+      });
+    }
 
     return unsubscribe;
   }, [user, loading, router]);
