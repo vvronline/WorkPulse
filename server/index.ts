@@ -531,6 +531,16 @@ async function bootstrap(): Promise<void> {
         } catch (err: unknown) {
             logger.error({ err: (err as Error).message }, "Migration sweep FAILED on bootstrap — schema may be incomplete");
         }
+        // Data scrub: remove platform-admin memberships that a historical
+        // login bug seeded into customer (non-default) tenants. Idempotent —
+        // a no-op once every tenant is clean. See
+        // scrubPlatformAdminsFromCustomerTenants() for details.
+        try {
+            const { scrubPlatformAdminsFromCustomerTenants } = require("./utils/migrationRunner");
+            await scrubPlatformAdminsFromCustomerTenants();
+        } catch (err: unknown) {
+            logger.error({ err: (err as Error).message }, "Platform-admin tenant scrub FAILED on bootstrap (non-fatal)");
+        }
     })();
     return bootstrapPromise;
 }

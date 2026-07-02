@@ -112,9 +112,45 @@ async function resolveDefaultDomainUser(identifier: string): Promise<any> {
                 "SELECT 1 FROM platform_users WHERE LOWER(username) = $1 OR LOWER(email) = $1",
                 [identifier.toLowerCase()]
             );
-            // Return the tenant record (carries .slug) so flows that need the
-            // tenant slug can access it.
-            return { user: userRes.rows[0], db: tdb, tenantId: tenant_id, isPlatformUser: !!platCheck.rows[0], tenant: tdb.tenant };
+            const isPlatformUser = !!platCheck.rows[0];
+
+            // ── Self-heal: platform admin polluted into a CUSTOMER tenant ──
+            // A historical bug seeded platform admins into the first active
+            // tenant (not the default platform tenant) and left a sticky
+            // user_directory row pointing there. Platform admins must only
+            // live in the default tenant; customer tenants are reached
+            // exclusively via consent-gated impersonation. When we detect a
+            // platform admin whose directory row points at a NON-default
+            // tenant, scrub the stale data and fall through to the pure
+            // platform_users login path below (finishLogin then homes them
+            // in the default tenant correctly).
+            if (isPlatformUser && tdb.tenant && !tdb.tenant.is_default) {
+                logger.warn(
+                    { identifier: identifier.toLowerCase(), tenantId: tenant_id },
+                    "Platform admin found in non-default tenant — scrubbing stale membership"
+                );
+                try {
+                    await masterQuery(
+                        "DELETE FROM user_directory WHERE tenant_id = $1 AND user_id = $2",
+                        [tenant_id, user_id]
+                    );
+                } catch (e: any) {
+                    logger.warn({ err: e?.message }, "self-heal: user_directory cleanup failed");
+                }
+                try {
+                    await tdb.query(
+                        "UPDATE users SET is_active = FALSE, hidden_from_directory = TRUE WHERE id = $1",
+                        [user_id]
+                    );
+                } catch (e: any) {
+                    logger.warn({ err: e?.message }, "self-heal: tenant users row cleanup failed");
+                }
+                // Fall through to the platform_users lookup below.
+            } else {
+                // Return the tenant record (carries .slug) so flows that need the
+                // tenant slug can access it.
+                return { user: userRes.rows[0], db: tdb, tenantId: tenant_id, isPlatformUser, tenant: tdb.tenant };
+            }
         }
     }
 
@@ -429,10 +465,18 @@ async function finishLogin(req: Request, res: Response, { user, db, tenantId, is
             });
         }
 
-        // Platform admin without tenant context — find or create tenant
-        // Find their primary tenant and ensure they have a corresponding user account.
+        // Platform admin without tenant context — home them in the DEFAULT
+        // platform tenant ONLY. Platform admins must NEVER be provisioned as
+        // users inside customer tenants: they reach those exclusively through
+        // the consent-gated impersonation flow (see routes/tenants.ts
+        // POST /:id/impersonate and getOrCreateInspectorUser). The previous
+        // query here picked the first ACTIVE tenant by id, which silently
+        // seeded the platform admin into whichever customer tenant was
+        // created first — polluting its user directory and consuming a plan
+        // seat. Restricting to is_default = TRUE fixes that: if no default
+        // tenant exists yet, the auto-provision path below creates one.
         const tenantsRes = await masterQuery(
-            "SELECT * FROM tenants WHERE status = $1 ORDER BY id LIMIT 1", ["active"]
+            "SELECT * FROM tenants WHERE status = $1 AND is_default = TRUE ORDER BY id LIMIT 1", ["active"]
         );
         const primaryTenant = tenantsRes.rows[0];
 

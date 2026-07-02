@@ -1568,9 +1568,101 @@ async function sweepAllTenants(): Promise<SweepTotals> {
 
 const expectedMigrationCount = MIGRATIONS.length;
 
+/**
+ * One-off data scrub: remove platform admins that a historical login bug
+ * seeded into CUSTOMER tenants.
+ *
+ * Background: `finishLogin()` used to home a platform admin in the *first
+ * active tenant* instead of the *default platform tenant*, inserting a
+ * visible `role='platform_admin'` users row into whichever customer tenant
+ * was created first — plus a sticky `user_directory` row that kept routing
+ * their logins there. Per the access model, platform admins must NEVER be
+ * members of customer tenants (they use the consent-gated impersonation
+ * flow instead), so those rows are illegitimate by definition.
+ *
+ * What this does, for every ACTIVE NON-default tenant:
+ *   1. Deactivates + hides every VISIBLE platform_admin users row
+ *      (`role = 'platform_admin' AND hidden_from_directory = FALSE`).
+ *      The `hidden_from_directory = FALSE` filter precisely excludes the
+ *      legitimate synthetic "Platform Inspector" rows created by the
+ *      impersonation flow (those are hidden by design and must survive).
+ *   2. Deletes the matching master `user_directory` rows so login routing
+ *      and the tenant's user_count are corrected immediately.
+ *
+ * Idempotent and safe to run on every startup — once scrubbed, the WHERE
+ * clauses match nothing.
+ */
+async function scrubPlatformAdminsFromCustomerTenants(): Promise<{ scrubbedUsers: number; scrubbedDirRows: number }> {
+    const { masterQuery } = require('../db');
+    const { getTenantPool } = require('./tenantManager');
+    const totals = { scrubbedUsers: 0, scrubbedDirRows: 0 };
+
+    let tenants: any[] = [];
+    try {
+        tenants = (await masterQuery(`
+            SELECT id, slug, db_name, db_host
+              FROM tenants
+             WHERE status = 'active'
+               AND (is_default IS NOT TRUE)
+               AND db_name IS NOT NULL
+        `)).rows;
+    } catch (err: unknown) {
+        logger.error({ err: (err as Error).message }, 'platform-admin scrub: failed to list tenants');
+        return totals;
+    }
+
+    for (const t of tenants) {
+        try {
+            const db = await getTenantPool(t.db_name, t.db_host);
+            // Find visible platform_admin rows (never the hidden inspector rows).
+            const rows = (await db.query(`
+                SELECT id, username, email
+                  FROM users
+                 WHERE role = 'platform_admin'
+                   AND hidden_from_directory = FALSE
+            `)).rows;
+            if (rows.length === 0) continue;
+
+            const ids = rows.map((r: any) => r.id);
+            await db.query(
+                `UPDATE users
+                    SET is_active = FALSE, hidden_from_directory = TRUE
+                  WHERE id = ANY($1::int[])`,
+                [ids],
+            );
+            totals.scrubbedUsers += ids.length;
+
+            // Remove the stale master directory rows so login routing and the
+            // tenant's user_count are corrected.
+            const dirRes = await masterQuery(
+                `DELETE FROM user_directory
+                  WHERE tenant_id = $1 AND user_id = ANY($2::int[])`,
+                [t.id, ids],
+            );
+            totals.scrubbedDirRows += dirRes.rowCount || 0;
+
+            logger.warn(
+                { tenantId: t.id, slug: t.slug, users: rows.map((r: any) => r.username) },
+                'platform-admin scrub: removed platform admin membership from customer tenant',
+            );
+        } catch (err: unknown) {
+            logger.error(
+                { err: (err as Error).message, tenantId: t.id, slug: t.slug },
+                'platform-admin scrub: tenant iteration failed (non-fatal)',
+            );
+        }
+    }
+
+    if (totals.scrubbedUsers > 0) {
+        logger.info(totals, 'platform-admin scrub complete');
+    }
+    return totals;
+}
+
 export {
     MIGRATIONS,
     runTenantMigrations,
     sweepAllTenants,
+    scrubPlatformAdminsFromCustomerTenants,
     expectedMigrationCount,
 };
