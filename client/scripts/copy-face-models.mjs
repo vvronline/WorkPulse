@@ -44,6 +44,9 @@ const FILES = [
     'tiny_face_detector_model.bin',
     'face_landmark_68_model-weights_manifest.json',
     'face_landmark_68_model.bin',
+    // Tiny landmark net — used by the clock-in flow for faster load/inference.
+    'face_landmark_68_tiny_model-weights_manifest.json',
+    'face_landmark_68_tiny_model.bin',
     'face_recognition_model-weights_manifest.json',
     'face_recognition_model.bin',
 ];

@@ -1,18 +1,27 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Camera, RotateCcw, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react";
-import { loadFaceModels, extractDescriptor, getWebcamStream, stopStream } from "../../utils/faceApi";
+import { loadFaceModels, extractDescriptor, detectFaceScore, getWebcamStream, stopStream } from "../../utils/faceApi";
 import s from "./FaceCapture.module.css";
 
 type CaptureState = "idle" | "loading" | "ready" | "capturing" | "error";
 
 interface FaceCaptureProps {
     autoStart?: boolean;
+    /** When true, automatically captures once a face is steadily detected
+     *  (no button press needed). The manual button remains as a fallback. */
+    autoCapture?: boolean;
     captureLabel?: string;
     capturingLabel?: string;
     onCapture?: (descriptor: number[] | Float32Array) => void | Promise<void>;
     onError?: (msg: string) => void;
     disabled?: boolean;
 }
+
+// Auto-capture tuning: poll the video ~2x/sec with the cheap detector and
+// fire once we've seen a confident face on N consecutive polls (avoids
+// capturing a half-turned face mid-motion).
+const AUTO_POLL_MS = 500;
+const AUTO_CONSECUTIVE_HITS = 2;
 
 /**
  * Reusable webcam + face-descriptor capture widget.
@@ -32,6 +41,7 @@ interface FaceCaptureProps {
  */
 export default function FaceCapture({
     autoStart = true,
+    autoCapture = false,
     captureLabel = "Capture",
     capturingLabel = "Capturing...",
     onCapture,
@@ -42,6 +52,7 @@ export default function FaceCapture({
     const streamRef = useRef<MediaStream | null>(null);
     const [state, setState] = useState<CaptureState>("idle");
     const [error, setError] = useState<string | null>(null);
+    const [faceSeen, setFaceSeen] = useState(false);
 
     const start = useCallback(async () => {
         setState("loading");
@@ -99,6 +110,42 @@ export default function FaceCapture({
         }
     }, [onCapture, onError, state]);
 
+    // Auto-capture loop: cheap detector polls the live video; after N
+    // consecutive confident hits we run the full capture automatically.
+    // Cancels itself when disabled / a capture is in flight / unmount.
+    useEffect(() => {
+        if (!autoCapture || disabled || state !== "ready") return;
+        let cancelled = false;
+        let hits = 0;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+
+        const poll = async () => {
+            if (cancelled) return;
+            try {
+                const score = await detectFaceScore(videoRef.current);
+                if (cancelled) return;
+                if (score != null && score >= 0.5) {
+                    hits++;
+                    setFaceSeen(true);
+                    if (hits >= AUTO_CONSECUTIVE_HITS) {
+                        handleCapture();
+                        return; // state change re-arms the effect after capture
+                    }
+                } else {
+                    hits = 0;
+                    setFaceSeen(false);
+                }
+            } catch { /* model not ready yet — keep polling */ }
+            timer = setTimeout(poll, AUTO_POLL_MS);
+        };
+        timer = setTimeout(poll, AUTO_POLL_MS);
+
+        return () => {
+            cancelled = true;
+            if (timer) clearTimeout(timer);
+        };
+    }, [autoCapture, disabled, state, handleCapture]);
+
     return (
         <div className={s.wrap}>
             <div className={s.videoWrap}>
@@ -126,6 +173,13 @@ export default function FaceCapture({
                 )}
                 {state === "ready" && (
                     <div className={s.frameGuide} aria-hidden="true" />
+                )}
+                {autoCapture && state === "ready" && (
+                    <div className={s.autoHint}>
+                        {faceSeen
+                            ? <><CheckCircle2 size={13} /> Face detected — capturing…</>
+                            : "Position your face in the frame"}
+                    </div>
                 )}
             </div>
 

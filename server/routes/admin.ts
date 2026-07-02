@@ -607,6 +607,29 @@ router.post('/users/:id/reset-password', requireRole('hr_admin'), async (req: Re
     }
 });
 
+// Reset a user's face enrollment (attendance verification). Needed because
+// self-service unenroll/re-enroll is blocked while the org enforces face
+// verification — an HR admin clears it here and the user enrolls afresh.
+router.delete('/users/:id/face-enroll', requireRole('hr_admin'), async (req: Request, res: Response) => {
+    try {
+        const userId = Number(req.params.id);
+        const target = (await req.db!.query('SELECT id, role, org_id, full_name FROM users WHERE id = $1', [userId])).rows[0];
+        if (!target) return res.status(404).json({ error: 'User not found' });
+        if (req.userRole !== 'platform_admin' && target.org_id !== req.userOrgId) {
+            return res.status(403).json({ error: 'Cannot manage users outside your organization' });
+        }
+        if (req.userRole !== 'platform_admin' && userId !== req.userId && !canManageUser(req.userRole, target.role)) {
+            return res.status(403).json({ error: 'Cannot manage a user with equal or higher role' });
+        }
+        await req.db!.query('UPDATE users SET face_descriptor = NULL, face_enrolled_at = NULL WHERE id = $1', [userId]);
+        logAction(req, 'admin_face_reset', 'user', userId, { name: target.full_name });
+        res.json({ message: `Face enrollment cleared for ${target.full_name}. They can now enroll a fresh face.` });
+    } catch (err) {
+        req.log.error({ err }, 'Admin face reset error');
+        res.status(500).json({ error: 'Failed to reset face enrollment' });
+    }
+});
+
 router.delete('/users/:id', requireRole('super_admin'), async (req: Request, res: Response) => {
     try {
         const userId = Number(req.params.id);

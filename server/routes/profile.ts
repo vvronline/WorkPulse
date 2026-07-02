@@ -15,7 +15,8 @@ const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require("../utils/
 const { logger } = require("../utils/logger");
 const { requireTenant } = require("../middleware/tenant");
 const { getUploadDir, getUploadUrl, UPLOADS_ROOT } = require("../utils/uploadPath");
-const { isValidDescriptor, FACE_DESCRIPTOR_LENGTH } = require("../utils/face");
+const { isValidDescriptor, isPlausibleDescriptor, parseDescriptor, compareDescriptors, FACE_DESCRIPTOR_LENGTH } = require("../utils/face");
+const { ROLE_LEVEL } = require("../middleware/rbac");
 
 const router = express.Router();
 router.use(requireTenant);
@@ -498,14 +499,46 @@ router.get("/face-status", auth, async (req: Request, res: Response) => {
     }
 });
 
-router.post("/face-enroll", auth, async (req: Request, res: Response) => {
+router.post("/face-enroll", auth, loadUserContext, async (req: Request, res: Response) => {
     try {
         const { descriptor } = req.body || {};
-        if (!isValidDescriptor(descriptor)) {
+        if (!isValidDescriptor(descriptor) || !isPlausibleDescriptor(descriptor)) {
             return res.status(400).json({
                 error: `Invalid face descriptor — expected an array of ${FACE_DESCRIPTOR_LENGTH} numbers`,
             });
         }
+
+        // Re-enrollment guard: when the org enforces face verification at
+        // clock-in and a face is already on file, a *different* face cannot
+        // silently replace it (buddy-punching setup: user A enrolls user B's
+        // face so B can clock in for A). The new descriptor must match the
+        // currently enrolled one; otherwise an admin must clear the
+        // enrollment first. Admins (hr_admin+) can always re-enroll their own.
+        const current = (await req.db!.query(
+            "SELECT face_descriptor FROM users WHERE id = $1",
+            [req.userId],
+        )).rows[0];
+        const enrolled = parseDescriptor(current?.face_descriptor);
+        if (enrolled && req.userOrgId) {
+            const orgRow = (await req.db!.query(
+                "SELECT attendance_verification_enabled FROM organizations WHERE id = $1",
+                [req.userOrgId],
+            )).rows[0];
+            const isAdmin = (ROLE_LEVEL[req.userRole as string] || 0) >= (ROLE_LEVEL["hr_admin"] || 99);
+            if (orgRow?.attendance_verification_enabled && !isAdmin) {
+                const cmp = compareDescriptors(enrolled, descriptor);
+                if (!cmp.match) {
+                    logAction(req, "face_reenroll_blocked", "user", req.userId, {
+                        distance: Number.isFinite(cmp.distance) ? Number(cmp.distance.toFixed(4)) : null,
+                    });
+                    return res.status(403).json({
+                        error: "The new scan doesn't match your currently enrolled face. Ask an HR admin to reset your face enrollment first.",
+                        code: "FACE_REENROLL_BLOCKED",
+                    });
+                }
+            }
+        }
+
         // Store as a plain array (JSONB) so any client can read it back.
         const json = JSON.stringify(descriptor);
         await req.db!.query(
@@ -520,8 +553,25 @@ router.post("/face-enroll", auth, async (req: Request, res: Response) => {
     }
 });
 
-router.delete("/face-enroll", auth, async (req: Request, res: Response) => {
+router.delete("/face-enroll", auth, loadUserContext, async (req: Request, res: Response) => {
     try {
+        // When the org enforces face verification, clearing your own
+        // enrollment (to re-enroll a different face) is an admin action —
+        // otherwise the re-enrollment guard above could be trivially
+        // bypassed with a delete-then-enroll.
+        if (req.userOrgId) {
+            const orgRow = (await req.db!.query(
+                "SELECT attendance_verification_enabled FROM organizations WHERE id = $1",
+                [req.userOrgId],
+            )).rows[0];
+            const isAdmin = (ROLE_LEVEL[req.userRole as string] || 0) >= (ROLE_LEVEL["hr_admin"] || 99);
+            if (orgRow?.attendance_verification_enabled && !isAdmin) {
+                return res.status(403).json({
+                    error: "Face verification is enforced for your organization. Ask an HR admin to reset your face enrollment.",
+                    code: "FACE_UNENROLL_BLOCKED",
+                });
+            }
+        }
         await req.db!.query(
             `UPDATE users SET face_descriptor = NULL, face_enrolled_at = NULL WHERE id = $1`,
             [req.userId],

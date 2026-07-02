@@ -16,6 +16,13 @@
 const FACE_DESCRIPTOR_LENGTH = 128;
 const DEFAULT_MATCH_THRESHOLD = Number(process.env.FACE_MATCH_THRESHOLD) || 0.55;
 
+// Two live webcam captures of the same face never produce a byte-identical
+// (or near-identical) embedding — sensor noise alone shifts the distance by
+// well over this. A distance this close to zero means the exact same
+// descriptor array was re-submitted (a replay of a previously captured
+// payload), not a fresh camera frame.
+const REPLAY_DISTANCE_EPSILON = Number(process.env.FACE_REPLAY_EPSILON) || 0.01;
+
 type DescriptorInput = number[] | Float32Array | string | null | undefined;
 
 interface CompareResult {
@@ -76,6 +83,29 @@ function euclideanDistance(a: unknown, b: unknown): number {
 }
 
 /**
+ * Sanity-check descriptor component magnitudes. The FaceRecognitionNet
+ * embedding components sit well within [-1, 1]; a descriptor with values
+ * far outside that range was not produced by the model (fabricated input).
+ */
+function isPlausibleDescriptor(d: unknown): boolean {
+    if (!isValidDescriptor(d)) return false;
+    for (let i = 0; i < FACE_DESCRIPTOR_LENGTH; i++) {
+        const n = Number((d as number[])[i]);
+        if (Math.abs(n) > 1.5) return false;
+    }
+    return true;
+}
+
+/**
+ * Returns true when `candidate` is a (near-)exact copy of `previous` —
+ * i.e. a replay of an earlier payload rather than a fresh camera capture.
+ */
+function isDescriptorReplay(previous: unknown, candidate: unknown, epsilon: number = REPLAY_DISTANCE_EPSILON): boolean {
+    const dist = euclideanDistance(previous, candidate);
+    return Number.isFinite(dist) && dist < epsilon;
+}
+
+/**
  * Compare two descriptors. Returns:
  *   { match: boolean, distance: number, threshold: number }
  * `match` is true when `distance <= threshold`.
@@ -94,7 +124,10 @@ function compareDescriptors(enrolled: unknown, candidate: unknown, threshold: nu
 export {
     FACE_DESCRIPTOR_LENGTH,
     DEFAULT_MATCH_THRESHOLD,
+    REPLAY_DISTANCE_EPSILON,
     isValidDescriptor,
+    isPlausibleDescriptor,
+    isDescriptorReplay,
     parseDescriptor,
     euclideanDistance,
     compareDescriptors,

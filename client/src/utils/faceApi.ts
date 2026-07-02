@@ -61,7 +61,9 @@ export async function loadFaceModels(): Promise<void> {
         const faceapi = await loadFaceApi();
         await Promise.all([
             faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+            // Tiny landmark net (~80% smaller than the full 68-point net,
+            // noticeably faster inference) — plenty for descriptor alignment.
+            faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
             faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
         ]);
         _modelsLoaded = true;
@@ -72,6 +74,17 @@ export async function loadFaceModels(): Promise<void> {
     } finally {
         _modelsLoading = null;
     }
+}
+
+/**
+ * Fire-and-forget model preload. Call this as soon as it's likely the user
+ * will need face verification (e.g. the dashboard renders a Login button
+ * for an org with attendance verification enabled) so the clock-in modal
+ * opens with the models already warm. Errors are swallowed — the modal's
+ * own loadFaceModels() call will retry and surface them.
+ */
+export function preloadFaceModels(): void {
+    loadFaceModels().catch(() => { /* best-effort warm-up */ });
 }
 
 /**
@@ -88,11 +101,30 @@ export async function extractDescriptor(
 
     const detection = await faceapi
         .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
-        .withFaceLandmarks()
+        .withFaceLandmarks(true)
         .withFaceDescriptor();
 
     if (!detection || !detection.descriptor) return null;
     return Array.from(detection.descriptor);
+}
+
+/**
+ * Cheap face-presence probe used by the auto-capture loop: runs ONLY the
+ * tiny detector (no landmarks / descriptor), so it's fast enough to poll a
+ * live <video> a couple of times per second. Returns the detection score
+ * (0..1) or null when no face is found.
+ */
+export async function detectFaceScore(
+    input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement | null,
+): Promise<number | null> {
+    if (!input) return null;
+    await loadFaceModels();
+    const faceapi = await loadFaceApi();
+    const det = await faceapi.detectSingleFace(
+        input,
+        new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }),
+    );
+    return det ? det.score : null;
 }
 
 /**

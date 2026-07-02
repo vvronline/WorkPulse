@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useFloatingTimer } from "../../hooks/useFloatingTimer";
 import { formatTimeSec, formatTime } from "../../utils/time";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ClockInVerifyModal from "../attendance/ClockInVerifyModal";
+import { preloadFaceModels } from "../../utils/faceApi";
 import { Timer, Coffee, Play, LogOut, Building2, House, Clock, Zap } from "lucide-react";
 import s from "./WorkTimerCard.module.css";
 
@@ -26,6 +27,16 @@ export default function WorkTimerCard() {
     // modal handles the geolocation prompt + webcam face capture and then
     // calls `submitVerifiedClockIn(payload)`.
     const [verifyOpen, setVerifyOpen] = useState(false);
+
+    // Warm the face-api model weights in the background while the user is
+    // still looking at the Login button — the verify modal then opens with
+    // the models already cached instead of stalling on a ~6 MB download.
+    useEffect(() => {
+        if (verificationRequired && state === "logged_out" && !dailyTargetMet) {
+            preloadFaceModels();
+        }
+    }, [verificationRequired, state, dailyTargetMet]);
+
     const onLoginClick = () => {
         if (verificationRequired) {
             setVerifyOpen(true);

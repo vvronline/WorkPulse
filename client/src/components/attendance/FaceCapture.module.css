@@ -64,6 +64,23 @@
     box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.2);
 }
 
+.autoHint {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 0.78rem;
+    padding: 4px 12px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
 .err {
     color: #ef4444;
     font-size: 0.85rem;

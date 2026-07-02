@@ -136,21 +136,25 @@ function buildHtml(
         showError("Could not load face library. Check your connection.");
         return;
       }
-      setStatus("Loading face models…");
-      await Promise.all([
+      setStatus("Starting camera…");
+      // Run the model download and the camera warm-up IN PARALLEL — they're
+      // independent, and doing them sequentially used to add several seconds
+      // on first use (models are ~6 MB over the CDN).
+      var modelsP = Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
         faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
       ]);
-      modelsReady = true;
-
-      setStatus("Starting camera…");
-      stream = await navigator.mediaDevices.getUserMedia({
+      var cameraP = navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
         audio: false
+      }).then(function (s) {
+        stream = s;
+        video.srcObject = s;
+        return video.play();
       });
-      video.srcObject = stream;
-      await video.play();
+      await Promise.all([modelsP, cameraP]);
+      modelsReady = true;
       setStatus("Center your face and tap " + ${JSON.stringify(captureLabel)});
       btn.disabled = false;
     } catch (e) {
@@ -167,7 +171,7 @@ function buildHtml(
     try {
       var det = await faceapi
         .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
-        .withFaceLandmarks()
+        .withFaceLandmarks(true)
         .withFaceDescriptor();
       if (!det || !det.descriptor) {
         setStatus("");
@@ -269,6 +273,9 @@ export default function FaceCaptureWebView({
         onLoadEnd={() => setLoading(false)}
         javaScriptEnabled
         domStorageEnabled
+        // Cache the CDN-served face-api library + model weights so repeat
+        // clock-ins skip the ~6 MB download entirely.
+        cacheEnabled
         mediaPlaybackRequiresUserAction={false}
         allowsInlineMediaPlayback
         style={styles.webview}

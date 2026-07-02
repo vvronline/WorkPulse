@@ -12,7 +12,7 @@ const { sendToUser } = require("../utils/ws");
 const redis = require("../redis");
 const { requireTenant } = require("../middleware/tenant");
 const { haversineMeters, isValidLat, isValidLng } = require("../utils/geo");
-const { isValidDescriptor, parseDescriptor, compareDescriptors } = require("../utils/face");
+const { isValidDescriptor, isPlausibleDescriptor, isDescriptorReplay, parseDescriptor, compareDescriptors } = require("../utils/face");
 const { parseWorkDays, isJsDowWorkDay } = require("../utils/workDays");
 
 const router = express.Router();
@@ -57,6 +57,37 @@ function isValidTime(str: string): boolean {
     if (!/^\d{2}:\d{2}$/.test(str)) return false;
     const [h, m] = str.split(":").map(Number);
     return h >= 0 && h <= 23 && m >= 0 && m <= 59;
+}
+
+// ── Face verification abuse guards (Redis-backed, fail-open) ────────────
+// Limit consecutive failed face-match attempts per user and detect exact
+// descriptor replays (the same embedding re-submitted from a captured
+// payload — a fresh camera frame never reproduces an identical vector).
+const FACE_FAIL_LIMIT = 8;
+const FACE_FAIL_WINDOW_SEC = 15 * 60;
+const FACE_LAST_DESCRIPTOR_TTL_SEC = 24 * 60 * 60;
+
+function faceKey(tenantId: number | string | undefined, kind: string, userId: number | undefined): string {
+    return `t:${tenantId ?? "master"}:face:${kind}:${userId}`;
+}
+
+async function getFaceFailCount(tenantId: number | string | undefined, userId: number | undefined): Promise<number> {
+    try {
+        const v = await redis.get(faceKey(tenantId, "fails", userId));
+        return Number(v) || 0;
+    } catch { return 0; }
+}
+
+async function bumpFaceFailCount(tenantId: number | string | undefined, userId: number | undefined): Promise<void> {
+    try {
+        const key = faceKey(tenantId, "fails", userId);
+        const cur = Number(await redis.get(key)) || 0;
+        await redis.set(key, cur + 1, FACE_FAIL_WINDOW_SEC);
+    } catch { /* fail open */ }
+}
+
+async function clearFaceFailCount(tenantId: number | string | undefined, userId: number | undefined): Promise<void> {
+    try { await redis.del(faceKey(tenantId, "fails", userId)); } catch { /* ignore */ }
 }
 
 // Helper: convert timezone offset to a pg date expression.
@@ -213,6 +244,12 @@ router.post("/clock-in", auth, loadUserContext, async (req: Request, res: Respon
                 const orgLat = orgVerify.office_latitude != null ? Number(orgVerify.office_latitude) : null;
                 const orgLng = orgVerify.office_longitude != null ? Number(orgVerify.office_longitude) : null;
                 const radiusM = Number(orgVerify.office_radius_m) || 150;
+                // Sanitise accuracy: must be a finite, non-negative number of
+                // metres — anything else (negative, NaN, absurd strings) is
+                // treated as "not provided".
+                const accuracyM = (accuracy != null && Number.isFinite(Number(accuracy)) && Number(accuracy) >= 0)
+                    ? Number(accuracy)
+                    : null;
 
                 const officeBssids = Array.isArray(orgVerify.office_wifi_bssids)
                     ? orgVerify.office_wifi_bssids
@@ -248,7 +285,7 @@ router.post("/clock-in", auth, loadUserContext, async (req: Request, res: Respon
                     if (isValidLat(latitude) && isValidLng(longitude)) {
                         verifyMeta.clock_in_lat = Number(latitude);
                         verifyMeta.clock_in_lng = Number(longitude);
-                        verifyMeta.clock_in_accuracy_m = (accuracy != null && Number.isFinite(Number(accuracy))) ? Number(accuracy) : null;
+                        verifyMeta.clock_in_accuracy_m = accuracyM;
                         if (orgLat != null && orgLng != null) {
                             verifyMeta.clock_in_distance_m = Math.round(haversineMeters(Number(latitude), Number(longitude), orgLat, orgLng));
                         }
@@ -268,10 +305,25 @@ router.post("/clock-in", auth, loadUserContext, async (req: Request, res: Respon
                             code: "LOCATION_REQUIRED",
                         });
                     }
+                    // Reject fixes that are too coarse to trust for a geofence
+                    // decision — a 5 km-accurate IP/cell fix that happens to
+                    // land inside the radius proves nothing, and spoofed
+                    // payloads typically omit accuracy entirely.
+                    const maxAccuracyM = Math.max(radiusM, 200);
+                    if (selectedWorkMode === "office" && (accuracyM == null || accuracyM > maxAccuracyM)) {
+                        return res.status(403).json({
+                            error: accuracyM == null
+                                ? "Your location fix has no accuracy reading. Enable precise location (GPS/Wi-Fi positioning) and try again, or connect to the office Wi-Fi."
+                                : `Your location accuracy is ±${Math.round(accuracyM)} m — too coarse for the office geofence (max ±${maxAccuracyM} m). Enable precise location or connect to the office Wi-Fi.`,
+                            code: "LOCATION_TOO_COARSE",
+                            accuracy_m: accuracyM,
+                            max_accuracy_m: maxAccuracyM,
+                        });
+                    }
                     const distance = Math.round(haversineMeters(Number(latitude), Number(longitude), orgLat, orgLng));
                     verifyMeta.clock_in_lat = Number(latitude);
                     verifyMeta.clock_in_lng = Number(longitude);
-                    verifyMeta.clock_in_accuracy_m = (accuracy != null && Number.isFinite(Number(accuracy))) ? Number(accuracy) : null;
+                    verifyMeta.clock_in_accuracy_m = accuracyM;
                     verifyMeta.clock_in_distance_m = distance;
                     if (formattedBssid) verifyMeta.clock_in_wifi_bssid = formattedBssid;
 
@@ -306,6 +358,27 @@ router.post("/clock-in", auth, loadUserContext, async (req: Request, res: Respon
                     if (inside) verifyMeta.verified_via = "geofence";
                 }
 
+                // Remote clock-in: no geofence enforcement, but capture the
+                // location for the audit trail when the client provided one.
+                if (!wifiMatch && !needsLocation && isValidLat(latitude) && isValidLng(longitude)) {
+                    verifyMeta.clock_in_lat = Number(latitude);
+                    verifyMeta.clock_in_lng = Number(longitude);
+                    verifyMeta.clock_in_accuracy_m = accuracyM;
+                    if (orgLat != null && orgLng != null) {
+                        verifyMeta.clock_in_distance_m = Math.round(haversineMeters(Number(latitude), Number(longitude), orgLat, orgLng));
+                    }
+                }
+
+                // Lock out brute-force face attempts (per-user, sliding window).
+                const failCount = await getFaceFailCount(req.tenantId, req.userId);
+                if (failCount >= FACE_FAIL_LIMIT) {
+                    logAction(req, "clock_in_face_locked", "time_entry", null, { fail_count: failCount });
+                    return res.status(429).json({
+                        error: "Too many failed face verification attempts. Please wait 15 minutes and try again, or contact your admin.",
+                        code: "FACE_ATTEMPTS_LOCKED",
+                    });
+                }
+
                 const enrolledRow = (await req.db!.query(
                     "SELECT face_descriptor FROM users WHERE id = $1",
                     [req.userId],
@@ -317,16 +390,32 @@ router.post("/clock-in", auth, loadUserContext, async (req: Request, res: Respon
                         code: "FACE_NOT_ENROLLED",
                     });
                 }
-                if (!isValidDescriptor(face_descriptor)) {
+                if (!isValidDescriptor(face_descriptor) || !isPlausibleDescriptor(face_descriptor)) {
                     return res.status(400).json({
                         error: "Face verification required. Please complete the face scan and try again.",
                         code: "FACE_REQUIRED",
                     });
                 }
+                // Replay guard: a fresh camera capture never reproduces the
+                // exact embedding of a previous one. A (near-)identical
+                // descriptor means a previously captured payload is being
+                // re-submitted (e.g. via curl with a stolen token).
+                try {
+                    const lastDescriptor = await redis.get(faceKey(req.tenantId, "last", req.userId));
+                    if (lastDescriptor && isDescriptorReplay(lastDescriptor, face_descriptor)) {
+                        logAction(req, "clock_in_face_replay", "time_entry", null, {});
+                        await bumpFaceFailCount(req.tenantId, req.userId);
+                        return res.status(403).json({
+                            error: "This face scan looks like a duplicate of a previous one. Please perform a fresh face scan.",
+                            code: "FACE_REPLAY",
+                        });
+                    }
+                } catch { /* redis unavailable — fail open */ }
                 const cmp = compareDescriptors(enrolled, face_descriptor);
                 verifyMeta.face_verified = cmp.match;
                 verifyMeta.face_match_score = Number.isFinite(cmp.distance) ? Number(cmp.distance.toFixed(4)) : null;
                 if (!cmp.match) {
+                    await bumpFaceFailCount(req.tenantId, req.userId);
                     logAction(req, "clock_in_face_mismatch", "time_entry", null, {
                         distance: verifyMeta.face_match_score, threshold: cmp.threshold,
                     });
@@ -335,6 +424,15 @@ router.post("/clock-in", auth, loadUserContext, async (req: Request, res: Respon
                         code: "FACE_MISMATCH",
                     });
                 }
+                // Success: reset the failure counter and remember this
+                // descriptor so an exact replay of it is rejected next time.
+                await clearFaceFailCount(req.tenantId, req.userId);
+                try {
+                    await redis.set(faceKey(req.tenantId, "last", req.userId), face_descriptor, FACE_LAST_DESCRIPTOR_TTL_SEC);
+                } catch { /* best-effort */ }
+                // Remote clock-ins have no wifi/geofence proof — record that
+                // at least the face check passed.
+                if (!verifyMeta.verified_via) verifyMeta.verified_via = "face";
             }
         }
 
@@ -615,6 +713,9 @@ router.post("/manual-entry", auth, loadUserContext, async (req: Request, res: Re
 
         if (!date || !clock_in) return res.status(400).json({ error: "Date and login time are required" });
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Invalid date format. Use YYYY-MM-DD" });
+        if (date > getLocalToday(req)) {
+            return res.status(400).json({ error: "Cannot add a manual entry for a future date" });
+        }
 
         if (!isValidTime(clock_in) || (clock_out && !isValidTime(clock_out))) {
             return res.status(400).json({ error: "Invalid time format. Use HH:MM (00:00–23:59)" });
@@ -770,6 +871,9 @@ router.put("/manual-entry/:date", auth, loadUserContext, async (req: Request, re
 
         if (!date || !clock_in) return res.status(400).json({ error: "Date and login time are required" });
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Invalid date format. Use YYYY-MM-DD" });
+        if (date > getLocalToday(req)) {
+            return res.status(400).json({ error: "Cannot set a manual entry for a future date" });
+        }
 
         if (!isValidTime(clock_in) || (clock_out && !isValidTime(clock_out))) {
             return res.status(400).json({ error: "Invalid time format. Use HH:MM (00:00–23:59)" });
@@ -828,11 +932,41 @@ router.put("/manual-entry/:date", auth, loadUserContext, async (req: Request, re
             }
         }
 
+        // Same conflict rule as POST: a manual entry can't coexist with a leave.
+        const leaveRes = await req.db!.query(
+            "SELECT id, leave_type FROM leaves WHERE user_id = $1 AND date = $2",
+            [req.userId, date],
+        );
+        if (leaveRes.rows[0]) {
+            return res.status(400).json({ error: `You have a ${leaveRes.rows[0].leave_type} leave on this date. Remove the leave first to edit a manual entry.` });
+        }
+
         const isSuperAdmin = req.userRole === "super_admin";
         let approvalStatus = isSuperAdmin ? "approved" : "pending";
         let needsApproval = !isSuperAdmin;
 
         const tzMod = getTzModifier(req);
+
+        // Protect existing entries: the edit deletes-and-recreates the whole
+        // day, so refuse when the date holds already-APPROVED entries or
+        // live-tracked (non-manual) entries — those carry face/location
+        // verification data that an edit would silently destroy. Mirrors the
+        // guard on DELETE /entries/:date. (super_admin may still edit.)
+        if (!isSuperAdmin) {
+            const protectedRes = await req.db!.query(
+                `SELECT 1 FROM time_entries
+                 WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date
+                   AND (approval_status = 'approved' OR is_manual IS NOT TRUE)
+                 LIMIT 1`,
+                [req.userId, date],
+            );
+            if (protectedRes.rowCount > 0) {
+                return res.status(403).json({
+                    error: "This date has approved or live-tracked entries which cannot be edited. Contact your manager to adjust them.",
+                });
+            }
+        }
+
         const clockInTs = toUTC(date, clock_in);
         const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
         let txApproverEdit: any = null;

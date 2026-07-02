@@ -169,8 +169,8 @@ export async function getCurrentPosition(opts: PositionOptions = {}): Promise<Po
     console.log("[Geolocation] Electron path: native-first provider chain...");
 
     const browserP: Promise<ProviderResult> = getBrowserPosition(opts).then(
-        (pos) => ({ ok: true, pos }),
-        (err: GeolocationError) => ({ ok: false, err }),
+        (pos): ProviderResult => ({ ok: true, pos }),
+        (err: GeolocationError): ProviderResult => ({ ok: false, err }),
     );
     const nativeP: Promise<ProviderResult> = typeof electronAPI!.getNativeLocation === "function"
         ? (electronAPI!.getNativeLocation() as Promise<ElectronLocationResult>).then(
@@ -190,8 +190,33 @@ export async function getCurrentPosition(opts: PositionOptions = {}): Promise<Po
         (err: GeolocationError): ProviderResult => ({ ok: false, err }),
     );
 
-    // Wait for native + browser to settle (both can take up to ~15 s for a
-    // cold fix). IP is awaited too but only consulted at the very end.
+    // ── Fast path: first good fix wins ──
+    // Both native + browser can take up to ~15 s for a cold fix, but they
+    // rarely both do. Rather than always waiting for BOTH to settle, resolve
+    // as soon as EITHER returns a fix accurate enough for the geofence
+    // (≤ ACCEPTABLE_ACCURACY_M) — the slower provider can't improve the
+    // outcome enough to justify blocking the user for 10+ extra seconds.
+    const firstGood = await new Promise<Position | null>((resolve) => {
+        let settled = 0;
+        const check = (r: ProviderResult) => {
+            if (r.ok && r.pos.accuracy <= ACCEPTABLE_ACCURACY_M) {
+                resolve(r.pos);
+                return;
+            }
+            settled++;
+            if (settled >= 2) resolve(null); // both settled without a good fix
+        };
+        nativeP.then(check);
+        browserP.then(check);
+    });
+    if (firstGood) {
+        console.log("[Geolocation] Fast path: first good fix", firstGood);
+        return firstGood;
+    }
+
+    // Slow path: no provider produced a ≤ ACCEPTABLE fix. Both real
+    // providers have settled at this point; await them (plus IP) for the
+    // full comparison / error-reporting logic below.
     const [nativeRes, browserRes, ipRes] = await Promise.all([nativeP, browserP, ipP]);
 
     console.log("[Geolocation] Provider results:", {
@@ -282,7 +307,11 @@ function getBrowserPosition(opts: PositionOptions = {}): Promise<Position> {
             {
                 enableHighAccuracy: true,
                 timeout: 15000,
-                maximumAge: 0,
+                // Accept a cached fix up to 30 s old — a geofence decision
+                // doesn't need a millisecond-fresh position, and reusing the
+                // browser's cache makes repeat clock-in attempts (or a retry
+                // after a face mismatch) resolve instantly.
+                maximumAge: 30000,
                 ...opts,
             },
         );

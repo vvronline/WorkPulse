@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ShieldCheck, Loader2, X, AlertTriangle, CheckCircle2, Wifi, WifiOff, MapPin, ScanFace } from "lucide-react";
 import FaceCapture from "./FaceCapture";
+import { preloadFaceModels } from "../../utils/faceApi";
 import { getOfficeSignals, geolocationErrorMessage } from "../../utils/geolocation";
 import type { Position, WifiInfo, PositionSource } from "../../utils/geolocation";
 import { getCurrentOrg } from "../../api";
@@ -31,11 +32,14 @@ const LOCATION_CODES = new Set([
     "OUTSIDE_GEOFENCE",
     "LOCATION_REQUIRED",
     "OFFICE_LOCATION_NOT_CONFIGURED",
+    "LOCATION_TOO_COARSE",
 ]);
 const FACE_CODES = new Set([
     "FACE_MISMATCH",
     "FACE_NOT_ENROLLED",
     "FACE_REQUIRED",
+    "FACE_REPLAY",
+    "FACE_ATTEMPTS_LOCKED",
 ]);
 
 /**
@@ -113,6 +117,13 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
     // authoritative, but we want to give the user accurate UI feedback
     // *before* they hit submit).
     const [orgWifi, setOrgWifi] = useState<OrgWifiState | null>(null);
+
+    // Warm the face-api models the moment the modal opens, in parallel with
+    // the Wi-Fi/location collection — by the time the user reaches the face
+    // step the ~6 MB of weights are already loaded (or served from cache).
+    useEffect(() => {
+        preloadFaceModels();
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -339,6 +350,11 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
                             })()}
                             <FaceCapture
                                 autoStart
+                                // Auto-capture as soon as a face is steadily in
+                                // frame — but only until the first server
+                                // rejection, so a mismatch doesn't auto-retry
+                                // into the face-attempt rate limit.
+                                autoCapture={!submitErr}
                                 captureLabel="Verify & Clock In"
                                 capturingLabel="Verifying..."
                                 onCapture={handleFaceCapture}

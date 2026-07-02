@@ -264,12 +264,6 @@ export default function ClockInVerifyModal({
                     </View>
                   </View>
                 ) : null}
-                <FaceCaptureWebView
-                  captureLabel="Verify & Clock In"
-                  capturingLabel="Verifying…"
-                  onCapture={handleFaceCapture}
-                  disabled={step === "submitting"}
-                />
                 {step === "submitting" ? (
                   <View style={styles.submittingRow}>
                     <ActivityIndicator color={theme.primary} />
@@ -278,6 +272,24 @@ export default function ClockInVerifyModal({
                 ) : null}
               </>
             ) : null}
+
+            {/* Single persistent WebView: mounted (hidden) from the moment
+                the modal opens, so the CDN library + model download and the
+                camera warm-up happen IN PARALLEL with the location step —
+                by the time the user reaches the face step it's already
+                live. Keeping one instance (rather than remounting) also
+                avoids camera-contention races between two WebViews. */}
+            <View
+              style={step === "location" ? styles.warmup : null}
+              pointerEvents={step === "location" ? "none" : "auto"}
+            >
+              <FaceCaptureWebView
+                captureLabel="Verify & Clock In"
+                capturingLabel="Verifying…"
+                onCapture={handleFaceCapture}
+                disabled={step !== "face"}
+              />
+            </View>
           </View>
         </View>
       </View>
@@ -431,4 +443,11 @@ const makeStyles = (theme: Theme) =>
     gap: 8,
   },
   submittingText: { color: theme.textSecondary, fontSize: 13 },
+  // Kept mounted but visually hidden during the location step so the
+  // WebView (CDN library + models + camera) warms up in parallel.
+  warmup: {
+    height: 1,
+    opacity: 0,
+    overflow: "hidden",
+  },
 });
