@@ -19,6 +19,7 @@ export interface NotificationPayload {
     messageId?: string;
     senderId?: string;
     notificationId?: string;
+    notificationResponse?: string;
     [key: string]: string | undefined;
   };
 }
@@ -277,6 +278,7 @@ class PushNotificationService {
     const data = normalizeNotificationData((content.data || {}) as Record<string, unknown>);
     const enrichedData: Record<string, string | undefined> = {
       ...data,
+      notificationResponse: "1",
       notificationAction:
         actionIdentifier && actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER
           ? actionIdentifier

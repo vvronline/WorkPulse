@@ -14,6 +14,12 @@ import { emitChatUnreadChanged, chatUnreadManager } from "./chatUnreadEvents";
 import { backgroundPushService } from "../services/backgroundPushService";
 import { notifeeService } from "../services/notifeeService";
 import { beginCallNavigation, endCallNavigation } from "./callRouting";
+import {
+  persistPendingChat,
+  setPendingChat,
+  type PendingChatRoute,
+} from "./pendingChat";
+import { notificationLogger, NotificationState } from "../utils/notificationLogger";
 
 /**
  * Root-level listener that handles all incoming push notifications.
@@ -45,9 +51,12 @@ export default function PushNotificationListener() {
         data: safeData,
       };
 
-      backgroundPushService.handleNotificationPayload(payload).catch((err) => {
-        console.warn("Failed to route push payload through background service:", err);
-      });
+      const isNotificationResponse = safeData.notificationResponse === "1";
+      if (!isNotificationResponse) {
+        backgroundPushService.handleNotificationPayload(payload).catch((err) => {
+          console.warn("Failed to route push payload through background service:", err);
+        });
+      }
       handlePushNotification(payload, router);
     });
 
@@ -121,6 +130,7 @@ async function checkAndRecoverPermissions(): Promise<void> {
 function handlePushNotification(payload: NotificationPayload, router: any): void {
   const { data } = payload;
   if (!data) return;
+  const isNotificationResponse = data.notificationResponse === "1";
 
   // Incoming call notification
   if (data.callId && data.conversationId) {
@@ -143,14 +153,24 @@ function handlePushNotification(payload: NotificationPayload, router: any): void
     );
   }
   // Message notification
-  else if (data.conversationId && data.messageId && !data.callId) {
+  else if (
+    !data.callId &&
+    (data.conversationId || data.openChatList === "1") &&
+    (data.messageId ||
+      data.type === "chat_message" ||
+      data.type === "message" ||
+      data.openChatList === "1")
+  ) {
     handleMessageNotification(
       {
-        conversationId: parseInt(data.conversationId, 10),
-        messageId: parseInt(data.messageId, 10),
+        conversationId: data.conversationId || "",
+        messageId: data.messageId,
         senderId: data.senderId ? parseInt(data.senderId, 10) : 0,
         senderName: payload.title,
         unreadCount: data.unreadCount ? parseInt(data.unreadCount, 10) : undefined,
+        dedupeKey: data.dedupeKey,
+        notificationResponse: isNotificationResponse,
+        openChatList: data.openChatList === "1",
       },
       router,
     );
@@ -250,32 +270,95 @@ function handleCallNotification(
  */
 function handleMessageNotification(
   messageData: {
-    conversationId: number;
-    messageId: number;
+    conversationId: string;
+    messageId?: string;
     senderId: number;
     senderName: string;
     unreadCount?: number;
+    dedupeKey?: string;
+    notificationResponse?: boolean;
+    openChatList?: boolean;
   },
   router: any,
 ): void {
   console.log("Handling message notification:", messageData);
-  
+  const convIdNum = Number(messageData.conversationId);
+
   // T032: Update unread manager with server-authoritative count if provided
-  if (messageData.unreadCount !== undefined) {
-    chatUnreadManager.updateUnreadCount(messageData.conversationId, messageData.unreadCount);
+  if (
+    messageData.unreadCount !== undefined &&
+    Number.isFinite(convIdNum) &&
+    convIdNum > 0
+  ) {
+    chatUnreadManager.updateUnreadCount(convIdNum, messageData.unreadCount);
   }
-  
+
   emitChatUnreadChanged();
 
-  // Optionally auto-navigate to chat
-  // Uncomment to navigate automatically on tap:
-  // router.push({
-  //   pathname: '/chat/[conversationId]',
-  //   params: { conversationId: String(messageData.conversationId) },
-  // });
+  if (messageData.notificationResponse) {
+    const route = buildPendingChatRouteFromMessageNotification(messageData);
+    if (!route) {
+      notificationLogger.warn("message_notification_tap_missing_route", {
+        source: "PushNotificationListener",
+        dedupeKey: messageData.dedupeKey,
+        conversationId: messageData.conversationId,
+        messageId: messageData.messageId,
+      });
+      return;
+    }
+
+    void persistPendingChat(route).catch((err) => {
+      notificationLogger.warn("message_notification_tap_persist_failed", {
+        source: "PushNotificationListener",
+        dedupeKey: route.dedupeKey,
+        conversationId: route.conversationId,
+        messageId: route.messageId,
+        metadata: { error: err instanceof Error ? err.message : String(err) },
+      });
+    });
+    setPendingChat(route);
+    notificationLogger.logStateTransition(
+      route.dedupeKey ||
+        (route.openChatList ? "chat:list" : `chat:${route.conversationId}`),
+      route.conversationId,
+      NotificationState.ROUTE_PERSISTED,
+      {
+        source: "PushNotificationListener",
+        action: "expo_notification_response",
+        target: route.openChatList ? "chat_list" : "chat_thread",
+      },
+    );
+    return;
+  }
 
   // For now, just log. The user will tap the notification in their
   // notification center to open the app and navigate.
+}
+
+function buildPendingChatRouteFromMessageNotification(messageData: {
+  conversationId: string;
+  messageId?: string;
+  dedupeKey?: string;
+  openChatList?: boolean;
+}): PendingChatRoute | null {
+  const conversationId = String(messageData.conversationId || "").trim();
+  const openChatList = Boolean(messageData.openChatList);
+  if (!conversationId && !openChatList) return null;
+
+  const dedupeKey =
+    messageData.dedupeKey ||
+    (openChatList
+      ? "chat:list"
+      : messageData.messageId
+        ? `msg:${messageData.messageId}`
+        : `chat:${conversationId}`);
+
+  return {
+    conversationId: openChatList ? "" : conversationId,
+    dedupeKey,
+    messageId: messageData.messageId,
+    ...(openChatList ? { openChatList: true } : {}),
+  };
 }
 
 /**
