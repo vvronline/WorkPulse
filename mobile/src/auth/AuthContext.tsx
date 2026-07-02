@@ -6,6 +6,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import { AppState } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { clearToken, getToken, setToken } from "./tokenStore";
@@ -300,6 +301,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       /* ignore */
     }
   }, []);
+
+  // ── Live plan/feature updates ─────────────────────────────────────────────
+  // The platform console can flip a tenant's feature overrides at any time
+  // (PUT /admin/tenants/:id/features). The server broadcasts a
+  // `tenant_features_changed` WS event with the new effective feature map —
+  // patch it straight into the user object so every `userHasFeature` gate
+  // (Sprint tab, chat tab, meetings, …) reacts WITHOUT a re-login. This is
+  // what fixes "toggling Agile & Sprints off still shows Sprint on mobile".
+  useEffect(() => {
+    const unsubscribe = socket.subscribe((msg) => {
+      if (msg.type !== "tenant_features_changed") return;
+      const features = msg.data?.features;
+      if (!features || typeof features !== "object") return;
+      setUser((prev) =>
+        prev ? { ...prev, tenant_features: features } : prev,
+      );
+    });
+    return unsubscribe;
+  }, []);
+
+  // Belt-and-braces freshness: re-fetch the profile (which carries
+  // tenant_features/tenant_plan) whenever the app returns to the foreground,
+  // so even a missed WS broadcast (app was backgrounded) converges quickly.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active" && user) void refreshUser();
+    });
+    return () => sub.remove();
+  }, [user != null, refreshUser]);
 
   // ── Biometric login ──────────────────────────────────────────────────────
 

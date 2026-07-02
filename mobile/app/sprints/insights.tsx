@@ -8,9 +8,10 @@ import {
   Text,
   View,
 } from "react-native";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
+import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
 import { TASK_PRIORITY, TASK_STATUS } from "../../src/constants";
 import {
   getSprintCycleTime,
@@ -43,7 +44,16 @@ export default function SprintInsights() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const params = useLocalSearchParams<{ sprint_id?: string }>();
+  const router = useRouter();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
+  // Sprint Insights is part of the "Agile & Sprints" feature bundle — bounce
+  // back if the tenant's plan/feature-override disables it (deep links,
+  // stale navigation stacks).
+  const agileEnabled = userHasFeature(user, "agile");
+  useEffect(() => {
+    if (!agileEnabled) router.back();
+  }, [agileEnabled, router]);
   const [selectedId, setSelectedId] = useState<number | null>(
     params.sprint_id ? Number(params.sprint_id) : null,
   );
@@ -51,6 +61,7 @@ export default function SprintInsights() {
 
   const { data: sprints = EMPTY_SPRINTS } = useQuery({
     queryKey: ["sprints", "list"],
+    enabled: agileEnabled,
     queryFn: async () => (await getSprints()).data?.sprints || EMPTY_SPRINTS,
   });
 

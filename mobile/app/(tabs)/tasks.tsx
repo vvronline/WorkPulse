@@ -138,9 +138,19 @@ export default function TasksScreen() {
   const [assignableUsers, setAssignableUsers] = useState<AssignableUser[]>([]);
 
   const canManageSprint = SPRINT_MANAGER_ROLES.includes(user?.role ?? "");
-  // Sprint Insights is an agile-plan feature (mirrors the web TasksHeader,
-  // which gates the Insights link behind hasFeature("agile")).
+  // The entire Sprint tab (and all sprint queries) is gated behind the
+  // "Agile & Sprints" plan feature — mirrors the web client, where the Sprint
+  // tab disappears when the tenant's plan/feature-override disables agile.
+  // The server also 403s /tasks/available-sprints when agile is off, so this
+  // gate keeps the UI and API in lock-step.
   const agileEnabled = userHasFeature(user, "agile");
+
+  // If agile gets disabled while the user is sitting on the Sprint tab
+  // (feature override toggled from the platform console), bounce them back
+  // to Backlog instead of stranding them on a dead tab.
+  useEffect(() => {
+    if (!agileEnabled && tab === "sprint") setTab("backlog");
+  }, [agileEnabled, tab]);
 
   const backlogQuery = useMemo(() => {
     const q: Record<string, string> = { limit: "100" };
@@ -176,9 +186,19 @@ export default function TasksScreen() {
 
   const { data: sprints = EMPTY_SPRINTS, refetch: refetchSprints } = useQuery({
     queryKey: ["tasks", "sprints"],
+    // Skipped entirely when the agile feature is off — the endpoint would
+    // 403 with FEATURE_NOT_AVAILABLE anyway.
+    enabled: agileEnabled,
     queryFn: async () => {
-      const { data } = await getAvailableSprints();
-      return data || [];
+      try {
+        const { data } = await getAvailableSprints();
+        return data || [];
+      } catch (e: any) {
+        // Mid-session feature toggle: treat the 403 feature gate as an empty
+        // sprint list rather than a retryable error.
+        if (e?.response?.status === 403) return [];
+        throw e;
+      }
     },
   });
 
@@ -204,7 +224,7 @@ export default function TasksScreen() {
   // sprint is selected.
   const { data: sprintDetail } = useQuery({
     queryKey: ["tasks", "sprint", activeSprintId],
-    enabled: activeSprintId != null,
+    enabled: agileEnabled && activeSprintId != null,
     queryFn: async () => {
       const [tasksRes, statsRes] = await Promise.allSettled([
         getSprintTasks(activeSprintId as number),
@@ -380,17 +400,19 @@ export default function TasksScreen() {
         }
         label={`Backlog${backlog.length > 0 ? ` (${backlog.length})` : ""}`}
       />
-      <TabButton
-        active={tab === "sprint"}
-        onPress={() => setTab("sprint")}
-        icon={
-          <Rocket
-            size={15}
-            color={tab === "sprint" ? "#fff" : theme.textSecondary}
-          />
-        }
-        label="Sprint"
-      />
+      {agileEnabled ? (
+        <TabButton
+          active={tab === "sprint"}
+          onPress={() => setTab("sprint")}
+          icon={
+            <Rocket
+              size={15}
+              color={tab === "sprint" ? "#fff" : theme.textSecondary}
+            />
+          }
+          label="Sprint"
+        />
+      ) : null}
       <TabButton
         active={tab === "service-desk"}
         onPress={() => setTab("service-desk")}

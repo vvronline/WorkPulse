@@ -1,5 +1,12 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import {
+    createContext,
+    useCallback,
+    useContext,
+    useMemo,
+    type ReactNode,
+} from "react";
 import { useAuth } from "./AuthContext";
+import useWebSocket from "./hooks/useWebSocket";
 
 interface FeaturesContextValue {
     features: Record<string, boolean>;
@@ -28,7 +35,24 @@ const FeaturesContext = createContext<FeaturesContextValue>({
 });
 
 export function FeaturesProvider({ children }: { children: ReactNode }) {
-    const { user } = useAuth();
+    const { user, updateUser } = useAuth() as any;
+
+    // Live feature updates: when a platform admin edits this tenant's feature
+    // overrides (PUT /admin/tenants/:id/features) the server broadcasts a
+    // `tenant_features_changed` WS event carrying the new effective feature
+    // map. Patch it into the auth user so every hasFeature() gate reacts
+    // immediately — previously the web client only picked up an override
+    // change on a full page reload.
+    const onWsMessage = useCallback(
+        (msg: { type?: string; data?: any }) => {
+            if (msg?.type !== "tenant_features_changed") return;
+            const features = msg.data?.features;
+            if (!features || typeof features !== "object") return;
+            updateUser({ tenant_features: features });
+        },
+        [updateUser],
+    );
+    useWebSocket(user ? onWsMessage : null);
 
     const value = useMemo<FeaturesContextValue>(() => {
         const features =

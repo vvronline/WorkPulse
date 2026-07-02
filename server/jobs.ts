@@ -435,10 +435,17 @@ async function expireStaleRingingCalls(): Promise<number> {
  */
 async function runSprintLifecycleSweep(): Promise<number> {
   const { runSprintLifecycle } = require("./services/sprintScheduler");
+  const { isFeatureEnabled } = require("./utils/planCatalog");
   const redis = require("./redis");
   let totalTransitions = 0;
   await forEachTenant(
     async (db: TenantDb, tenant) => {
+      // Skip tenants whose "Agile & Sprints" feature is disabled (plan
+      // default or per-tenant override) — otherwise the scheduler keeps
+      // creating/rotating auto sprints for tenants that turned the feature
+      // off from the platform console. The legacy single-tenant master
+      // context (tenant.id === null) has no plan gating and is never skipped.
+      if (tenant.id != null && !isFeatureEnabled(tenant, "agile")) return;
       const { transitions } = await runSprintLifecycle(
         { db, tenantId: tenant.id },
         redis,

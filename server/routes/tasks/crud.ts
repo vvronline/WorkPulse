@@ -209,7 +209,12 @@ router.post('/', auth, loadUserContext, async (req: Request, res: Response) => {
         }
 
         let validSprintId = null;
-        if (sprint_id) {
+        // Sprint assignment is part of the Agile feature bundle — when the
+        // tenant's "Agile & Sprints" flag is off (plan default or feature
+        // override) silently ignore any sprint_id so a stale client can't
+        // sneak a task into a sprint.
+        const { isFeatureEnabled } = require('../../utils/planCatalog');
+        if (sprint_id && isFeatureEnabled((req as any).tenant, 'agile')) {
             const sprint = (await req.db!.query(
                 'SELECT s.id, s.team_id, s.end_date FROM sprints s JOIN teams t ON t.id = s.team_id WHERE s.id = $1 AND t.org_id = $2',
                 [sprint_id, req.userOrgId]
@@ -512,7 +517,12 @@ router.put('/:id', auth, loadUserContext, async (req: Request, res: Response) =>
         }
 
         let newSprintId = task.sprint_id;
-        if (sprint_id !== undefined) {
+        // Agile gate: when "Agile & Sprints" is disabled for the tenant,
+        // ignore sprint changes entirely (clearing is still harmless but we
+        // keep behaviour deterministic: no sprint mutations at all).
+        const { isFeatureEnabled: isAgileFeatureEnabled } = require('../../utils/planCatalog');
+        const agileEnabledForTenant = isAgileFeatureEnabled((req as any).tenant, 'agile');
+        if (sprint_id !== undefined && agileEnabledForTenant) {
             if (sprint_id === null || sprint_id === '') {
                 newSprintId = null;
             } else {

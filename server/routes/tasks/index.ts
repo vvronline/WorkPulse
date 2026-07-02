@@ -34,8 +34,13 @@ router.use('/', metaRouter);          // /assignable-users, /labels (GET)
 router.use('/', labelsRouter);        // /labels/manage, /labels (POST), /labels/:id
 router.use('/', backlogRouter);       // /backlog (GET/POST), /:id/schedule, /:id/unschedule
 router.use('/', searchRouter);        // /search, /lookup/quicksearch
-router.use('/', sprintsRouter);       // /available-sprints, /:id/assign-sprint
-router.use('/', carryForwardRouter);  // /carry-forward
+// Sprint-related task routes are part of the Agile feature bundle — same gate
+// as /api/sprints and /api/agile. The gate is applied PER-ROUTE inside the
+// sub-router (not on the mount, which matches every /api/tasks path) so a
+// tenant with "Agile & Sprints" disabled still has full access to backlog,
+// CRUD, comments, etc.
+router.use('/', sprintsRouter);       // /available-sprints, /:id/assign-sprint (agile-gated)
+router.use('/', carryForwardRouter);  // /carry-forward (daily planner — NOT agile-gated)
 
 // :id-based sub-routers
 router.use('/', commentsRouter);      // /:id/comments

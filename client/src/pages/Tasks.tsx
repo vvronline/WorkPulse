@@ -18,6 +18,7 @@ import {
   getProjects,
 } from "../api";
 import { useAgileConfig } from "../AgileConfigContext";
+import { useFeatures } from "../FeaturesContext";
 import { SprintLifecycleControls } from "../components/agile/AgileWorkflowPanels";
 import { ArrowDownCircle, ClipboardList } from "lucide-react";
 import ConfirmDialog from "../components/common/ConfirmDialog";
@@ -49,6 +50,7 @@ const EMPTY: any[] = [];
 
 export default function Tasks() {
   const { user: currentUser } = useAuth() as any;
+  const { hasFeature } = useFeatures();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tasks, setTasks] = useState<any[]>([]);
@@ -90,8 +92,28 @@ export default function Tasks() {
   // doesn't auto-reload after a team is assigned).
   const { data: availableSprints = EMPTY } = useQuery({
     queryKey: ["tasks", "availableSprints"],
-    queryFn: async () => (await getAvailableSprints()).data as any[],
+    // "Agile & Sprints" gate: skip the (server-403-gated) sprint lookup
+    // entirely when the tenant's plan/feature-override disables agile.
+    enabled: hasFeature("agile"),
+    queryFn: async () => {
+      try {
+        return (await getAvailableSprints()).data as any[];
+      } catch (err: any) {
+        // Mid-session feature toggle → treat the feature-gate 403 as "no
+        // sprints" instead of a retryable error.
+        if (err?.response?.status === 403) return [] as any[];
+        throw err;
+      }
+    },
   });
+
+  // If agile gets disabled while the user is on the Sprint tab (feature
+  // override flipped from the platform console), bounce back to Backlog.
+  useEffect(() => {
+    if (!hasFeature("agile") && activeTab === "sprint") {
+      setActiveTab("backlog");
+    }
+  }, [hasFeature, activeTab]);
   const [sprintStats, setSprintStats] = useState<any>(null);
   const { unitLabel, features } = useAgileConfig() as any;
   const autoCarriedRef = useRef<string | null>(null); // stores the last date carry-forward ran

@@ -2,6 +2,7 @@ import React, { memo, useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Zap, Inbox } from "lucide-react";
 import { useAuth } from "../../AuthContext";
+import { useFeatures } from "../../FeaturesContext";
 import useWebSocket from "../../hooks/useWebSocket";
 import { getActiveSprint, getSprintTasks, getBacklog } from "../../api";
 import s from "./SprintProgressCard.module.css";
@@ -27,6 +28,7 @@ interface SprintData {
 
 const SprintProgressCard = memo(function SprintProgressCard() {
     const { user } = useAuth();
+    const { hasFeature } = useFeatures();
     const navigate = useNavigate();
     const [sprint, setSprint] = useState<SprintData | null>(null);
     const [tasks, setTasks] = useState<SprintTask[]>([]);
@@ -35,36 +37,50 @@ const SprintProgressCard = memo(function SprintProgressCard() {
     const [noSprint, setNoSprint] = useState(false);
     const cancelledRef = useRef(false);
 
+    // Shared backlog fallback — used when there's no active sprint AND when
+    // the tenant's "Agile & Sprints" feature is disabled entirely.
+    const loadBacklogFallback = useCallback(async () => {
+        setNoSprint(true);
+        setSprint(null);
+        try {
+            const blRes = await getBacklog({ assignee: "me" });
+            if (!cancelledRef.current) {
+                const myBacklog = ((blRes.data.tasks as SprintTask[]) || [])
+                    .filter((t) => t.status !== "done")
+                    .sort((a, b) => (PRIORITY_ORDER[a.priority || ""] ?? 3) - (PRIORITY_ORDER[b.priority || ""] ?? 3))
+                    .slice(0, 5);
+                setBacklogTasks(myBacklog);
+            }
+        } catch { /* silent */ }
+    }, []);
+
     const loadCard = useCallback(async () => {
         try {
+            // "Agile & Sprints" gate: skip the (server-403-gated) active-sprint
+            // lookup entirely when the feature is off for the tenant.
+            if (!hasFeature("agile")) {
+                await loadBacklogFallback();
+                return;
+            }
             const { data } = await getActiveSprint();
             if (cancelledRef.current) return;
             if (!data.sprint) {
-                setNoSprint(true);
-                setSprint(null);
-                // Fetch backlog tasks assigned to current user
-                try {
-                    const blRes = await getBacklog({ assignee: "me" });
-                    if (!cancelledRef.current) {
-                        const myBacklog = ((blRes.data.tasks as SprintTask[]) || [])
-                            .filter((t) => t.status !== "done")
-                            .sort((a, b) => (PRIORITY_ORDER[a.priority || ""] ?? 3) - (PRIORITY_ORDER[b.priority || ""] ?? 3))
-                            .slice(0, 5);
-                        setBacklogTasks(myBacklog);
-                    }
-                } catch { /* silent */ }
+                await loadBacklogFallback();
                 return;
             }
             setNoSprint(false);
             setSprint(data.sprint as SprintData);
             const taskRes = await getSprintTasks(data.sprint.id);
             if (!cancelledRef.current) setTasks((taskRes.data.tasks as SprintTask[]) || []);
-        } catch {
-            if (!cancelledRef.current) setNoSprint(true);
+        } catch (err: any) {
+            if (cancelledRef.current) return;
+            // Mid-session feature toggle → server 403s; degrade to backlog view.
+            if (err?.response?.status === 403) await loadBacklogFallback();
+            else setNoSprint(true);
         } finally {
             if (!cancelledRef.current) setLoading(false);
         }
-    }, []);
+    }, [hasFeature, loadBacklogFallback]);
 
     useEffect(() => {
         cancelledRef.current = false;

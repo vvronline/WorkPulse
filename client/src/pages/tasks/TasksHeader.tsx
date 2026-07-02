@@ -158,7 +158,10 @@ export default function TasksHeader({
                 <div className={s["tasks-header-actions"]}>
                     {/* Tab switcher */}
                     <div className={s["tab-switcher"]}>
-                        {availableSprints.length > 0 && (
+                        {/* Sprint tab is part of the Agile feature bundle — explicitly
+                            gated on hasFeature("agile") instead of relying on the
+                            sprint list happening to be empty when the feature is off. */}
+                        {hasFeature("agile") && availableSprints.length > 0 && (
                             <button
                                 className={`${s["tab-btn"]} ${activeTab === "sprint" ? s["tab-active"] : ""}`}
                                 onClick={() => {
@@ -222,7 +225,7 @@ export default function TasksHeader({
                     )}
 
                     {/* Sprint select (when multiple sprints) */}
-                    {activeTab === "sprint" && availableSprints.length > 1 && (
+                    {hasFeature("agile") && activeTab === "sprint" && availableSprints.length > 1 && (
                         <select
                             value={selectedSprintId || ""}
                             onChange={(e) => setSelectedSprintId(Number(e.target.value))}
@@ -258,7 +261,7 @@ export default function TasksHeader({
                         </button>
                     )}
 
-                    {activeTab === "sprint" && selectedSprintId && (
+                    {hasFeature("agile") && activeTab === "sprint" && selectedSprintId && (
                         <button
                             className={`btn btn-secondary ${s["add-task-toggle"]} ${s[""]}`}
                             onClick={() => {
