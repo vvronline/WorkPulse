@@ -57,15 +57,37 @@ export default function IncomingCallListener() {
         // INVISIBLY in the background: its in-app ringtone plays (the "sound")
         // but the user sees NO actionable status-bar/lock-screen notification
         // and has to open the app to find the call — the exact "sound but no
-        // notification" bug. So when the app is not active we do NOTHING here
-        // (no navigate, no nav-claim) and let the FCM→Notifee/native CallRinger
-        // full-screen-intent CallStyle notification own the surface. Its Answer
-        // / body-tap deep link opens this same call screen on demand. We also
-        // warm the ICE config so Cloudflare TURN creds are ready BEFORE the user
-        // answers (deterministic first-connection).
+        // notification" bug. So when the app is not active we do not navigate;
+        // the Notifee/native CallRinger full-screen-intent CallStyle
+        // notification owns the surface. Its Answer / body-tap deep link opens
+        // this same call screen on demand. We also warm the ICE config so
+        // Cloudflare TURN creds are ready BEFORE the user answers
+        // (deterministic first-connection).
+        //
+        // WS RING FALLBACK (Signal parity — "the socket is the source of
+        // truth; push is only a wake-up"): previously this path did NOTHING
+        // when backgrounded and trusted the FCM push to surface the call. If
+        // push delivery failed (dev build without FCM, registration failure,
+        // notification permission revoked, Doze delays), the receiver NEVER
+        // rang even though the `call_incoming` WS frame was sitting right
+        // here. Now we post the same full-screen-intent ringing notification
+        // from the WS path too. This is safe against double-ring: the
+        // notification id is derived from callId+conversationId (a later FCM
+        // push REPLACES it rather than stacking), and cancelled-call
+        // tombstones still suppress dead calls.
         const appActive = AppState.currentState === "active";
         if (!appActive) {
           void warmIceConfig();
+          void notifeeService.displayIncomingCall({
+            type: "call_incoming",
+            callId: String(d.callId),
+            conversationId: String(d.conversationId),
+            callerId: d.callerId != null ? String(d.callerId) : undefined,
+            callerName: d.callerName || undefined,
+            callerAvatar: d.callerAvatar || undefined,
+            callType: d.callType === "video" ? "video" : "voice",
+            isGroup: d.isGroup ? "1" : undefined,
+          });
           return;
         }
 

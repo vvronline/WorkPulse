@@ -139,6 +139,10 @@ function ThemedStack() {
         }}
       />
       <Stack.Screen
+        name="call-info/[callId]"
+        options={{ ...headerScreen, title: "Call info" }}
+      />
+      <Stack.Screen
         name="leaves/apply"
         options={{ ...headerScreen, title: "Apply for Leave" }}
       />

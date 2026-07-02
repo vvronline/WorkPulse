@@ -389,6 +389,45 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.openConversationId, router]);
 
+  // Open the Signal-style Call Info screen for a history entry (mirrors
+  // Signal-Android's CallInfoFragment). A bare row tap must NEVER blind-dial —
+  // it shows the details card with explicit Voice/Video/Message actions. The
+  // per-row quick-call icon (right side) still offers one-tap call-back.
+  function openCallInfo(entry: CallLogEntry) {
+    const outgoing = entry.caller_id === user?.id;
+    const display = entry.is_group
+      ? entry.group_name || "Group"
+      : outgoing
+        ? entry.other_name || "Unknown"
+        : entry.caller_name || "Unknown";
+    const peerAvatar = entry.is_group
+      ? ""
+      : outgoing
+        ? entry.other_avatar || ""
+        : entry.caller_avatar || "";
+    const params: Record<string, string> = {
+      callId: String(entry.id),
+      conversationId: String(entry.conversation_id),
+      peerName: display,
+      callType: entry.call_type === "video" ? "video" : "voice",
+      direction: outgoing ? "outgoing" : "incoming",
+      status: entry.status || "",
+      createdAt: entry.created_at || "",
+    };
+    if (peerAvatar) params.peerAvatar = peerAvatar;
+    if (entry.duration) params.duration = String(entry.duration);
+    if (entry.is_group) {
+      params.isGroup = "1";
+      if (
+        Array.isArray(entry.group_member_avatars) &&
+        entry.group_member_avatars.length
+      ) {
+        params.groupMemberAvatars = JSON.stringify(entry.group_member_avatars);
+      }
+    }
+    router.push({ pathname: "/call-info/[callId]", params });
+  }
+
   // Call back from a history entry (mirrors the web Calls tab, where rows are
   // actionable). Group calls aren't supported by the 1:1 native call screen,
   // so for group entries we open the conversation's chat instead.
@@ -1097,7 +1136,7 @@ export default function ChatScreen() {
                   pressed && styles.rowPressed,
                 ]}
                 onPress={() =>
-                  selectionMode ? toggleSelected(item.id) : callBack(item)
+                  selectionMode ? toggleSelected(item.id) : openCallInfo(item)
                 }
                 onLongPress={() =>
                   selectionMode ? toggleSelected(item.id) : enterSelection(item.id)
@@ -1148,11 +1187,23 @@ export default function ChatScreen() {
                 </View>
                 <View style={styles.callRight}>
                   <Text style={styles.time}>{timeAgo(item.created_at)}</Text>
-                  {item.call_type === "video" ? (
-                    <Video size={13} color={theme.textMuted} />
-                  ) : (
-                    <Phone size={13} color={theme.textMuted} />
-                  )}
+                  {/* Quick call-back (Signal parity): one intentional tap on
+                      the type icon redials; a bare row tap opens Call Info. */}
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.callBackBtn,
+                      pressed && styles.callBackBtnPressed,
+                    ]}
+                    hitSlop={8}
+                    disabled={selectionMode}
+                    onPress={() => callBack(item)}
+                  >
+                    {item.call_type === "video" ? (
+                      <Video size={18} color={theme.primary} />
+                    ) : (
+                      <Phone size={18} color={theme.primary} />
+                    )}
+                  </Pressable>
                 </View>
               </Pressable>
             );
@@ -1530,6 +1581,14 @@ const makeStyles = (theme: Theme) =>
     callMeta: { flexDirection: "row", alignItems: "center", gap: 5 },
     callMetaText: { fontSize: 13, color: theme.textSecondary },
     callRight: { alignItems: "flex-end", gap: 4 },
+    callBackBtn: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    callBackBtnPressed: { backgroundColor: theme.surface },
     empty: { alignItems: "center", gap: 12, paddingTop: 90 },
     emptyIconWrap: {
       width: 74,

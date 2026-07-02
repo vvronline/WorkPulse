@@ -71,6 +71,7 @@ class NotificationDispatcherService {
     initialNotificationRead: false,
     timestampCaptured: 0,
   };
+  private initializationPromise: Promise<void> | null = null;
 
   private subscribers: Set<(route: NotificationRoute | null) => void> = new Set();
   private readonly STORE_KEY = 'notification_dispatcher_route';
@@ -95,19 +96,53 @@ class NotificationDispatcherService {
    * @param sourceState - Where the app is coming from (cold/warm/bg)
    */
   async initialize(sourceState: NotificationRoute['sourceState'] = 'cold_start'): Promise<void> {
+    if (this.initializationPromise) return this.initializationPromise;
+    this.initializationPromise = this.doInitialize(sourceState);
+    try {
+      await this.initializationPromise;
+    } finally {
+      this.initializationPromise = null;
+    }
+  }
+
+  private async doInitialize(sourceState: NotificationRoute['sourceState'] = 'cold_start'): Promise<void> {
     try {
       const startTime = Date.now();
 
-      // Guard: Only read once per process lifecycle
-      if (this.state.initialNotificationRead) {
-        notificationLogger.info('dispatcher_already_initialized', {
+      const hasRoute = Boolean(this.getRoute());
+      const shouldRecheckInitialNotification =
+        this.state.initialNotificationRead && this.state.initialized && !hasRoute;
+
+      // Guard only while the first read is actively in flight. Android back can
+      // destroy the Activity while leaving this JS singleton alive; the next
+      // notification tap starts a fresh Activity with a fresh launch intent, so
+      // a process-lifetime "read once" guard would skip that intent and fall
+      // through to the dashboard.
+      if (this.state.initialNotificationRead && !this.state.initialized) {
+        notificationLogger.info('dispatcher_initialization_in_progress', {
           source: 'dispatch',
           metadata: { sourceState },
         });
         return;
       }
 
-      this.state.initialNotificationRead = true;
+      if (hasRoute) {
+        notificationLogger.info('dispatcher_already_has_route', {
+          source: 'dispatch',
+          metadata: { sourceState },
+        });
+        return;
+      }
+
+      if (shouldRecheckInitialNotification) {
+        notificationLogger.info('dispatcher_rechecking_initial_notification', {
+          source: 'dispatch',
+          metadata: { sourceState },
+        });
+      } else {
+        this.state.initialNotificationRead = true;
+        this.state.initialized = false;
+      }
 
       notificationLogger.info('dispatcher_initialize_start', {
         source: 'dispatch',

@@ -1329,8 +1329,8 @@ class NotifeeService {
       : [{ text: body, senderName, timestamp: Date.now() }];
 
     const distinctSenders = new Set(threadMessages.map((m) => m.senderName));
-  const isGroupThread = isExplicitGroup || distinctSenders.size > 1;
-  const messagingTitle = groupTitle || title;
+    const isGroupThread = isExplicitGroup || distinctSenders.size > 1;
+    const messagingTitle = groupTitle || title;
 
     // Build the MessagingStyle from the accumulated history. `personIcon` (the
     // locally-cached sender avatar) is attached on the SECOND post once the
@@ -1360,12 +1360,16 @@ class NotifeeService {
 
     // Build the base Android options ONCE so the initial (no-avatar) post and the
     // later avatar-update post stay perfectly in sync.
-    const baseAndroid = (largeIconOpts: Record<string, unknown>) => ({
+    const baseAndroid = (
+      largeIconOpts: Record<string, unknown>,
+      quietUpdate = false,
+    ) => ({
       channelId: MESSAGE_CHANNEL_ID,
       importance: this.AndroidImportance.HIGH ?? 4,
       visibility: this.AndroidVisibility.PRIVATE ?? 0,
       pressAction: { id: "default", launchActivity: "default" },
       sound: "default",
+      ...(quietUpdate ? { onlyAlertOnce: true } : {}),
       // SIGNAL-PARITY cross-conversation grouping: every per-conversation child
       // shares this group key so Android collapses 2+ conversations under the
       // single summary entry posted by postGroupSummary() (Signal's
@@ -1416,6 +1420,7 @@ class NotifeeService {
     // This is the actual delivery and must never be blocked by the network.
     const postNotification = async (
       largeIconOpts: Record<string, unknown>,
+      quietUpdate = false,
     ): Promise<void> => {
       try {
         await notifee.displayNotification({
@@ -1423,7 +1428,7 @@ class NotifeeService {
           title,
           body: notificationBody,
           data: { ...data } as Record<string, string>,
-          android: baseAndroid(largeIconOpts),
+          android: baseAndroid(largeIconOpts, quietUpdate),
         });
       } catch (err) {
         // SELF-HEAL: the most likely failure is the MESSAGE channel not existing
@@ -1446,6 +1451,7 @@ class NotifeeService {
               pressAction: { id: "default", launchActivity: "default" },
               sound: "default",
               smallIcon: MESSAGE_SMALL_ICON,
+              ...(quietUpdate ? { onlyAlertOnce: true } : {}),
               ...largeIconOpts,
               style: buildMessagingStyle(
                 largeIconOpts.largeIcon as string | undefined,
@@ -1466,6 +1472,7 @@ class NotifeeService {
                 pressAction: { id: "default", launchActivity: "default" },
                 sound: "default",
                 smallIcon: MESSAGE_SMALL_ICON,
+                ...(quietUpdate ? { onlyAlertOnce: true } : {}),
                 ...largeIconOpts,
               },
             });
@@ -1540,7 +1547,7 @@ class NotifeeService {
           await postNotification({
             largeIcon: localUri,
             circularLargeIcon: true,
-          });
+          }, true);
         }
       } catch (err) {
         // Best-effort: the notification was already delivered in step 1.

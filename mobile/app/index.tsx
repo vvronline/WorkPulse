@@ -63,6 +63,12 @@ export default function Index() {
     let cancelled = false;
     (async () => {
       const routeDecisionStartedAt = Date.now();
+      // mobile/index.js starts this once at JS entry, but Android's back button
+      // can destroy only the Activity while the JS process/singletons survive.
+      // Re-invoking the dispatcher here lets the single reader capture a fresh
+      // notification launch intent for that Activity relaunch case.
+      await notificationDispatcher.initialize("cold_start");
+      if (cancelled) return;
       // Wait for the dispatcher's one-shot getInitialNotification() read to
       // FINISH (route found OR "not a notification launch") instead of the old
       // fixed 600ms route-wait. On a killed cold start the read can easily
@@ -71,8 +77,20 @@ export default function Index() {
       // state opens the dashboard" bug. The normal (non-notification) launch
       // resolves the moment the read completes, so this adds no delay to a
       // plain app open; 3s is a hard safety cap only.
-      const dispatcherRoute =
+      let dispatcherRoute =
         await notificationDispatcher.waitForInitialization(3000);
+      // Second-chance read for true killed launches: the JS entry point starts
+      // Notifee's initial-notification read before React mounts. On some
+      // Android builds that early read can report "none" before the launch
+      // intent is visible to JS. Re-check briefly from the mounted root before
+      // allowing the default dashboard redirect.
+      if (!dispatcherRoute) {
+        for (let attempt = 0; attempt < 3 && !dispatcherRoute; attempt++) {
+          await new Promise((r) => setTimeout(r, 100));
+          await notificationDispatcher.initialize("cold_start");
+          dispatcherRoute = notificationDispatcher.peekRoute();
+        }
+      }
       if (cancelled) return;
 
       let route = peekPendingCall();

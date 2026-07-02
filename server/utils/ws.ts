@@ -1277,9 +1277,19 @@ async function handleChatMessage(
             //     trust rows older than the TTL here, or a user gets pinned
             //     "busy" until the next sweep / indefinitely for 'answered').
             //   • 'ringing' counts only within the ring TTL (~45s).
-            //   • 'answered' counts only within a max live-call window
-            //     (created within 12h) so an abandoned answered row can't
-            //     permanently block calling.
+            //   • 'answered' counts only within a max PLAUSIBLE live-call
+            //     window. This used to be 12h from created_at, which meant a
+            //     single abandoned 'answered' row (client crashed / app killed
+            //     mid-call so call_end never arrived) pinned the callee as
+            //     "busy" for up to 12 HOURS — every caller got call_busy and
+            //     the callee's phone NEVER RANG (a primary "receiver never
+            //     rings" cause when the stale-call sweep isn't running, e.g.
+            //     no Redis/BullMQ). 1:1 calls realistically don't exceed a
+            //     couple of hours (group calls use the meeting mesh), so we
+            //     tighten the window to 2h and anchor it on started_at (the
+            //     moment the call actually connected) falling back to
+            //     created_at. The 20s stale-call sweep remains the
+            //     authoritative cleanup; this is the defensive bound.
             const busy = (
               await db.query(
                 `SELECT 1 FROM call_logs cl
@@ -1290,7 +1300,7 @@ async function handleChatMessage(
                                      (cl.status = 'ringing'
                                        AND cl.created_at > NOW() - INTERVAL '45 seconds')
                                   OR (cl.status = 'answered'
-                                       AND cl.created_at > NOW() - INTERVAL '12 hours')
+                                       AND COALESCE(cl.started_at, cl.created_at) > NOW() - INTERVAL '2 hours')
                                    )
                              LIMIT 1`,
                 [targetUserId, conversationId],
