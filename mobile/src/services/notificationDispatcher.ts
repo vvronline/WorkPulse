@@ -78,6 +78,12 @@ class NotificationDispatcherService {
   private readonly STORE_KEY = 'notification_dispatcher_route';
   private readonly STATE_TTL_MS = 60 * 1000; // 60 seconds
 
+  // Last dedupeKey routed from a WARM-resume recheck (onNewIntent tap). Guards
+  // against re-opening the same chat when the app is foregrounded again without
+  // a fresh notification tap (getInitialNotification can re-surface the same
+  // intent). See recheckOnForeground.
+  private lastForegroundDedupeKey: string | null = null;
+
   private constructor() {}
 
   static getInstance(): NotificationDispatcherService {
@@ -363,6 +369,64 @@ class NotificationDispatcherService {
    */
   peekRoute(): NotificationRoute | null {
     return this.getRoute();
+  }
+
+  /**
+   * WARM-RESUME RECHECK (root-cause fix for "tapping a message notification only
+   * opens the correct chat sometimes / opens the dashboard").
+   *
+   * When the app process is alive but backgrounded, tapping a Notifee
+   * notification is delivered to the EXISTING singleTask Activity via
+   * onNewIntent — NOT onCreate. In an Expo app Notifee is not wired into
+   * onNewIntent, so no PRESS event fires and app/index.tsx (the only reader of
+   * the cold-start dispatcher) never re-mounts. The tapped chat is lost.
+   *
+   * The withAndroidNewIntent config plugin makes MainActivity.onNewIntent call
+   * setIntent(intent), so the freshly-tapped notification becomes the Activity's
+   * current intent. This method — called on every app foreground — re-reads
+   * notifee.getInitialNotification() (which reads that current intent), and when
+   * it finds a fresh message/call notification, stages it into the pendingChat /
+   * pendingCall store so the mounted PendingChatNavigator / PendingCallNavigator
+   * opens the exact thread. Deduped by dedupeKey so a plain foreground (no new
+   * tap) never re-opens the same chat.
+   */
+  async recheckOnForeground(): Promise<void> {
+    try {
+      const notification = await notifee.getInitialNotification();
+      if (!notification) {
+        console.log('[WP-WARM] recheckOnForeground getInitialNotification=null');
+        return;
+      }
+      const payload: any = notification.notification?.data || {};
+      const pressActionId: string | undefined = notification.pressAction?.id;
+      const route = this.parseNotificationData(payload, 'warm', pressActionId);
+      if (!route) {
+        console.log(
+          `[WP-WARM] recheckOnForeground parse REJECTED type=${payload.type ?? '-'} ` +
+            `conv=${payload.conversationId ?? '-'} press=${pressActionId ?? '-'}`,
+        );
+        return;
+      }
+      // Dedupe: a plain foreground (no fresh tap) can re-surface the SAME intent;
+      // never re-open a chat the user already opened from this notification.
+      const key = route.dedupeKey || `${route.type}:${route.conversationId}`;
+      if (this.lastForegroundDedupeKey === key) {
+        console.log(`[WP-WARM] recheckOnForeground DUP skip key=${key}`);
+        return;
+      }
+      this.lastForegroundDedupeKey = key;
+      console.log(
+        `[WP-WARM] recheckOnForeground STAGING type=${route.type} ` +
+          `conv=${route.conversationId} openChatList=${route.openChatList ? '1' : '0'}`,
+      );
+      await this.stageRoute(route, payload, pressActionId);
+      // Also make the route visible to the cold-start consumers / TTL logic.
+      this.state.route = route;
+      this.state.timestampCaptured = Date.now();
+      this.notifySubscribers(route);
+    } catch (err) {
+      console.log('[WP-WARM] recheckOnForeground failed', err);
+    }
   }
 
   /**

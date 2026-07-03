@@ -155,6 +155,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // mid-call (Signal-Android parity) instead of the "Ongoing call — Return"
     // banner. No-op on iOS (the banner remains the fallback there).
     "./scripts/withAndroidPip",
+    // Forward notification-tap intents to Notifee when the app is ALREADY
+    // running. MainActivity is singleTask, so tapping a Notifee notification on
+    // a cached/backgrounded process is delivered via onNewIntent (NOT onCreate);
+    // without setIntent() the tap never reaches Notifee/getInitialNotification
+    // and the app just resumes to the dashboard instead of opening the chat.
+    "./scripts/withAndroidNewIntent",
     // Copies the bundled call ringtone WAV files (assets/sounds/*.wav, generated
     // by scripts/generate-call-sounds.cjs) into android res/raw so the Notifee
     // calls channel can ring with the WorkPulse tone instead of the system

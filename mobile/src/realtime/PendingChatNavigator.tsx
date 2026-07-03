@@ -52,6 +52,7 @@ import {
   type PendingChatRoute,
 } from "./pendingChat";
 import { notificationLogger, NotificationState } from "../utils/notificationLogger";
+import { notificationDispatcher } from "../services/notificationDispatcher";
 
 /** How long to wait after a push before verifying the pathname landed. */
 const VERIFY_DELAY_MS = 700;
@@ -272,8 +273,21 @@ export default function PendingChatNavigator() {
     //    This recovers the "back-button exit" tap (event fired before the
     //    activity resumed → push dropped) and any killed-state staging that
     //    landed after the cold-start window.
+    //
+    //    WARM singleTask TAP (root-cause fix): when the process is alive and
+    //    backgrounded, a notification tap is delivered to the existing Activity
+    //    via onNewIntent (no PRESS event, no cold-start re-mount). The
+    //    withAndroidNewIntent plugin makes onNewIntent call setIntent(intent),
+    //    and recheckOnForeground re-reads notifee.getInitialNotification() here
+    //    to stage the tapped conversation before we route.
     const appStateSub = AppState.addEventListener("change", (state) => {
-      if (state === "active") void tryConsume("app_active");
+      if (state === "active") {
+        void (async () => {
+          await notificationDispatcher.recheckOnForeground();
+          if (disposed) return;
+          await tryConsume("app_active");
+        })();
+      }
     });
 
     // 3) Also check once now (a route may have been stashed just before mount,
