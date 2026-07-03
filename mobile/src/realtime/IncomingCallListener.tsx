@@ -8,6 +8,12 @@ import {
   endCallNavigation,
   isCallActive,
 } from "./callRouting";
+import { claim, releaseIfClaimed } from "../calls/shared/claims";
+import { classifyIncomingCall } from "../calls/shared/classifier";
+import {
+  GROUP_RING_PATHNAME,
+  groupRingParams,
+} from "../calls/group/navigation";
 import { clearPersistedPendingCall } from "./pendingCall";
 import { notifeeService } from "../services/notifeeService";
 import { nativeCallService } from "../services/nativeCallService";
@@ -34,6 +40,12 @@ export default function IncomingCallListener() {
         if (ringingRef.current === d.callId) return;
         if (pathname?.startsWith("/call/")) return;
 
+        // SINGLE-SOURCE classification (src/calls/shared/classifier): the
+        // discriminated union decides p2p vs group ONCE, so this listener can
+        // never route a group event into the 1:1 flow (or vice versa).
+        const event = classifyIncomingCall(d);
+        if (!event) return;
+
         // Group CALL (huddle): a `meetingCode` means the callee joins the n-way
         // meeting mesh, NOT the 1:1 p2p call screen.
         //
@@ -49,42 +61,34 @@ export default function IncomingCallListener() {
         // notification id is derived from callId+conversationId so a later
         // FCM push REPLACES it rather than stacking, and cancelled-call
         // tombstones still suppress dead calls.
-        if (d.meetingCode) {
+        if (event.kind === "group") {
           if (AppState.currentState !== "active") {
             void warmIceConfig();
             void notifeeService.displayIncomingCall({
               type: "call_incoming",
-              callId: String(d.callId),
-              conversationId: String(d.conversationId),
+              callId: event.callId,
+              conversationId: event.conversationId,
               callerId: d.callerId != null ? String(d.callerId) : undefined,
-              callerName: d.callerName || undefined,
-              callerAvatar: d.callerAvatar || undefined,
-              callType: d.callType === "video" ? "video" : "voice",
+              callerName: event.callerName || undefined,
+              callerAvatar: event.callerAvatar || undefined,
+              callType: event.callType,
               isGroup: "1",
-              groupName: d.groupName || undefined,
-              meetingCode: String(d.meetingCode),
+              groupName: event.groupName || undefined,
+              meetingCode: event.meetingCode,
             });
             return;
           }
-          if (pathname?.startsWith(`/meeting/${d.meetingCode}`)) return;
+          if (pathname?.startsWith(`/meeting/${event.meetingCode}`)) return;
           if (pathname?.startsWith("/group-call/ring")) return;
-          if (!beginCallNavigation(d.callId, d.conversationId)) return;
+          // GROUP calls claim the "groupRing" surface — SEPARATE from the 1:1
+          // "p2p" slot, so a group ring can never block or clobber a live 1:1
+          // call's navigation claim (the root of the earlier regressions).
+          if (!claim("groupRing", event.callId, event.conversationId)) return;
           ringingRef.current = d.callId;
           void warmIceConfig();
-          const ct = d.callType === "video" ? "video" : "voice";
           router.push({
-            pathname: "/group-call/ring",
-            params: {
-              meetingCode: String(d.meetingCode),
-              callId: String(d.callId),
-              meetingId: d.meetingId != null ? String(d.meetingId) : String(d.callId),
-              conversationId:
-                d.conversationId != null ? String(d.conversationId) : "",
-              callType: ct,
-              callerName: d.callerName || "",
-              callerAvatar: d.callerAvatar || "",
-              groupName: d.groupName || "",
-            },
+            pathname: GROUP_RING_PATHNAME,
+            params: groupRingParams(event),
           } as never);
           return;
         }
@@ -119,13 +123,13 @@ export default function IncomingCallListener() {
           void warmIceConfig();
           void notifeeService.displayIncomingCall({
             type: "call_incoming",
-            callId: String(d.callId),
-            conversationId: String(d.conversationId),
-            callerId: d.callerId != null ? String(d.callerId) : undefined,
-            callerName: d.callerName || undefined,
-            callerAvatar: d.callerAvatar || undefined,
-            callType: d.callType === "video" ? "video" : "voice",
-            isGroup: d.isGroup ? "1" : undefined,
+            callId: event.callId,
+            conversationId: event.conversationId,
+            callerId: event.peerId || undefined,
+            callerName: event.peerName || undefined,
+            callerAvatar: event.peerAvatar || undefined,
+            callType: event.callType,
+            isGroup: event.isGroupConversation ? "1" : undefined,
           });
           return;
         }
@@ -134,19 +138,19 @@ export default function IncomingCallListener() {
         // notification path (PushNotificationListener / Notifee tap). Claim
         // navigation so only ONE path pushes the /call screen — a double push
         // crashes React Native Fabric ("child already has a parent").
-        if (!beginCallNavigation(d.callId, d.conversationId)) return;
+        if (!beginCallNavigation(event.callId, event.conversationId)) return;
         ringingRef.current = d.callId;
         router.push({
           pathname: "/call/[conversationId]",
           params: {
-            conversationId: String(d.conversationId),
+            conversationId: event.conversationId,
             mode: "incoming",
-            callType: d.callType === "video" ? "video" : "voice",
-            callId: String(d.callId),
-            peerId: String(d.callerId),
-            peerName: d.callerName || "Incoming call",
-            peerAvatar: d.callerAvatar || "",
-            isGroup: d.isGroup ? "1" : "0",
+            callType: event.callType,
+            callId: event.callId,
+            peerId: event.peerId,
+            peerName: event.peerName,
+            peerAvatar: event.peerAvatar,
+            isGroup: event.isGroupConversation ? "1" : "0",
           },
         });
       } else if (
@@ -174,6 +178,9 @@ export default function IncomingCallListener() {
         ) {
           endCallNavigation();
         }
+        // Also clear a matching GROUP ring claim (the ring screen's own
+        // listener dismisses the UI; this covers a claim leaked before mount).
+        releaseIfClaimed("groupRing", d.callId, d.conversationId);
         // Tear down any ringing call notification AND drop the persisted route
         // so a later cold start never re-opens this now-dead call. cancelCall
         // also clears the persisted entry internally; the explicit clear covers

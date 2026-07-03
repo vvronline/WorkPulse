@@ -26,6 +26,8 @@ import {
   clearPersistedPendingCall,
 } from "./pendingCall";
 import { beginCallNavigation } from "./callRouting";
+import { claim } from "../calls/shared/claims";
+import { meetingHrefForGroupCall } from "../calls/group/navigation";
 import { notificationLogger, NotificationState } from "../utils/notificationLogger";
 import { notificationDispatcher } from "../services/notificationDispatcher";
 import {
@@ -99,17 +101,20 @@ export default function PendingCallNavigator() {
 
     // Group CALL (huddle): a `meetingCode` means the callee joins the n-way
     // meeting mesh, not the 1:1 p2p call screen. Route straight to the meeting
-    // room. The cross-path nav claim still guards against a double push.
+    // room. Claims the dedicated "groupRing" surface — never the "p2p" slot,
+    // so a group route can't block or clobber a 1:1 call's claim.
     if (route.meetingCode) {
-      if (!beginCallNavigation(route.callId, route.conversationId)) return;
-      const code = route.meetingCode;
+      if (!claim("groupRing", route.callId, route.conversationId)) return;
       // Huddle auto-join (no meeting lobby) + audio-only for a voice call.
-      const ct = route.callType === "video" ? "video" : "voice";
+      const href = meetingHrefForGroupCall({
+        meetingCode: route.meetingCode,
+        callType: route.callType === "video" ? "video" : "voice",
+      });
       const t = setTimeout(() => {
         if (route.dedupeKey) {
           notificationLogger.logStateTransition(route.dedupeKey, route.conversationId, NotificationState.NAVIGATION_STARTED, { target: "meeting", source: "PendingCallNavigator" });
         }
-        router.push(`/meeting/${code}?huddle=1&callType=${ct}` as never);
+        router.push(href as never);
       }, 0);
       return () => clearTimeout(t);
     }

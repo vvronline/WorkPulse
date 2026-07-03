@@ -1,48 +1,40 @@
 /**
+ * LEGACY ADAPTER over the scoped call-claims registry.
+ *
  * Single-source guard for navigating to the incoming/active call screen.
+ * A call can be surfaced from multiple places simultaneously (websocket
+ * IncomingCallListener, push notifications, Notifee taps, cold-start
+ * redirects). If two paths push the SAME call's fullScreenModal, expo-router
+ * mounts it TWICE and React Native Fabric throws a fatal native crash
+ * ("The specified child already has a parent") — the JS thread dies while
+ * native WebRTC audio keeps flowing.
  *
- * WHY THIS EXISTS:
- * A call can be surfaced from multiple places simultaneously while the app is
- * alive or backgrounded-but-alive:
- *   1. `IncomingCallListener` (websocket `call_incoming`) → router.push("/call/...")
- *   2. `PushNotificationListener` (FCM/expo-notifications) → router.push("/call/...")
- *   3. The Notifee full-screen call notification's Answer/body tap →
- *      Linking.openURL(createURL("/call/...")) which expo-router turns into a push.
+ * The actual claim state now lives in `src/calls/shared/claims.ts`, which is
+ * SCOPED PER SURFACE (p2p | groupRing | meeting) with owner tokens, so a
+ * group-call surface can never clobber a live 1:1 call's claim (the root of
+ * the "Return to call banner over a live call" / double-mount regressions).
  *
- * If two of these fire for the SAME call, expo-router mounts the
- * `/call/[conversationId]` `fullScreenModal` screen TWICE. Under the React
- * Native New Architecture (Fabric) that throws a fatal native crash:
- *
- *   java.lang.IllegalStateException: addViewAt: failed to insert view ...
- *   Caused by: The specified child already has a parent.
- *
- * The crash kills the JS thread, so (a) no incoming-call UI is shown and
- * (b) the expo-audio ringtone MediaSession is never stopped → it rings forever.
- *
- * This module tracks the currently-active call so every navigation path can ask
- * `beginCallNavigation()` first and skip if the call screen is already up.
+ * This module keeps the historical single-slot API for existing call-sites,
+ * mapped onto the "p2p" surface slot (which is what the legacy global key
+ * effectively was). New code should import from `src/calls/shared/claims`
+ * and hold tokens instead.
  */
 
-let activeKey: string | null = null;
+import {
+  claim,
+  forceRelease,
+  isClaimed,
+  onClaimReleased,
+} from "../calls/shared/claims";
 
-// Subscribers notified whenever the local user leaves/ends a call
-// (endCallNavigation). The OngoingCallBanner uses this to clear itself
-// immediately on hang-up — the server does NOT echo `call_ended` back to the
-// party that ended the call, so without this the banner would otherwise linger
-// until the next foreground/route change.
-type EndListener = () => void;
-const endListeners = new Set<EndListener>();
-
-/** Subscribe to local call-end events. Returns an unsubscribe function. */
-export function onCallNavigationEnd(listener: EndListener): () => void {
-  endListeners.add(listener);
-  return () => {
-    endListeners.delete(listener);
-  };
-}
-
-function keyFor(callId: number | string, conversationId: number | string): string {
-  return `${conversationId}:${callId}`;
+/**
+ * Subscribe to local call-end events (legacy endCallNavigation fired). The
+ * OngoingCallBanner uses this to clear itself immediately on hang-up — the
+ * server does NOT echo `call_ended` back to the party that ended the call.
+ * Returns an unsubscribe function.
+ */
+export function onCallNavigationEnd(listener: () => void): () => void {
+  return onClaimReleased(listener);
 }
 
 /**
@@ -54,11 +46,7 @@ export function beginCallNavigation(
   callId: number | string | undefined | null,
   conversationId: number | string | undefined | null,
 ): boolean {
-  if (callId == null || conversationId == null) return false;
-  const key = keyFor(callId, conversationId);
-  if (activeKey === key) return false; // already navigating/active for this call
-  activeKey = key;
-  return true;
+  return claim("p2p", callId, conversationId) != null;
 }
 
 /** True if a call screen is currently active for the given call (or any call). */
@@ -66,19 +54,10 @@ export function isCallActive(
   callId?: number | string,
   conversationId?: number | string,
 ): boolean {
-  if (activeKey == null) return false;
-  if (callId == null || conversationId == null) return true;
-  return activeKey === keyFor(callId, conversationId);
+  return isClaimed("p2p", callId, conversationId);
 }
 
 /** Clear the active-call guard (call screen unmounted / call ended). */
 export function endCallNavigation(): void {
-  activeKey = null;
-  for (const listener of endListeners) {
-    try {
-      listener();
-    } catch {
-      // A misbehaving listener must not prevent the others from running.
-    }
-  }
+  forceRelease("p2p");
 }

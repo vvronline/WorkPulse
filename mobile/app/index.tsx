@@ -12,6 +12,9 @@ import {
   type PendingCallRoute,
 } from "../src/realtime/pendingCall";
 import { beginCallNavigation } from "../src/realtime/callRouting";
+import { claim } from "../src/calls/shared/claims";
+import { classifyPendingRoute } from "../src/calls/shared/classifier";
+import { meetingHrefForGroupCall } from "../src/calls/group/navigation";
 import {
   consumePendingChat,
   peekPendingChat,
@@ -338,6 +341,19 @@ export default function Index() {
     // this same call, and claim navigation to prevent a double-mount.
     consumePendingCall();
     void clearPersistedPendingCall();
+    // SINGLE-SOURCE classification: a GROUP call route (meetingCode) must join
+    // the n-way meeting mesh — NOT the 1:1 /call screen. Previously this
+    // redirect sent EVERY pending route to /call, so a cold-start group call
+    // launched the p2p call screen against a huddle (which then hung — the
+    // caller offers via the mesh, not p2p signaling). Group routes claim the
+    // dedicated "groupRing" surface so they never touch the p2p slot.
+    const event = classifyPendingRoute(callRoute);
+    if (event.kind === "group") {
+      if (!claim("groupRing", event.callId, event.conversationId)) {
+        return <Redirect href="/(tabs)" />;
+      }
+      return <Redirect href={meetingHrefForGroupCall(event) as never} />;
+    }
     // HONOUR the claim result. If ANOTHER path (PendingCallNavigator, the
     // websocket IncomingCallListener, a Notifee tap handler) already claimed
     // navigation for this call, the /call fullScreenModal is already mounted

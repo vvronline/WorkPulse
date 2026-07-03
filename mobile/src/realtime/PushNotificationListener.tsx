@@ -19,6 +19,8 @@ import {
   isCallActive,
 } from "./callRouting";
 import { emitAnswerIntent } from "./callAnswerIntent";
+import { claim } from "../calls/shared/claims";
+import { meetingHrefForGroupCall } from "../calls/group/navigation";
 import {
   persistPendingChat,
   setPendingChat,
@@ -225,20 +227,26 @@ function handleCallNotification(
   }
 
   // Group CALL (huddle): a `meetingCode` means the callee joins the n-way
-  // meeting mesh, not the 1:1 p2p call screen. Claim navigation (so the WS path
-  // doesn't double-push) and route straight to the meeting room.
+  // meeting mesh, not the 1:1 p2p call screen. Claim the dedicated
+  // "groupRing" surface (so the WS path doesn't double-push) — NEVER the
+  // "p2p" slot, which belongs to the 1:1 call screen and must not be
+  // blocked/clobbered by group events. An Answer tap still proceeds when the
+  // claim exists (the target is a meeting room, not a fullScreenModal, so a
+  // replace-style navigation is safe).
   if (callData.meetingCode) {
     const isAcceptHuddle = callData.notificationAction === "accept_call";
     if (
-      !beginCallNavigation(callData.callId, callData.conversationId) &&
+      !claim("groupRing", callData.callId, callData.conversationId) &&
       !isAcceptHuddle
     ) {
       return;
     }
     // Huddle auto-join (no meeting lobby) + audio-only for a voice call.
-    const ct = callData.callType === "video" ? "video" : "voice";
     router.push(
-      `/meeting/${callData.meetingCode}?huddle=1&callType=${ct}` as never,
+      meetingHrefForGroupCall({
+        meetingCode: callData.meetingCode,
+        callType: callData.callType === "video" ? "video" : "voice",
+      }) as never,
     );
     return;
   }
