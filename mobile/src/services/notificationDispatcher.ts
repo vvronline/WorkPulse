@@ -155,9 +155,16 @@ class NotificationDispatcherService {
         return;
       }
 
-      // 1. Read from Notifee (ONE-SHOT)
-      // This is the ONLY place in the app where getInitialNotification() should be called
-      const notification = await notifee.getInitialNotification();
+      // 1. Read from Notifee (ONE-SHOT), with a bounded cold-start retry.
+      // This is the ONLY place in the app where getInitialNotification() should
+      // be called. On a KILLED cold start Android can attach the launch intent
+      // to the Activity a few hundred ms AFTER the JS bundle begins executing,
+      // so a single early read returns null and the tapped chat is lost — the
+      // "tapping a message notification from the killed/exited state opens the
+      // dashboard" bug. readInitialNotificationWithRetry re-polls (only when a
+      // Notifee notification is actually on screen, so a normal launcher-icon
+      // open is NOT delayed) until the intent becomes visible.
+      const notification = await this.readInitialNotificationWithRetry(sourceState);
 
       if (!notification) {
         notificationLogger.info('no_initial_notification', {
@@ -183,6 +190,11 @@ class NotificationDispatcherService {
       const route = this.parseNotificationData(payload, sourceState, pressActionId);
 
       if (!route) {
+        console.log(
+          `[WP-COLDSTART] initial notification RECEIVED but parse REJECTED it ` +
+            `source=${sourceState} type=${payload.type ?? '-'} ` +
+            `conv=${payload.conversationId ?? '-'} press=${pressActionId ?? '-'}`,
+        );
         notificationLogger.warn('failed_to_parse_initial_notification', {
           source: 'dispatch',
           dedupeKey: payload.dedupeKey,
@@ -191,6 +203,12 @@ class NotificationDispatcherService {
         this.state.initialized = true;
         return;
       }
+
+      console.log(
+        `[WP-COLDSTART] initial notification PARSED source=${sourceState} ` +
+          `routeType=${route.type} conv=${route.conversationId} ` +
+          `openChatList=${route.openChatList ? '1' : '0'}`,
+      );
 
       // CONCRETE-THREAD PREFERENCE (root-cause fix for "tapping a specific
       // chat's notification opens the chat list instead of that thread" when
@@ -402,6 +420,97 @@ class NotificationDispatcherService {
   // ========================================================================
   // PRIVATE METHODS
   // ========================================================================
+
+  /**
+   * Reads notifee.getInitialNotification() with a bounded cold-start retry.
+   *
+   * ROOT-CAUSE FIX for "tapping a message notification from the KILLED/EXITED
+   * state opens the dashboard instead of the chat thread" (Android, every time):
+   * on a cold Activity launch Android can attach the launching notification
+   * intent to the Activity a few HUNDRED ms AFTER the JS bundle starts running.
+   * The dispatcher's single early read (from mobile/index.js) — and even the
+   * short (~400ms) re-check loop in app/index.tsx — could all fire BEFORE the
+   * intent was visible, so getInitialNotification() returned null on every read
+   * and the tapped conversation was never routed.
+   *
+   * We therefore re-poll getInitialNotification() until it resolves, but ONLY
+   * when there is at least one Notifee notification actually on screen that
+   * could have launched the app (a chat/call/summary entry). That guard means a
+   * NORMAL launcher-icon open (no pending notification) is NOT delayed at all —
+   * it returns immediately. When a candidate exists we wait up to ~1.8s, which
+   * comfortably covers the intent-attach delay on slower devices.
+   *
+   * The `[WP-COLDSTART]` console lines are intentionally always-on (NOT gated by
+   * __DEV__ like notificationLogger's console output) so a single `adb logcat`
+   * capture on a release/preview build reveals exactly what Notifee saw.
+   */
+  private async readInitialNotificationWithRetry(
+    sourceState: NotificationRoute['sourceState'],
+  ): Promise<any | null> {
+    // Fast path: a single read covers the warm/recheck case and any launch
+    // whose intent is already attached.
+    let notification = await notifee.getInitialNotification();
+    if (notification) {
+      console.log(
+        `[WP-COLDSTART] getInitialNotification hit immediately source=${sourceState} ` +
+          `conv=${notification?.notification?.data?.conversationId ?? '-'} ` +
+          `press=${notification?.pressAction?.id ?? '-'}`,
+      );
+      return notification;
+    }
+
+    // Is there any Notifee notification on screen that could have launched us?
+    let hasCandidate = false;
+    try {
+      const displayed = await notifee.getDisplayedNotifications();
+      const list = Array.isArray(displayed) ? displayed : [];
+      hasCandidate = list.some((d: any) => {
+        const data = d?.notification?.data || {};
+        return Boolean(
+          data.conversationId || data.callId || data.messageId || data.openChatList,
+        );
+      });
+      const summary = list
+        .map((d: any) => {
+          const dt = d?.notification?.data || {};
+          return `${dt.type ?? '?'}:${dt.conversationId ?? dt.callId ?? '-'}`;
+        })
+        .join(',');
+      console.log(
+        `[WP-COLDSTART] getInitialNotification=null source=${sourceState} ` +
+          `displayed=${list.length} candidates=${hasCandidate} [${summary}]`,
+      );
+    } catch (err) {
+      console.log('[WP-COLDSTART] getDisplayedNotifications failed', err);
+    }
+
+    // No on-screen notification → this was almost certainly a plain app open;
+    // do NOT block the cold start waiting for an intent that will never arrive.
+    if (!hasCandidate) return null;
+
+    const deadlineMs = Date.now() + 1800;
+    let attempt = 0;
+    while (Date.now() < deadlineMs) {
+      await new Promise((r) => setTimeout(r, 150));
+      attempt += 1;
+      notification = await notifee.getInitialNotification();
+      if (notification) {
+        console.log(
+          `[WP-COLDSTART] getInitialNotification RESOLVED after retry ` +
+            `attempt=${attempt} source=${sourceState} ` +
+            `conv=${notification?.notification?.data?.conversationId ?? '-'}`,
+        );
+        return notification;
+      }
+    }
+    console.log(
+      `[WP-COLDSTART] getInitialNotification STILL null after ${attempt} retries ` +
+        `source=${sourceState} — notification was on screen but never became the ` +
+        `launch intent (Notifee not tracking this notification / launched via a ` +
+        `non-Notifee intent).`,
+    );
+    return null;
+  }
 
   private parseNotificationData(
     payload: any,

@@ -170,6 +170,17 @@ export default function Index() {
       if (route) {
         notificationDispatcher.consumeRoute();
       }
+      // Always-on cold-start decision trace (survives release builds where the
+      // structured notificationLogger console output is __DEV__-gated). Grep
+      // `[WP-COLDSTART]` in `adb logcat` to see which screen a killed/exited
+      // notification tap resolved to.
+      console.log(
+        `[WP-COLDSTART] route decision selected=` +
+          `${route ? 'call' : chat ? (chat.openChatList ? 'chat_list' : 'chat_thread') : 'default/dashboard'} ` +
+          `dispatcherType=${dispatcherRoute?.type ?? '-'} ` +
+          `chatConv=${chat?.conversationId ?? '-'} ` +
+          `waitMs=${Date.now() - routeDecisionStartedAt}`,
+      );
       notificationLogger.info("cold_start_route_decision", {
         source: "app_index_cold_start",
         dedupeKey: route?.dedupeKey || chat?.dedupeKey || dispatcherRoute?.dedupeKey,
