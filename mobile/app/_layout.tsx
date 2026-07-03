@@ -1,5 +1,5 @@
 import "react-native-gesture-handler";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import {
   InteractionManager,
   Platform,
@@ -19,7 +19,6 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../src/auth/AuthContext";
 import ImpersonationBanner from "../src/components/ImpersonationBanner";
 import UpdateChecker from "../src/components/UpdateChecker";
-import AnimatedSplash from "../src/components/AnimatedSplash";
 import IncomingCallListener from "../src/realtime/IncomingCallListener";
 import MeetingStartedListener from "../src/realtime/MeetingStartedListener";
 import RealtimeSoundListener from "../src/realtime/RealtimeSoundListener";
@@ -37,6 +36,7 @@ import { notifeeService } from "../src/services/notifeeService";
 import { notificationMetricsSync } from "../src/services/notificationMetricsSync";
 import { ensureCallMediaPermissions } from "../src/services/mediaPermissions";
 import { warmIceConfig } from "../src/features";
+import { onAppReady } from "../src/utils/appReady";
 import {
   installThemedAlertBridge,
   ThemedAlertHost,
@@ -54,10 +54,16 @@ const queryClient = new QueryClient({
   },
 });
 
-// Keep the NATIVE splash up until our JS-rendered AnimatedSplash overlay has
-// mounted, so the static native splash hands off to the animated "loops"
-// wordmark with no white flash in between. Best-effort; ignore if it races.
+// Keep the NATIVE splash up until the root route has been decided (see
+// app/index.tsx → markAppReady). The static native splash covers the whole
+// boot — no JS overlay, no animation, no hand-off flash. Best-effort; ignore
+// if it races.
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Hard safety cap: never hold the native splash longer than this even if the
+// ready signal never fires (e.g. an unexpected error before the root route
+// mounts).
+const SPLASH_MAX_MS = 4000;
 
 /**
  * Themed navigation stack. Lives inside ThemeProvider so header colours track
@@ -268,25 +274,24 @@ export default function RootLayout() {
   // system font).
   const [fontsLoaded, fontError] = useFonts(interFontMap);
 
-  // Controls the JS-rendered AnimatedSplash overlay (logo + animated "loops"
-  // Pacifico wordmark). It stays mounted on top of the app until its own
-  // fade-out animation finishes and calls onDone.
-  const [splashDone, setSplashDone] = useState(false);
-
   // Apply the default font immediately when embedded (Android), otherwise as
   // soon as the runtime loader finishes.
   useEffect(() => {
     if (FONTS_EMBEDDED || fontsLoaded) applyDefaultFont();
   }, [fontsLoaded]);
 
-  // Once fonts are ready (or errored / embedded), the app tree mounts — hide
-  // the NATIVE splash so the JS AnimatedSplash overlay (same #0a0e1c
-  // background) takes over and plays the "loops" text animation.
+  // Hide the NATIVE splash the moment the app signals readiness (root route
+  // decided — see app/index.tsx). A hard timeout guarantees the splash can
+  // never wedge on-screen if the ready signal is lost.
   useEffect(() => {
-    if (FONTS_EMBEDDED || fontsLoaded || fontError) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
-  }, [fontsLoaded, fontError]);
+    const hide = () => SplashScreen.hideAsync().catch(() => {});
+    const unsubscribe = onAppReady(hide);
+    const capTimer = setTimeout(hide, SPLASH_MAX_MS);
+    return () => {
+      unsubscribe();
+      clearTimeout(capTimer);
+    };
+  }, []);
 
   useEffect(() => {
     installThemedAlertBridge();
@@ -388,9 +393,6 @@ export default function RootLayout() {
               <UpdateChecker />
               <ThemedStack />
               <ThemedAlertHost />
-              {!splashDone ? (
-                <AnimatedSplash onDone={() => setSplashDone(true)} />
-              ) : null}
             </SafeAreaProvider>
           </ThemeProvider>
         </AuthProvider>

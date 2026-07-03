@@ -317,8 +317,8 @@ export default function Index() {
     );
   }
 
-  // Route decision made and auth resolved → the splash overlay can hand off to
-  // the real UI now (ready-gated AnimatedSplash — Signal-style instant reveal).
+  // Route decision made and auth resolved → the native splash can hand off to
+  // the real UI now (ready-gated hideAsync — Signal-style instant reveal).
   markAppReady();
 
   // Cold-start incoming call for an authenticated user → go straight to the

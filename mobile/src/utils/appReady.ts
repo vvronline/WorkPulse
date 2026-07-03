@@ -1,15 +1,13 @@
 /**
- * Tiny module-level "app is ready" signal used to hand off from the
- * AnimatedSplash overlay to the real UI the moment the root route has been
- * decided — instead of holding the splash for a fixed timer.
+ * Tiny module-level "app is ready" signal used to hide the NATIVE splash
+ * screen the moment the root route has been decided — instead of holding the
+ * splash for a fixed timer.
  *
  * WHY (Signal-Android parity): Signal hides its splash the instant the first
- * frame of real UI is ready. Our previous splash held for a fixed ~1.8s
- * (560ms fade-in + 1400ms hold + 420ms fade-out) even when the app was ready
- * in 300ms. app/index.tsx calls `markAppReady()` as soon as it renders its
- * redirect (route decision made); AnimatedSplash subscribes and starts its
- * fade-out immediately (subject to a small minimum-display time so the brand
- * mark never flickers).
+ * frame of real UI is ready. app/index.tsx calls `markAppReady()` as soon as
+ * it renders its redirect (route decision made); app/_layout.tsx subscribes
+ * and calls SplashScreen.hideAsync() immediately (with a hard safety cap so
+ * the splash can never wedge on-screen).
  */
 
 let ready = false;
