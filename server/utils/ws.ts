@@ -1106,6 +1106,14 @@ async function handleChatMessage(
     // file in via require (circular). Behaviour is preserved exactly,
     // PLUS the handler now sends a typed `chat_message_error` ack on
     // validation failure instead of silently dropping.
+    //
+    // Idempotency (offline-outbox support): the handler itself dedupes
+    // retries carrying the same clientMsgId at the DB layer (partial
+    // unique index idx_messages_client_msg_id) and RE-ECHOES the
+    // canonical row to the sender, so a reconnect re-send whose original
+    // echo was lost still clears the client's outbox without a
+    // double-insert. (An in-process cache wrapper is NOT used here on
+    // purpose — it would suppress the re-echo entirely.)
     await chatMessage({
       db,
       senderId,

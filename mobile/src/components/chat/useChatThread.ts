@@ -79,6 +79,13 @@ import {
   setClearedAt,
   isBeforeClearedAt,
 } from "../../storage/chatLocalDeletes";
+import {
+  enqueueOutboxMessage,
+  getOutboxMessagesForConversation,
+  markOutboxRetrying,
+  removeOutboxMessage,
+  type OutboxMessage,
+} from "../../storage/chatOutbox";
 import { STATUS_LABEL, type HeaderSheet } from "./chatUtils";
 
 type PendingMediaSource = {
@@ -192,6 +199,66 @@ function normalizeFetchedMessage(row: any): ChatMessage {
 }
 
 /**
+ * Render a persisted-but-not-yet-delivered outbox entry as a pending
+ * ChatMessage bubble (clock tick). The clientMsgId is carried through so the
+ * eventual server echo replaces this bubble in place (no duplicate).
+ */
+function outboxEntryToMessage(
+  entry: OutboxMessage,
+  userId: number,
+  userName: string,
+): ChatMessage {
+  return {
+    id: -(Date.parse(entry.createdAt) || Date.now()),
+    sender_id: userId,
+    sender_name: userName,
+    content: entry.content,
+    created_at: entry.createdAt,
+    reply_to_id: entry.replyToId ?? null,
+    reply_to_content: entry.replyToContent ?? null,
+    reply_to_sender_name: entry.replyToSenderName ?? null,
+    reply_to_file_url: entry.replyToFileUrl ?? null,
+    reply_to_file_type: entry.replyToFileType ?? null,
+    reply_to_file_name: entry.replyToFileName ?? null,
+    clientMsgId: entry.clientMsgId,
+    _pending: !entry.failed,
+    _failed: !!entry.failed,
+    _failureReason: entry.failureReason ?? null,
+  } as ChatMessage;
+}
+
+/**
+ * Append this conversation's pending outbox messages (sent while offline,
+ * not yet acknowledged by the server) to a message list, deduping by
+ * clientMsgId.
+ *
+ * OFFLINE-SEND FIX: an optimistic message used to live ONLY in React state,
+ * so exiting the chat screen (or the server refresh in `load()` wholesale-
+ * replacing the list) erased any message that hadn't reached the server yet.
+ * Merging the durable outbox here means an unsent message survives leaving
+ * the screen, app restarts, and background reconciles — it stays visible as
+ * a pending bubble until the reconnect flush (ChatOutboxSync) delivers it.
+ */
+function mergeOutboxIntoMessages(
+  msgs: ChatMessage[],
+  convId: number,
+  userId?: number | null,
+  userName?: string | null,
+): ChatMessage[] {
+  if (!userId) return msgs;
+  const pending = getOutboxMessagesForConversation(convId);
+  if (pending.length === 0) return msgs;
+  const have = new Set(
+    msgs.map((m) => m.clientMsgId).filter(Boolean) as string[],
+  );
+  const extra = pending
+    .filter((e) => !have.has(e.clientMsgId))
+    .map((e) => outboxEntryToMessage(e, userId, userName || "You"));
+  if (extra.length === 0) return msgs;
+  return [...msgs, ...extra];
+}
+
+/**
  * All state, side-effects and handlers for the chat thread screen. Extracted
  * from `app/chat/[id].tsx` so the screen is a thin presentational orchestrator
  * (mirrors the web ChatMessages container/hook split). Behavior-preserving.
@@ -251,8 +318,16 @@ export function useChatThread() {
   // refresh in `load()` reconciles in the background. `loading` only stays true
   // on a true cold cache (first-ever open of this conversation).
   const cachedMessages = useMemo(() => getCachedMessages(convId), [convId]);
-  const [messages, setMessages] = useState<ChatMessage[]>(
-    () => cachedMessages || [],
+  // Merge pending OUTBOX messages (sent while offline, awaiting delivery)
+  // into the seed so they reappear as pending bubbles after exiting and
+  // reopening the chat — see mergeOutboxIntoMessages.
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    mergeOutboxIntoMessages(
+      cachedMessages || [],
+      convId,
+      user?.id,
+      user?.full_name,
+    ),
   );
   const [loading, setLoading] = useState(
     () => !cachedMessages || cachedMessages.length === 0,
@@ -582,7 +657,12 @@ export function useChatThread() {
       // doesn't collapse to the generic "Message" when this refresh replaces
       // the optimistic / WS rows (see normalizeFetchedMessage).
       const normalized = (data || []).map(normalizeFetchedMessage);
-      setMessages(normalized);
+      // Re-append any still-pending outbox messages — the server obviously
+      // doesn't have them yet, and wholesale-replacing the list without them
+      // would make an unsent (offline) message vanish mid-session.
+      setMessages(
+        mergeOutboxIntoMessages(normalized, convId, user?.id, user?.full_name),
+      );
       // Persist the freshest page so the next open paints instantly from disk.
       setCachedMessages(convId, normalized);
       setHasMore(normalized.length >= 50);
@@ -616,7 +696,7 @@ export function useChatThread() {
     } finally {
       setLoading(false);
     }
-  }, [convId, markReadAndSync, scrollToEnd]);
+  }, [convId, markReadAndSync, scrollToEnd, user?.id, user?.full_name]);
 
   // Defer the network refresh + its (large) setMessages re-render until AFTER
   // the screen's open transition has settled. The cached page is already on
@@ -1021,6 +1101,11 @@ export function useChatThread() {
       if (msg.type !== "chat_message") return;
       if (Number(d.conversationId) !== convId) return;
       setPeerTyping(false);
+      // Server has persisted this message — clear it from the durable outbox
+      // (idempotent; ChatOutboxSync also does this globally).
+      if (typeof d.clientMsgId === "string" && d.clientMsgId) {
+        removeOutboxMessage(d.clientMsgId);
+      }
       setMessages((prev) => {
         // Replace optimistic message if clientMsgId matches, else append.
         if (d.clientMsgId) {
@@ -1109,6 +1194,25 @@ export function useChatThread() {
     if (!content || !user) return;
     const clientMsgId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const replyToId = replyTo?.id;
+    const createdAt = new Date().toISOString();
+    // Persist to the durable OUTBOX first (Signal-Android model: write the
+    // message locally before attempting delivery). If the socket is down
+    // (offline) the message is NOT lost — it survives leaving the screen and
+    // app restarts, and ChatOutboxSync auto-delivers it (same clientMsgId, so
+    // no duplicates) the moment the socket reconnects.
+    enqueueOutboxMessage({
+      clientMsgId,
+      conversationId: convId,
+      content,
+      replyToId: replyToId ?? null,
+      replyToContent: replyTo?.content ?? null,
+      replyToSenderName: replyTo?.sender_name ?? null,
+      replyToFileUrl: replyTo?.file_url ?? null,
+      replyToFileType: replyTo?.file_type ?? null,
+      replyToFileName: replyTo?.file_name ?? null,
+      createdAt,
+      attempts: 0,
+    });
     // Optimistic append.
     setMessages((prev) => [
       ...prev,
@@ -1117,7 +1221,7 @@ export function useChatThread() {
         sender_id: user.id,
         sender_name: user.full_name,
         content,
-        created_at: new Date().toISOString(),
+        created_at: createdAt,
         reply_to_id: replyToId ?? null,
         reply_to_content: replyTo?.content ?? null,
         reply_to_sender_name: replyTo?.sender_name ?? null,
@@ -1128,12 +1232,18 @@ export function useChatThread() {
         clientMsgId,
       },
     ]);
-    socket.send("chat_message", {
+    const sentNow = socket.send("chat_message", {
       conversationId: convId,
       content,
       clientMsgId,
       ...(replyToId ? { replyToId } : {}),
     });
+    if (!sentNow) {
+      // Socket is down (offline / reconnecting). Kick a reconnect attempt —
+      // the outbox flush on the next OPEN transition will deliver the message.
+      // The bubble stays in the "pending" (clock) state meanwhile.
+      void socket.connect();
+    }
     setText("");
     setReplyTo(null);
     scrollToEnd(true);
@@ -1247,6 +1357,23 @@ export function useChatThread() {
       if (!content || !clientMsgId) return;
       const replyToId = message.reply_to_id || null;
 
+      // Refresh / re-arm the durable outbox entry so the retry also benefits
+      // from the reconnect auto-flush (and survives leaving the screen).
+      markOutboxRetrying(clientMsgId);
+      enqueueOutboxMessage({
+        clientMsgId,
+        conversationId: convId,
+        content,
+        replyToId,
+        replyToContent: message.reply_to_content ?? null,
+        replyToSenderName: message.reply_to_sender_name ?? null,
+        replyToFileUrl: message.reply_to_file_url ?? null,
+        replyToFileType: message.reply_to_file_type ?? null,
+        replyToFileName: message.reply_to_file_name ?? null,
+        createdAt: new Date().toISOString(),
+        attempts: 0,
+      });
+
       setMessages((prev) =>
         prev.map((m) =>
           m.clientMsgId === clientMsgId
@@ -1261,12 +1388,15 @@ export function useChatThread() {
         ),
       );
 
-      socket.send("chat_message", {
+      const sentNow = socket.send("chat_message", {
         conversationId: convId,
         content,
         clientMsgId,
         ...(replyToId ? { replyToId } : {}),
       });
+      if (!sentNow) {
+        void socket.connect();
+      }
     },
     [convId, scrollToEnd, user],
   );

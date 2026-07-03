@@ -214,15 +214,56 @@ async function chatMessage({
   }
 
   // ── 3. Insert + bump conversation timestamp + update read cursor ───
+  //
+  // IDEMPOTENT PERSIST (offline-outbox support, mirrors the meeting_chat
+  // handler / ADR-002): mobile clients persist unsent messages to a durable
+  // outbox and RE-SEND them with the same clientMsgId on every reconnect. If
+  // the original frame reached us but its echo was lost on the dying socket,
+  // the retry must NOT double-insert. The partial unique index
+  // `idx_messages_client_msg_id` over (conversation_id, sender_id,
+  // client_msg_id) makes `ON CONFLICT DO NOTHING` safe; on conflict we fetch
+  // the canonical row and RE-ECHO it so the sender's outbox still clears.
   const fmtType =
     formatType === "markdown" || formatType === "code" ? formatType : "text";
-  const result = (
+  const safeClientMsgId =
+    typeof clientMsgId === "string" &&
+    clientMsgId.length > 0 &&
+    clientMsgId.length <= 64
+      ? clientMsgId
+      : null;
+  let result = (
     await db.query(
-      `INSERT INTO messages (conversation_id, sender_id, content, reply_to_id, format_type)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
-      [conversationId, senderId, content.trim(), replyToId || null, fmtType],
+      `INSERT INTO messages (conversation_id, sender_id, content, reply_to_id, format_type, client_msg_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (conversation_id, sender_id, client_msg_id)
+         WHERE client_msg_id IS NOT NULL
+         DO NOTHING
+         RETURNING id, created_at`,
+      [
+        conversationId,
+        senderId,
+        content.trim(),
+        replyToId || null,
+        fmtType,
+        safeClientMsgId,
+      ],
     )
   ).rows[0];
+  let isDuplicateResend = false;
+  if (!result && safeClientMsgId) {
+    // Retry of an already-persisted message — fetch the canonical row so the
+    // (re-)echo carries the real id + created_at.
+    result = (
+      await db.query(
+        `SELECT id, created_at FROM messages
+           WHERE conversation_id = $1 AND sender_id = $2 AND client_msg_id = $3
+           LIMIT 1`,
+        [conversationId, senderId, safeClientMsgId],
+      )
+    ).rows[0];
+    isDuplicateResend = true;
+  }
+  if (!result) return; // insert failed with no dedupe row — nothing to echo
 
   await db.query("UPDATE conversations SET updated_at = NOW() WHERE id = $1", [
     conversationId,
@@ -290,6 +331,15 @@ async function chatMessage({
   };
 
   // ── 5. Fan-out + unread counters ───────────────────────────────────
+  //
+  // DUPLICATE RE-SEND: the message was already persisted + fanned out by the
+  // original frame — only RE-ECHO to the SENDER (their echo was lost; this
+  // clears their outbox / pending bubble). No unread bumps, no pushes, no
+  // second broadcast to the other participants.
+  if (isDuplicateResend) {
+    sendToUser(tenantId, senderId, "chat_message", outMsg);
+    return;
+  }
   for (const p of participants) {
     sendToUser(tenantId, p.user_id, "chat_message", outMsg);
     if (p.user_id !== senderId) {

@@ -23,6 +23,7 @@ import PushNotificationInitializer from "../src/realtime/PushNotificationInitial
 import PendingCallNavigator from "../src/realtime/PendingCallNavigator";
 import PendingChatNavigator from "../src/realtime/PendingChatNavigator";
 import ChatCacheSync from "../src/realtime/ChatCacheSync";
+import ChatOutboxSync from "../src/realtime/ChatOutboxSync";
 import OngoingCallBanner from "../src/realtime/OngoingCallBanner";
 import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
 import { nativeCallService } from "../src/services/nativeCallService";
@@ -349,6 +350,7 @@ export default function RootLayout() {
               <PendingCallNavigator />
               <PendingChatNavigator />
               <ChatCacheSync />
+              <ChatOutboxSync />
               <OngoingCallBanner />
               <ImpersonationBanner />
               <UpdateChecker />
