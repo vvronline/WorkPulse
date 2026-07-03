@@ -16,10 +16,12 @@ import {
   consumePendingChat,
   peekPendingChat,
   loadPersistedPendingChat,
+  wasNotificationDisplayedRecently,
   type PendingChatRoute,
 } from "../src/realtime/pendingChat";
 import { notificationLogger, NotificationState } from "../src/utils/notificationLogger";
 import { notificationDispatcher } from "../src/services/notificationDispatcher";
+import { markAppReady } from "../src/utils/appReady";
 
 /**
  * Entry route: route to tabs when authenticated, otherwise to login.
@@ -84,7 +86,13 @@ export default function Index() {
       // Android builds that early read can report "none" before the launch
       // intent is visible to JS. Re-check briefly from the mounted root before
       // allowing the default dashboard redirect.
-      if (!dispatcherRoute) {
+      //
+      // COLD-START FAST PATH: this ~300ms retry loop used to run on EVERY
+      // plain launcher-icon open, delaying the dashboard for launches that
+      // were never notification taps. Only retry when a notification was
+      // actually displayed recently (synchronous MMKV marker) — a normal open
+      // skips straight to the redirect.
+      if (!dispatcherRoute && wasNotificationDisplayedRecently()) {
         for (let attempt = 0; attempt < 3 && !dispatcherRoute; attempt++) {
           await new Promise((r) => setTimeout(r, 100));
           await notificationDispatcher.initialize("cold_start");
@@ -241,6 +249,10 @@ export default function Index() {
       </View>
     );
   }
+
+  // Route decision made and auth resolved → the splash overlay can hand off to
+  // the real UI now (ready-gated AnimatedSplash — Signal-style instant reveal).
+  markAppReady();
 
   // Cold-start incoming call for an authenticated user → go straight to the
   // call screen as the ROOT route (no dashboard underneath → no flash).

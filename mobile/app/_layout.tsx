@@ -1,6 +1,11 @@
 import "react-native-gesture-handler";
 import { useEffect, useState } from "react";
-import { Text as RNText, TextInput as RNTextInput } from "react-native";
+import {
+  InteractionManager,
+  Platform,
+  Text as RNText,
+  TextInput as RNTextInput,
+} from "react-native";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import { QueryClient } from "@tanstack/react-query";
@@ -248,10 +253,18 @@ function applyDefaultFont() {
   ];
 }
 
+// On Android the Inter/Pacifico TTFs are EMBEDDED into the native build via
+// the expo-font config plugin (see app.config.ts), so every fontFamily is
+// resolvable at t=0 — the first render must NOT block on the async runtime
+// loader. iOS/Expo Go still load at runtime via useFonts below.
+const FONTS_EMBEDDED = Platform.OS === "android";
+
 export default function RootLayout() {
   // Load the Inter font family before rendering the app so text never flashes
-  // in the system font first. We still render once loaded OR errored so a font
-  // CDN hiccup can never permanently block the app (it just falls back to the
+  // in the system font first (runtime path — iOS/Expo Go). On Android the
+  // fonts are embedded natively, so this resolves instantly/no-ops and never
+  // gates the first render. We still render once loaded OR errored so a font
+  // hiccup can never permanently block the app (it just falls back to the
   // system font).
   const [fontsLoaded, fontError] = useFonts(interFontMap);
 
@@ -260,15 +273,17 @@ export default function RootLayout() {
   // fade-out animation finishes and calls onDone.
   const [splashDone, setSplashDone] = useState(false);
 
+  // Apply the default font immediately when embedded (Android), otherwise as
+  // soon as the runtime loader finishes.
   useEffect(() => {
-    if (fontsLoaded) applyDefaultFont();
+    if (FONTS_EMBEDDED || fontsLoaded) applyDefaultFont();
   }, [fontsLoaded]);
 
-  // Once fonts are ready (or errored), the app tree mounts — hide the NATIVE
-  // splash so the JS AnimatedSplash overlay (same #0a0e1c background) takes
-  // over and plays the "loops" text animation.
+  // Once fonts are ready (or errored / embedded), the app tree mounts — hide
+  // the NATIVE splash so the JS AnimatedSplash overlay (same #0a0e1c
+  // background) takes over and plays the "loops" text animation.
   useEffect(() => {
-    if (fontsLoaded || fontError) {
+    if (FONTS_EMBEDDED || fontsLoaded || fontError) {
       SplashScreen.hideAsync().catch(() => {});
     }
   }, [fontsLoaded, fontError]);
@@ -314,21 +329,29 @@ export default function RootLayout() {
     // screen can surface over the lock screen (otherwise only the ring sound
     // plays and the user must open the app to answer/reject).
     notifeeService.ensureFullScreenIntentPermission().catch(() => {});
-    // Proactively request CAMERA + RECORD_AUDIO while the app is in the
-    // foreground. When a call is later answered from the background / lock
-    // screen, Android can't show a runtime permission dialog — without this the
-    // call would connect with no camera/mic (black self-view, peer sees
-    // nothing). Granting up front makes the background/lock-screen answer work.
-    ensureCallMediaPermissions().catch(() => {});
-    // Pre-warm the ICE config (TURN credentials) once at startup so the call
-    // screen can read it from cache and skip the per-call wait — shaving the
-    // connection-setup delay (see src/features.ts getCachedIceConfig).
-    warmIceConfig().catch(() => {});
-    notificationMetricsSync.queueSync(3000);
+    // ── DEFERRED (cold-start perf) ──
+    // None of the below is needed for the first frame. Running them inline
+    // used to compete with the initial render/route decision on the JS thread.
+    // InteractionManager waits for the current interactions/animations (the
+    // splash fade, first navigation) to finish before firing.
+    const deferred = InteractionManager.runAfterInteractions(() => {
+      // Proactively request CAMERA + RECORD_AUDIO while the app is in the
+      // foreground. When a call is later answered from the background / lock
+      // screen, Android can't show a runtime permission dialog — without this
+      // the call would connect with no camera/mic (black self-view, peer sees
+      // nothing). Granting up front makes the background/lock-screen answer work.
+      ensureCallMediaPermissions().catch(() => {});
+      // Pre-warm the ICE config (TURN credentials) once at startup so the call
+      // screen can read it from cache and skip the per-call wait — shaving the
+      // connection-setup delay (see src/features.ts getCachedIceConfig).
+      warmIceConfig().catch(() => {});
+      notificationMetricsSync.queueSync(3000);
+    });
     const notificationMetricsInterval = setInterval(() => {
       notificationMetricsSync.queueSync();
     }, 60_000);
     return () => {
+      deferred.cancel();
       clearInterval(notificationMetricsInterval);
       backgroundPushService.unregisterForegroundHandler();
       unsubscribeNotifee();
@@ -336,9 +359,10 @@ export default function RootLayout() {
   }, []);
 
   // Hold rendering until fonts resolve (or error out) so the first paint uses
-  // Inter. `null` here is fine — Expo keeps the native splash up until the tree
-  // mounts.
-  if (!fontsLoaded && !fontError) return null;
+  // Inter — RUNTIME path only (iOS/Expo Go). On Android the fonts are embedded
+  // natively, so the first paint proceeds immediately. `null` here is fine —
+  // Expo keeps the native splash up until the tree mounts.
+  if (!FONTS_EMBEDDED && !fontsLoaded && !fontError) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

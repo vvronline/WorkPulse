@@ -32,6 +32,11 @@ import {
 import { clearAllChatCache } from "../storage/chatCache";
 import { mmkvQueryPersister } from "../storage/queryPersister";
 import { clearMediaCache } from "../components/chat/mediaCache";
+import {
+  readCachedProfile,
+  writeCachedProfile,
+  clearCachedProfile,
+} from "./profileCache";
 
 export type User = {
   id: number;
@@ -90,8 +95,17 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  // INSTANT SESSION RESTORE (cold-start speed): hydrate the last-known profile
+  // SYNCHRONOUSLY from MMKV so the dashboard can render immediately on launch
+  // (stale-while-revalidate), instead of blocking routing behind an async
+  // SecureStore token read + a network GET /profile. The restore effect below
+  // still validates the token and refreshes the profile in the background —
+  // and signs the user out if the token turns out to be missing/invalid.
+  const cachedProfileRef = React.useRef<User | null>(readCachedProfile());
+  const [user, setUser] = useState<User | null>(cachedProfileRef.current);
+  // When a cached profile exists we are optimistically "not loading" — the
+  // router can redirect straight to the tabs while the network re-validates.
+  const [loading, setLoading] = useState(cachedProfileRef.current == null);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const [biometricEnrolled, setBiometricEnrolled] = useState(false);
   const [biometricLabel, setBiometricLabel] = useState("Biometric Login");
@@ -170,6 +184,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     socket.disconnect();
     await clearToken();
+    clearCachedProfile();
 
     // Wipe on-device chat caches BEFORE dropping the session. These caches are
     // keyed only by conversationId (unique only within a tenant DB), so leaving
@@ -210,23 +225,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [queryClient]);
 
   // Restore session on launch: if a token exists, hydrate the profile.
+  // When a cached profile pre-seeded `user` above, this runs as a BACKGROUND
+  // revalidation (the UI is already interactive); otherwise it is the blocking
+  // first-launch path.
   useEffect(() => {
     let active = true;
+    const hadCachedProfile = cachedProfileRef.current != null;
     (async () => {
       const token = await getToken();
       if (!token) {
-        if (active) setLoading(false);
+        // No token → any optimistically-hydrated cached profile is stale
+        // (e.g. the token was cleared but the app was killed before the cache
+        // was). Drop it so the router lands on /login.
+        clearCachedProfile();
+        if (active) {
+          setUser(null);
+          setLoading(false);
+        }
         return;
+      }
+      // Token exists + cached profile already seeded → connect the socket now;
+      // the profile refresh below is a background revalidation.
+      if (hadCachedProfile && active) {
+        socket.connect();
       }
       try {
         const res = await api.get<User>("/profile");
         if (active) {
           setUser(res.data);
-          socket.connect();
+          writeCachedProfile(res.data);
+          if (!hadCachedProfile) socket.connect();
         }
-      } catch {
-        await clearToken();
-        if (active) setUser(null);
+      } catch (err: any) {
+        // Only a definitive 401 invalidates the session. A transient NETWORK
+        // failure must NOT sign out a user we already hydrated from cache —
+        // offline cold starts keep working (Signal-style local-first).
+        const status = err?.response?.status;
+        if (status === 401 || !hadCachedProfile) {
+          await clearToken();
+          clearCachedProfile();
+          if (active) setUser(null);
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -240,6 +279,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       void clearToken();
+      clearCachedProfile();
       // Same cross-tenant concern as the explicit logout(): drop cached chat
       // artifacts so a different account signing in next can't read them.
       try {
@@ -270,10 +310,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const completeSession = useCallback(async (token: string, seedUser: User) => {
     await setToken(token);
     setUser(seedUser);
+    writeCachedProfile(seedUser);
     socket.connect();
     try {
       const profile = await api.get<User>("/profile");
-      if (profile.data) setUser(profile.data);
+      if (profile.data) {
+        setUser(profile.data);
+        writeCachedProfile(profile.data);
+      }
     } catch {
       // Non-fatal — keep the seed payload; session-restore hydrates later.
     }
@@ -297,6 +341,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await api.get<User>("/profile");
       setUser(res.data);
+      writeCachedProfile(res.data);
     } catch {
       /* ignore */
     }

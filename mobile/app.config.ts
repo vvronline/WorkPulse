@@ -113,6 +113,40 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     "expo-secure-store",
+    // COLD-START PERF: statically embed the Inter/Pacifico TTFs into the
+    // native Android build so every fontFamily is resolvable at t=0 and the
+    // first render never has to wait for expo-font's async runtime load.
+    // (Android resolves an embedded font by its FILENAME, which matches the
+    // family names in src/fonts.ts exactly — e.g. Inter_400Regular.ttf →
+    // "Inter_400Regular".) app/_layout.tsx keeps useFonts() as a fallback for
+    // iOS/Expo Go, but no longer BLOCKS the first render on it.
+    [
+      "expo-font",
+      {
+        android: {
+          fonts: [
+            "node_modules/@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf",
+            "node_modules/@expo-google-fonts/inter/500Medium/Inter_500Medium.ttf",
+            "node_modules/@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf",
+            "node_modules/@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf",
+            "node_modules/@expo-google-fonts/pacifico/400Regular/Pacifico_400Regular.ttf",
+          ],
+        },
+      },
+    ],
+    // COLD-START PERF (release builds): enable R8 code minification + resource
+    // shrinking. A smaller, optimized DEX loads faster at process start
+    // (Signal-Android ships heavily R8-optimized). Hermes (RN default) already
+    // precompiles the JS bundle; this covers the NATIVE side.
+    [
+      "expo-build-properties",
+      {
+        android: {
+          enableProguardInReleaseBuilds: true,
+          enableShrinkResourcesInReleaseBuilds: true,
+        },
+      },
+    ],
     // Re-applies the Gradle JVM heap/metaspace settings during `expo prebuild`.
     // CI regenerates the gitignored android/ project on every run, which
     // overwrites android/gradle.properties with Expo's 2 GiB default and OOMs

@@ -22,6 +22,7 @@
  */
 
 import * as SecureStore from "expo-secure-store";
+import { storage as mmkv } from "../storage/mmkv";
 
 export type PendingChatRoute = {
   conversationId: string;
@@ -168,11 +169,16 @@ const LAST_NOTIF_TS_KEY = "wp_last_notif_display_ts";
  * on tap and therefore no longer appears in getDisplayedNotifications(). The
  * cold-start dispatcher uses this to keep re-polling notifee.getInitialNotification()
  * while the launch intent attaches, instead of bailing to the dashboard.
+ *
+ * COLD-START PERF: stored in MMKV (synchronous mmap read, works from the
+ * headless task too) instead of SecureStore — reading this marker sits on the
+ * critical path of EVERY launch's route decision, and a SecureStore read
+ * round-trips through the Android keystore. This value is not a secret.
  * Best-effort; never throws.
  */
 export async function recordNotificationDisplayed(): Promise<void> {
   try {
-    await SecureStore.setItemAsync(LAST_NOTIF_TS_KEY, String(Date.now()));
+    mmkv.set(LAST_NOTIF_TS_KEY, String(Date.now()));
   } catch {
     // best-effort
   }
@@ -180,11 +186,26 @@ export async function recordNotificationDisplayed(): Promise<void> {
 
 /** Epoch ms of the last displayed notification (0 when absent). Never throws. */
 export async function getLastNotificationDisplayedAt(): Promise<number> {
+  return getLastNotificationDisplayedAtSync();
+}
+
+/** Synchronous variant (MMKV) for the launch critical path. Never throws. */
+export function getLastNotificationDisplayedAtSync(): number {
   try {
-    const raw = await SecureStore.getItemAsync(LAST_NOTIF_TS_KEY);
+    const raw = mmkv.getString(LAST_NOTIF_TS_KEY);
     const ts = raw ? Number(raw) : 0;
     return Number.isFinite(ts) ? ts : 0;
   } catch {
     return 0;
   }
+}
+
+/**
+ * True when a notification was displayed within the last 60s — the same
+ * heuristic the dispatcher's retry loop uses. Synchronous (MMKV) so the root
+ * route can fast-path a plain launcher-icon open without awaiting storage.
+ */
+export function wasNotificationDisplayedRecently(windowMs = 60_000): boolean {
+  const ts = getLastNotificationDisplayedAtSync();
+  return ts > 0 && Date.now() - ts < windowMs;
 }

@@ -5,10 +5,10 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
   withTiming,
 } from "react-native-reanimated";
 import { FONTS } from "../fonts";
+import { onAppReady } from "../utils/appReady";
 
 /**
  * In-app animated splash overlay shown on cold start, layered ABOVE the app
@@ -20,6 +20,14 @@ import { FONTS } from "../fonts";
  * STATIC here — only the "loops" Pacifico wordmark animates in beneath it, then
  * the whole overlay fades out via `onDone`.
  *
+ * READY-GATED (Signal-style): the overlay fades out as soon as the app signals
+ * readiness (root route decided — see src/utils/appReady.ts), NOT after a fixed
+ * timer. Previously it held for a guaranteed ~1.8s (560 fade-in + 1400 hold +
+ * 420 fade-out) even when the app was ready in 300ms — the single biggest
+ * contributor to the "slow cold start" feel. A small MINIMUM display time keeps
+ * the brand mark from flickering on very fast launches, and a hard MAXIMUM
+ * guarantees the splash can never wedge on-screen if the ready signal is lost.
+ *
  * NOTE: imageWidth/backgroundColor below MUST stay in sync with the
  * expo-splash-screen plugin config in app.config.ts.
  */
@@ -27,6 +35,15 @@ import { FONTS } from "../fonts";
 // Keep in sync with expo-splash-screen `imageWidth` in app.config.ts so the
 // JS logo is the exact same size as the native splash logo (no shrink).
 const LOGO_SIZE = 288;
+
+// Minimum time the overlay stays fully visible so the wordmark entrance never
+// flickers on an instant launch. Small on purpose — perceived speed wins.
+const MIN_DISPLAY_MS = 350;
+// Hard safety cap: never hold the splash longer than this even if the ready
+// signal never fires (e.g. an unexpected error before the root route mounts).
+const MAX_DISPLAY_MS = 4000;
+// Fade-out duration (was 420ms; shorter = snappier hand-off).
+const FADE_OUT_MS = 220;
 
 export default function AnimatedSplash({ onDone }: { onDone: () => void }) {
   // Wordmark: fade + upward slide. The logo does NOT animate (it must match the
@@ -37,27 +54,54 @@ export default function AnimatedSplash({ onDone }: { onDone: () => void }) {
   const screenOpacity = useSharedValue(1);
 
   useEffect(() => {
-    // 1. Wordmark fades + slides in under the (already-visible) logo.
+    const mountedAt = Date.now();
+    let dismissed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    // 1. Wordmark fades + slides in under the (already-visible) logo. Faster
+    // than before (was 560/620ms) so it completes within the minimum window.
     wordOpacity.value = withTiming(1, {
-      duration: 560,
+      duration: 300,
       easing: Easing.out(Easing.cubic),
     });
     wordTranslate.value = withTiming(0, {
-      duration: 620,
+      duration: 340,
       easing: Easing.out(Easing.cubic),
     });
 
-    // 2. Hold, then fade the whole overlay out and signal completion.
-    screenOpacity.value = withDelay(
-      1400,
-      withTiming(
+    const dismiss = () => {
+      if (dismissed) return;
+      dismissed = true;
+      screenOpacity.value = withTiming(
         0,
-        { duration: 420, easing: Easing.in(Easing.cubic) },
+        { duration: FADE_OUT_MS, easing: Easing.in(Easing.cubic) },
         (finished) => {
           if (finished) runOnJS(onDone)();
         },
-      ),
-    );
+      );
+    };
+
+    // 2. Fade out as soon as the app is READY (root route decided), respecting
+    // the minimum display window so the brand mark never flickers.
+    const unsubscribe = onAppReady(() => {
+      const elapsed = Date.now() - mountedAt;
+      const wait = Math.max(0, MIN_DISPLAY_MS - elapsed);
+      if (wait === 0) {
+        dismiss();
+      } else {
+        timer = setTimeout(dismiss, wait);
+      }
+    });
+
+    // 3. Hard cap — the splash must never outlive this even if the ready
+    // signal is lost.
+    const capTimer = setTimeout(dismiss, MAX_DISPLAY_MS);
+
+    return () => {
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+      clearTimeout(capTimer);
+    };
   }, []);
 
   const screenStyle = useAnimatedStyle(() => ({
