@@ -54,7 +54,12 @@ import {
   mergeNotificationPrefs,
 } from "../../src/utils/notificationPrefs";
 import { setShowWhenLocked } from "../../modules/lock-screen";
-import { startActiveCall, stopActiveCall } from "../../modules/call-ringer";
+import {
+  startActiveCall,
+  stopActiveCall,
+  getPendingCallAction,
+  clearPendingCallAction,
+} from "../../modules/call-ringer";
 import {
   isPipSupported,
   setCallActive as setPipCallActive,
@@ -2937,6 +2942,45 @@ export default function CallScreen() {
     if (mode !== "incoming" || !autoDecline || status !== "ringing") return;
     rejectIncoming().catch(() => {});
   }, [autoDecline, mode, rejectIncoming, status]);
+
+  // KILLED-STATE ANSWER/DECLINE SAFETY NET. When the user taps Answer/Decline
+  // on the native CallStyle notification while the app is KILLED, the choice is
+  // recorded natively (PendingCallActionStore) but the deep link carrying
+  // `autoAnswer=1` / `action=decline` can be LOST on the cold start (expo-router
+  // isn't mounted yet). If the cold-start routing then reaches this screen via a
+  // fallback path — the SecureStore route persisted at RING time (autoAnswer=0),
+  // the websocket re-delivering `call_incoming`, or PendingCallNavigator — the
+  // screen mounts in plain RINGING mode and the user is forced to answer a
+  // SECOND time. Consume the native action here on mount: if it matches THIS
+  // call, apply it (accept/reject) and clear it so a stale tap can never affect
+  // a later unrelated call (the store also has a 60s native TTL).
+  useEffect(() => {
+    if (mode !== "incoming" || status !== "ringing") return;
+    // The route params already carry the action → the effects above handle it.
+    if (autoAnswer || autoDecline) return;
+    try {
+      const nativeAction = getPendingCallAction();
+      if (!nativeAction) return;
+      const callId = callIdRef.current;
+      if (
+        String(nativeAction.conversationId) !== String(conversationId) ||
+        (callId != null && String(nativeAction.callId) !== String(callId))
+      ) {
+        return;
+      }
+      clearPendingCallAction();
+      if (nativeAction.action === "answer") {
+        acceptIncoming().catch(() => {});
+      } else if (nativeAction.action === "decline") {
+        rejectIncoming().catch(() => {});
+      }
+    } catch {
+      // best-effort — the user can still answer manually from the ringing UI
+    }
+    // Run once when the screen reaches the ringing state; acceptIncoming/
+    // rejectIncoming are stable callbacks and callIdRef is a ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, status, autoAnswer, autoDecline, conversationId]);
 
   const {
     toggleMute,

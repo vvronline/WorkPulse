@@ -22,6 +22,10 @@ import {
 import { notificationLogger, NotificationState } from "../src/utils/notificationLogger";
 import { notificationDispatcher } from "../src/services/notificationDispatcher";
 import { markAppReady } from "../src/utils/appReady";
+import {
+  getPendingCallAction,
+  clearPendingCallAction,
+} from "../modules/call-ringer";
 
 /**
  * Entry route: route to tabs when authenticated, otherwise to login.
@@ -65,6 +69,69 @@ export default function Index() {
     let cancelled = false;
     (async () => {
       const routeDecisionStartedAt = Date.now();
+      // ── KILLED-STATE ANSWER/DECLINE FAST PATH ──────────────────────────────
+      // When the user taps Answer/Decline on the native CallStyle notification,
+      // CallActionActivity records the choice SYNCHRONOUSLY in SharedPreferences
+      // BEFORE launching the app (the deep link it fires is lost on a killed
+      // cold start because expo-router isn't mounted yet). Read that native
+      // store FIRST — a synchronous, race-free read that doesn't depend on the
+      // async dispatcher/getInitialNotification timing — and route STRAIGHT to
+      // /call with the chosen action merged into the persisted ring-time route.
+      // This fixes "answering from the notification bar opens the dashboard and
+      // then shows the incoming call AGAIN, forcing a second answer": the
+      // dashboard never mounts and the call screen auto-accepts on mount.
+      try {
+        const nativeAction = getPendingCallAction();
+        if (nativeAction) {
+          const persisted = await loadPersistedPendingCall();
+          if (cancelled) return;
+          const matches =
+            persisted &&
+            String(persisted.callId) === String(nativeAction.callId) &&
+            String(persisted.conversationId) ===
+              String(nativeAction.conversationId);
+          const base: PendingCallRoute =
+            matches && persisted
+              ? persisted
+              : {
+                  conversationId: String(nativeAction.conversationId),
+                  callId: String(nativeAction.callId),
+                  dedupeKey: `call:${nativeAction.callId}`,
+                  callType: "voice",
+                  peerId: "",
+                  peerName: "Incoming call",
+                  peerAvatar: "",
+                  autoAnswer: "0",
+                };
+          const merged: PendingCallRoute = {
+            ...base,
+            autoAnswer: nativeAction.action === "answer" ? "1" : "0",
+            ...(nativeAction.action === "decline"
+              ? { action: "decline" }
+              : { action: undefined }),
+          };
+          clearPendingCallAction();
+          // Stash the merged route in memory too so the unauthenticated
+          // fall-through (login → PendingCallNavigator) can still route it.
+          setPendingCall(merged);
+          console.log(
+            `[WP-COLDSTART] native call-action fast path action=${nativeAction.action} ` +
+              `call=${merged.callId} conv=${merged.conversationId}`,
+          );
+          if (merged.dedupeKey) {
+            notificationLogger.logStateTransition(
+              merged.dedupeKey,
+              merged.conversationId,
+              NotificationState.ROUTE_CONSUMED,
+              { source: "app_index_native_action_fast_path" },
+            );
+          }
+          setCallRoute(merged);
+          return;
+        }
+      } catch {
+        // best-effort — fall through to the normal dispatcher path below
+      }
       // mobile/index.js starts this once at JS entry, but Android's back button
       // can destroy only the Activity while the JS process/singletons survive.
       // Re-invoking the dispatcher here lets the single reader capture a fresh

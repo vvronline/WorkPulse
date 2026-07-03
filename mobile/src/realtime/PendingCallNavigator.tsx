@@ -28,6 +28,10 @@ import {
 import { beginCallNavigation } from "./callRouting";
 import { notificationLogger, NotificationState } from "../utils/notificationLogger";
 import { notificationDispatcher } from "../services/notificationDispatcher";
+import {
+  getPendingCallAction,
+  clearPendingCallAction,
+} from "../../modules/call-ringer";
 
 export default function PendingCallNavigator() {
   const router = useRouter();
@@ -45,7 +49,34 @@ export default function PendingCallNavigator() {
       const persisted = await loadPersistedPendingCall();
       if (cancelled || !persisted) return;
       if (peekPendingCall()) return; // re-check: tap route may have arrived
-      setPendingCall(persisted);
+      // Merge the native Answer/Decline choice (recorded by CallActionActivity
+      // when the user tapped the CallStyle notification action) into the
+      // persisted route. The persisted route was written at RING time with
+      // autoAnswer="0" — without this merge, routing via this fallback would
+      // open the call screen in plain RINGING mode and force the user to
+      // answer a SECOND time (the killed-state double-answer bug).
+      let promoted = persisted;
+      try {
+        const nativeAction = getPendingCallAction();
+        if (
+          nativeAction &&
+          String(nativeAction.callId) === String(persisted.callId) &&
+          String(nativeAction.conversationId) ===
+            String(persisted.conversationId)
+        ) {
+          promoted = {
+            ...persisted,
+            autoAnswer: nativeAction.action === "answer" ? "1" : "0",
+            ...(nativeAction.action === "decline"
+              ? { action: "decline" as const }
+              : { action: undefined }),
+          };
+          clearPendingCallAction();
+        }
+      } catch {
+        // best-effort — fall back to the unmodified persisted route
+      }
+      setPendingCall(promoted);
       // Consume the durable copy now that it's promoted to the in-memory route;
       // the navigation effect below will pick it up and route to the call.
       await clearPersistedPendingCall();
