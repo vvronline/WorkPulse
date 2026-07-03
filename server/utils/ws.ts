@@ -1190,7 +1190,29 @@ async function handleChatMessage(
       callType,
       clientMsgId: rawCallInitiateId,
     } = msg.data || {};
-    if (!conversationId || !["voice", "video"].includes(callType)) return;
+    // Reject a malformed initiate EXPLICITLY. A silent `return` here left the
+    // caller's screen "Ringing…" for the full 35s no-answer timeout while the
+    // receiver never rang (e.g. a Calls-tab / call-info entry that carried a
+    // null conversation_id serialises to the string "null" → NaN client-side
+    // and an unusable id here). The NACK lets the client fail fast with a
+    // real error instead of ringing into the void.
+    const convIdNum = Number(conversationId);
+    if (
+      !conversationId ||
+      !Number.isFinite(convIdNum) ||
+      convIdNum <= 0 ||
+      !["voice", "video"].includes(callType)
+    ) {
+      logger.warn(
+        { senderId, conversationId, callType, tenantId },
+        "call_initiate: invalid payload, sending call_error",
+      );
+      sendToUser(tenantId, senderId, "call_error", {
+        conversationId: conversationId ?? null,
+        reason: "invalid_payload",
+      });
+      return;
+    }
 
     await withIdempotency(
       {
@@ -1211,6 +1233,12 @@ async function handleChatMessage(
             { senderId, conversationId },
             "call_initiate: sender not a participant",
           );
+          // NACK the caller — a silent drop left their screen ringing for the
+          // full no-answer timeout with the receiver never notified.
+          sendToUser(tenantId, senderId, "call_error", {
+            conversationId,
+            reason: "not_participant",
+          });
           recordCallTransitionFailure({
             event: "call_transition_failed",
             action: "initiate",

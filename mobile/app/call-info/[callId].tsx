@@ -1,5 +1,12 @@
 import { useMemo } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import {
   MessageSquare,
@@ -109,7 +116,18 @@ export default function CallInfoScreen() {
   // Explicit call-back. This is the ONLY place a call is initiated from the
   // Calls-tab flow (plus the per-row quick call icon) — never a bare row tap.
   const startCall = (type: "voice" | "video") => {
-    if (!conversationId) return;
+    // GUARD: route params are strings, so a null/undefined conversation_id
+    // upstream serialises to the literal "null"/"undefined" — which passed the
+    // old truthy check, became NaN on the call screen, and made the server
+    // silently drop call_initiate (caller rang forever, receiver never rang).
+    const convIdNum = Number(conversationId);
+    if (!conversationId || !Number.isFinite(convIdNum) || convIdNum <= 0) {
+      Alert.alert(
+        "Cannot call",
+        "This call's conversation no longer exists. Start a new chat to call them.",
+      );
+      return;
+    }
     router.push({
       pathname: "/call/[conversationId]",
       params: {

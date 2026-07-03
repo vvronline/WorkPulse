@@ -438,6 +438,19 @@ export default function ChatScreen() {
       : outgoing
         ? entry.other_name || "Unknown"
         : entry.caller_name || "Unknown";
+    // GUARD: a call-log entry can carry a null/invalid conversation_id (e.g.
+    // the conversation was deleted). Pushing that to the call screen produced
+    // `String(null)` → "null" → NaN, and the server silently dropped the
+    // resulting call_initiate — the caller rang forever while the receiver
+    // never rang. Fail fast with a clear message instead.
+    const convId = Number(entry.conversation_id);
+    if (!Number.isFinite(convId) || convId <= 0) {
+      Alert.alert(
+        "Cannot call",
+        "This call's conversation no longer exists. Start a new chat to call them.",
+      );
+      return;
+    }
     if (entry.is_group) {
       router.push({
         pathname: "/chat/[id]",
@@ -449,13 +462,18 @@ export default function ChatScreen() {
       });
       return;
     }
+    const peerAvatar = outgoing
+      ? entry.other_avatar || ""
+      : entry.caller_avatar || "";
     router.push({
       pathname: "/call/[conversationId]",
       params: {
-        conversationId: String(entry.conversation_id),
+        conversationId: String(convId),
         mode: "outgoing",
         callType: entry.call_type === "video" ? "video" : "voice",
         peerName: display,
+        peerAvatar,
+        isGroup: "0",
       },
     });
   }

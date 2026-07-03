@@ -1579,6 +1579,19 @@ export default function CallScreen() {
   // all" cause on mobile. We now retry for up to 5s and surface an error.
   useEffect(() => {
     if (mode !== "outgoing") return;
+    // GUARD: a malformed route param (e.g. the string "null"/"undefined" from
+    // an upstream entry point carrying a null conversation_id) parses to NaN.
+    // Sending call_initiate with it was silently dropped by the server, so the
+    // caller rang for the full 35s no-answer timeout while the receiver never
+    // rang. Bail out with a clear error instead.
+    if (!Number.isFinite(conversationId) || conversationId <= 0) {
+      Alert.alert(
+        "Cannot start call",
+        "This conversation could not be found. Open the chat and try again.",
+      );
+      endAndLeave(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       const stream = await getMedia();
@@ -2508,6 +2521,25 @@ export default function CallScreen() {
           if (Number(d.conversationId) === conversationId) {
             dispatchCall({ type: "REMOTE_REJECTED" });
             setTimeout(() => endAndLeave(false), 800);
+          }
+          break;
+        case "call_error":
+          // Server NACK for our call_initiate (invalid payload / we are not a
+          // participant of this conversation). Without this the screen sat on
+          // "Ringing…" until the 35s no-answer timeout even though the server
+          // never rang anyone.
+          if (
+            mode === "outgoing" &&
+            (d.conversationId == null ||
+              Number(d.conversationId) === conversationId)
+          ) {
+            Alert.alert(
+              "Call failed",
+              d.reason === "not_participant"
+                ? "You are no longer a member of this conversation."
+                : "The call could not be started. Please try again.",
+            );
+            endAndLeave(false);
           }
           break;
         case "call_busy":
