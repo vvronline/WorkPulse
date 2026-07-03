@@ -31,7 +31,11 @@ import {
   clearPersistedPendingCall,
   loadPersistedPendingCall,
 } from "../realtime/pendingCall";
-import { setPendingChat, persistPendingChat } from "../realtime/pendingChat";
+import {
+  setPendingChat,
+  persistPendingChat,
+  recordNotificationDisplayed,
+} from "../realtime/pendingChat";
 import { sendMessage, markConversationRead } from "../features";
 import { loadCallPrefs } from "./callPrefsStore";
 import { getToken } from "../auth/tokenStore";
@@ -1485,6 +1489,13 @@ class NotifeeService {
 
     // Post NOW without the avatar so the message is guaranteed to appear.
     await postNotification({});
+    // Record that a notification was just displayed so a subsequent KILLED-state
+    // cold start (where this notification may be auto-dismissed on tap, leaving
+    // getDisplayedNotifications() empty) still knows to keep re-polling
+    // notifee.getInitialNotification() until the launch intent attaches — the
+    // fix for "tapping a message notification from the killed/exited state opens
+    // the dashboard".
+    void recordNotificationDisplayed();
     // LOG: Notification displayed state
     if (data.dedupeKey && conversationId) {
       notificationLogger.logNotificationDisplayed(data.dedupeKey, conversationId, 'message');

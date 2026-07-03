@@ -154,3 +154,37 @@ export async function clearPersistedPendingChat(): Promise<void> {
     // ignore
   }
 }
+
+// ---------------------------------------------------------------------------
+// Last-notification-displayed marker (cold-start tap heuristic).
+// ---------------------------------------------------------------------------
+
+const LAST_NOTIF_TS_KEY = "wp_last_notif_display_ts";
+
+/**
+ * Record that a Notifee call/message notification was just displayed. Written
+ * from the headless FCM task (via notifeeService) so a freshly cold-started
+ * activity can tell that a notification exists — EVEN when it was auto-dismissed
+ * on tap and therefore no longer appears in getDisplayedNotifications(). The
+ * cold-start dispatcher uses this to keep re-polling notifee.getInitialNotification()
+ * while the launch intent attaches, instead of bailing to the dashboard.
+ * Best-effort; never throws.
+ */
+export async function recordNotificationDisplayed(): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(LAST_NOTIF_TS_KEY, String(Date.now()));
+  } catch {
+    // best-effort
+  }
+}
+
+/** Epoch ms of the last displayed notification (0 when absent). Never throws. */
+export async function getLastNotificationDisplayedAt(): Promise<number> {
+  try {
+    const raw = await SecureStore.getItemAsync(LAST_NOTIF_TS_KEY);
+    const ts = raw ? Number(raw) : 0;
+    return Number.isFinite(ts) ? ts : 0;
+  } catch {
+    return 0;
+  }
+}

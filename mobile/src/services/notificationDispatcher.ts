@@ -28,6 +28,7 @@ import {
   persistPendingChat,
   setPendingChat,
   loadPersistedPendingChat,
+  getLastNotificationDisplayedAt,
 } from '../realtime/pendingChat';
 import {
   getPendingCallAction,
@@ -484,11 +485,37 @@ class NotificationDispatcherService {
       console.log('[WP-COLDSTART] getDisplayedNotifications failed', err);
     }
 
-    // No on-screen notification → this was almost certainly a plain app open;
-    // do NOT block the cold start waiting for an intent that will never arrive.
-    if (!hasCandidate) return null;
+    // Even with NO notification on screen the launch can still be a tap: a
+    // message notification with autoCancel is DISMISSED the instant it is
+    // pressed, so getDisplayedNotifications() is already empty by the time this
+    // brand-new process reads it. In that case fall back to the "a notification
+    // was displayed very recently" marker (written by notifeeService when it
+    // posts the notification) so we still keep polling for the late-attaching
+    // launch intent instead of bailing straight to the dashboard. A plain
+    // launcher-icon open with no recent notification skips the wait entirely.
+    let recentDisplay = false;
+    if (!hasCandidate) {
+      try {
+        const lastTs = await getLastNotificationDisplayedAt();
+        recentDisplay = lastTs > 0 && Date.now() - lastTs < 60_000;
+        console.log(
+          `[WP-COLDSTART] no on-screen candidate; recentNotifDisplay=${recentDisplay} ` +
+            `ageMs=${lastTs > 0 ? Date.now() - lastTs : -1} source=${sourceState}`,
+        );
+      } catch {
+        /* best-effort */
+      }
+    }
 
-    const deadlineMs = Date.now() + 1800;
+    // No on-screen notification AND none displayed recently → this was almost
+    // certainly a plain app open; do NOT block the cold start waiting for an
+    // intent that will never arrive.
+    if (!hasCandidate && !recentDisplay) return null;
+
+    // A strong signal (notification still on screen) gets the full window; the
+    // weaker "recently displayed but now dismissed" signal gets a shorter one so
+    // a normal open that merely follows a recent notification isn't over-delayed.
+    const deadlineMs = Date.now() + (hasCandidate ? 1800 : 900);
     let attempt = 0;
     while (Date.now() < deadlineMs) {
       await new Promise((r) => setTimeout(r, 150));
