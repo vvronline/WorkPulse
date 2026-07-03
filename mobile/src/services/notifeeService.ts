@@ -2058,7 +2058,12 @@ class NotifeeService {
     const isPress = type === (this.EventType.PRESS ?? 1);
     const isAction = type === (this.EventType.ACTION_PRESS ?? 2);
 
-    // KILLED/WARM MULTI-CHAT SUMMARY tap: the GROUP SUMMARY for 2+ unread chats
+    console.log(
+      `[WP-WARM] handleMessageEvent conv=${conversationId ?? '-'} ` +
+        `isPress=${isPress} isAction=${isAction} press=${pressActionId ?? '-'} ` +
+        `openChatList=${data.openChatList ?? '-'}`,
+    );
+
     // carries `openChatList` (no single target thread — Android can't tell WHICH
     // child was tapped). Route to the chat LIST — never the dashboard. Handled
     // BEFORE the strict message validator below, since the summary intentionally
@@ -2303,6 +2308,10 @@ class NotifeeService {
       dedupeKey,
       messageId: data.messageId,
     });
+    console.log(
+      `[WP-WARM] body_press staged pendingChat conv=${conversationId} ` +
+        `dedupeKey=${dedupeKey}`,
+    );
     notificationLogger.info("notification_tap_route_staged", {
       source: "notifeeService.handleMessageEvent",
       dedupeKey: data.dedupeKey,
@@ -2373,6 +2382,12 @@ class NotifeeService {
     try {
       notifee.onBackgroundEvent(
         async ({ type, detail }: { type: number; detail: any }) => {
+          console.log(
+            `[WP-WARM] onBackgroundEvent type=${type} ` +
+              `conv=${detail?.notification?.data?.conversationId ?? '-'} ` +
+              `press=${detail?.pressAction?.id ?? detail?.notification?.android?.pressAction?.id ?? '-'} ` +
+              `callId=${detail?.notification?.data?.callId ?? '-'}`,
+          );
           // Calls first; if it isn't a call notification, route the message
           // notification (body tap → open chat, Reply/Mark-read actions).
           const handled = await this.handleCallEvent(type, detail);
@@ -2397,6 +2412,12 @@ class NotifeeService {
     try {
       const unsub = notifee.onForegroundEvent(
         async ({ type, detail }: { type: number; detail: any }) => {
+          console.log(
+            `[WP-WARM] onForegroundEvent type=${type} ` +
+              `conv=${detail?.notification?.data?.conversationId ?? '-'} ` +
+              `press=${detail?.pressAction?.id ?? detail?.notification?.android?.pressAction?.id ?? '-'} ` +
+              `callId=${detail?.notification?.data?.callId ?? '-'}`,
+          );
           // Calls first; if it isn't a call notification, route the message
           // notification (body tap → open chat, Reply/Mark-read actions).
           const handled = await this.handleCallEvent(type, detail);

@@ -107,7 +107,13 @@ export default function PendingChatNavigator() {
     };
 
     const tryConsume = async (trigger: string) => {
-      if (disposed || navigatingRef.current) return;
+      if (disposed || navigatingRef.current) {
+        console.log(
+          `[WP-WARM] PCN tryConsume(${trigger}) SKIP disposed=${disposed} ` +
+            `navigating=${navigatingRef.current}`,
+        );
+        return;
+      }
       // Only route when signed in; otherwise leave the route stashed so it is
       // consumed once auth resolves (the effect re-runs on `user` change).
       if (loading || !user) return;
@@ -120,9 +126,20 @@ export default function PendingChatNavigator() {
       if (!route || (!route.conversationId && !route.openChatList)) {
         const persisted = await loadPersistedPendingChat();
         if (disposed) return;
-        if (!persisted || (!persisted.conversationId && !persisted.openChatList)) return;
+        if (!persisted || (!persisted.conversationId && !persisted.openChatList)) {
+          console.log(
+            `[WP-WARM] PCN tryConsume(${trigger}) no route (in-memory + persisted empty)`,
+          );
+          return;
+        }
         route = persisted;
       }
+
+      console.log(
+        `[WP-WARM] PCN tryConsume(${trigger}) route conv=${route.conversationId || '-'} ` +
+          `openChatList=${route.openChatList ? '1' : '0'} appState=${AppState.currentState} ` +
+          `pathname=${pathnameRef.current} atTarget=${isAtTarget(route)}`,
+      );
 
       // Already showing the target (e.g. the cold-start redirect in
       // app/index.tsx landed it, or a previous retry succeeded while this
@@ -159,6 +176,10 @@ export default function PendingChatNavigator() {
       // below re-triggers the moment the app is genuinely resumed.
       if (AppState.currentState !== "active") {
         attemptRef.current.count -= 1;
+        console.log(
+          `[WP-WARM] PCN DEFER (app not active) trigger=${trigger} ` +
+            `appState=${AppState.currentState} conv=${route.conversationId || '-'}`,
+        );
         notificationLogger.info("pending_chat_navigation_deferred", {
           source: "PendingChatNavigator",
           dedupeKey: route.dedupeKey,
@@ -182,6 +203,10 @@ export default function PendingChatNavigator() {
       // Defer one tick so the navigation tree is fully mounted before pushing.
       setTimeout(() => {
         try {
+          console.log(
+            `[WP-WARM] PCN PUSH → ${targetRoute.openChatList || !targetRoute.conversationId ? '/(tabs)/chat' : '/chat/' + targetRoute.conversationId} ` +
+              `attempt=${attemptRef.current.count} trigger=${trigger}`,
+          );
           if (targetRoute.openChatList || !targetRoute.conversationId) {
             // 2+ unread GROUP-SUMMARY tap (no single target) → the chat LIST.
             router.push({ pathname: "/(tabs)/chat", params: {} });
@@ -212,8 +237,16 @@ export default function PendingChatNavigator() {
           navigatingRef.current = false;
           if (disposed) return;
           if (isAtTarget(targetRoute)) {
+            console.log(
+              `[WP-WARM] PCN LANDED conv=${targetRoute.conversationId || '-'} ` +
+                `pathname=${pathnameRef.current}`,
+            );
             finalizeSuccess(targetRoute);
           } else {
+            console.log(
+              `[WP-WARM] PCN NOT-LANDED conv=${targetRoute.conversationId || '-'} ` +
+                `attempt=${attemptRef.current.count} pathname=${pathnameRef.current} → retry`,
+            );
             notificationLogger.warn("pending_chat_navigation_not_landed", {
               source: "PendingChatNavigator",
               dedupeKey: targetRoute.dedupeKey,
