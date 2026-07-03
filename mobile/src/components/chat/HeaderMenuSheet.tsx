@@ -18,7 +18,7 @@ import {
   Star,
   Trash2,
   X as XIcon,
-} from "lucide-react-native";
+} from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import { uploadUrl } from "../../config";

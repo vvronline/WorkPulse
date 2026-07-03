@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Image, Pressable, StyleSheet, Text, View } from "react-native";
-import { FileText, Mic, Image as ImageIcon, Film } from "lucide-react-native";
+import { FileText, Mic, Image as ImageIcon, Film } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";

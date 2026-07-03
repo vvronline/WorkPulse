@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Search, X } from "lucide-react-native";
+import { Search, X } from "../../icons";
 import { api } from "../../api";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";

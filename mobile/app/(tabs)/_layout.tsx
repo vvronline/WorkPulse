@@ -18,7 +18,7 @@ import {
   Menu,
   MessageSquare,
   ClipboardList,
-} from "lucide-react-native";
+} from "../../src/icons";
 import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import TopBar from "../../src/components/TopBar";

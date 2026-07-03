@@ -13,7 +13,7 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
-import { Pencil, Plus, Trash2, UsersRound, X } from "lucide-react-native";
+import { Pencil, Plus, Trash2, UsersRound, X } from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { useDialog } from "../../src/hooks/useDialog";

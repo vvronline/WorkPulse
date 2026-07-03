@@ -9,7 +9,7 @@ import {
   LogOut,
   Play,
   Timer,
-} from "lucide-react-native";
+} from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import { useDialog } from "../hooks/useDialog";

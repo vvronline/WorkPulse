@@ -6,7 +6,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Camera, Keyboard, Mic, Plus, Send, Smile } from "lucide-react-native";
+import { Camera, Keyboard, Mic, Plus, Send, Smile } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import { scrollFocusedIntoView } from "../../hooks/useKeyboardInset";
@@ -136,15 +136,10 @@ const Composer = forwardRef<
               style={styles.sendBtn}
               onPress={editing ? onSaveEdit : onSend}
             >
-              {/* The lucide Send glyph points up-right (~45°) by default —
-                  rotate it clockwise so the paper plane points due RIGHT
-                  (Signal/WhatsApp orientation), plus a tiny optical-centering
-                  nudge so it reads centered inside the circular button. */}
-              <Send
-                size={20}
-                color="#fff"
-                style={styles.sendIcon}
-              />
+              {/* Heroicons' PaperAirplaneIcon points due RIGHT natively
+                  (Signal/WhatsApp orientation) — no rotation needed, just a
+                  tiny optical-centering nudge inside the circular button. */}
+              <Send size={20} color="#fff" style={styles.sendIcon} />
             </Pressable>
           ) : (
             /* "+" attach button now sits OUTSIDE the pill, on the right
@@ -244,12 +239,9 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "center",
     },
-    // Rotate the up-right lucide plane 45° clockwise → points due right, and
-    // nudge it slightly so the rotated glyph is optically centered in the circle.
+    // A right-pointing plane reads centered when nudged slightly toward its
+    // tip (same optical trick as centering a play ▸ glyph in a circle).
     sendIcon: {
-      transform: [{ rotate: "45deg" }],
-      // A right-pointing plane reads centered when nudged slightly toward its
-      // tip (same optical trick as centering a play ▸ glyph in a circle).
       marginLeft: 2,
     },
   });

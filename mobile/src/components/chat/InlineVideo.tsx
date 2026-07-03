@@ -11,7 +11,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Play, X } from "lucide-react-native";
+import { Play, X } from "../../icons";
 import { getToken } from "../../auth/tokenStore";
 
 /**

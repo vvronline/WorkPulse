@@ -11,7 +11,7 @@ import {
   View,
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
-import { Ban, CheckCircle2, Search, X } from "lucide-react-native";
+import { Ban, CheckCircle2, Search, X } from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { uploadUrl } from "../../src/config";

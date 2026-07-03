@@ -11,7 +11,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from "expo-audio";
-import { Phone, PhoneOff, Users } from "lucide-react-native";
+import { Phone, PhoneOff, Users } from "../../src/icons";
 import { socket } from "../../src/realtime/socket";
 import { endCallNavigation } from "../../src/realtime/callRouting";
 import { useAuth } from "../../src/auth/AuthContext";

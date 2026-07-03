@@ -27,7 +27,7 @@ import {
   VideoOff,
   Volume1,
   Volume2,
-} from "lucide-react-native";
+} from "../../icons";
 
 // Signal-style control glyph colours: white on the translucent (off) circle,
 // near-black on the solid white (toggled/on) circle.

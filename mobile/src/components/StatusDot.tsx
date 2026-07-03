@@ -1,5 +1,5 @@
 import { StyleSheet, View } from "react-native";
-import { Check, Clock3, Minus, Phone, Video } from "lucide-react-native";
+import { Check, Clock3, Minus, Phone, Video } from "../icons";
 
 /**
  * Status dot used on chat avatars and the profile header. Mirrors the web

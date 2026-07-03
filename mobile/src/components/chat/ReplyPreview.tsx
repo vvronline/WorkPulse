@@ -7,7 +7,7 @@ import {
   Mic,
   Image as ImageIcon,
   Film,
-} from "lucide-react-native";
+} from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";

@@ -15,7 +15,7 @@ import {
   ChevronUp,
   Copy,
   MessageSquare,
-} from "lucide-react-native";
+} from "../icons";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,

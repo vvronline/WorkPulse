@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { LayoutChangeEvent, StyleSheet, Text, View } from "react-native";
 import Svg, { Polyline, Line, Circle, G, Text as SvgText } from "react-native-svg";
-import { TrendingUp } from "lucide-react-native";
+import { TrendingUp } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 

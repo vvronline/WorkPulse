@@ -21,7 +21,7 @@ import {
   RefreshCw,
   Send,
   XCircle,
-} from "lucide-react-native";
+} from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { Dropdown, type DropdownOption } from "../../src/components/Dropdown";

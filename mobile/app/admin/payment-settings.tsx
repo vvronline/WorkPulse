@@ -12,7 +12,7 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
-import { CreditCard, FlaskConical } from "lucide-react-native";
+import { CreditCard, FlaskConical } from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import {

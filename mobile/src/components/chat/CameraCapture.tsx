@@ -7,7 +7,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { RotateCcw, X, Zap, ZapOff } from "lucide-react-native";
+import { RotateCcw, X, Zap, ZapOff } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import RecentMediaStrip, { type RecentMediaItem } from "./RecentMediaStrip";

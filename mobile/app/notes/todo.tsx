@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
-import { Check, Circle, Flag, Plus, Trash2 } from "lucide-react-native";
+import { Check, Circle, Flag, Plus, Trash2 } from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { useNotes } from "../../src/notes/NotesContext";

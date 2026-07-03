@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
-import { UserPlus } from "lucide-react-native";
+import { UserPlus } from "../../src/icons";
 import { useAuth } from "../../src/auth/AuthContext";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";

@@ -7,7 +7,7 @@ import {
   View,
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import { AlertTriangle } from "lucide-react-native";
+import { AlertTriangle } from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 

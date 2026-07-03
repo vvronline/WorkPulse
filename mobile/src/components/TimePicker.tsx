@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { Clock } from "lucide-react-native";
+import { Clock } from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 

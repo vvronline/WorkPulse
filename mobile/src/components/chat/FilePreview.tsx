@@ -17,7 +17,7 @@ import {
   EyeOff,
   X,
   RefreshCw,
-} from "lucide-react-native";
+} from "../../icons";
 import Svg, { Circle } from "react-native-svg";
 import { useAuth } from "../../auth/AuthContext";
 import type { Theme } from "../../theme";

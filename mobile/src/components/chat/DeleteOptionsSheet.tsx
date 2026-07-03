@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
-import { Trash2 } from "lucide-react-native";
+import { Trash2 } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 

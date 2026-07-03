@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
-import { ClipboardList } from "lucide-react-native";
+import { ClipboardList } from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import { TASK_PRIORITY } from "../constants";

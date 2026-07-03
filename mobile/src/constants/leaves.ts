@@ -5,7 +5,7 @@ import {
   Palmtree,
   Thermometer,
   User,
-} from "lucide-react-native";
+} from "../icons";
 
 /** Metadata describing a leave type for rendering in pickers / chips. */
 export interface LeaveTypeMeta {

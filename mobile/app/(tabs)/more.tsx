@@ -10,7 +10,7 @@ import {
   Settings,
   Users,
   type LucideIcon,
-} from "lucide-react-native";
+} from "../../src/icons";
 import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";

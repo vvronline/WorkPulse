@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { X } from "lucide-react-native";
+import { X } from "../../icons";
 import { uploadUrl } from "../../config";
 import { fmtDateTime } from "./chatUtils";
 import ZoomableImage from "./ZoomableImage";

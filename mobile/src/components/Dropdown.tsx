@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { Check, ChevronDown, X } from "lucide-react-native";
+import { Check, ChevronDown, X } from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 

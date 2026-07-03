@@ -10,7 +10,7 @@ import {
   Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
-} from "lucide-react-native";
+} from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 

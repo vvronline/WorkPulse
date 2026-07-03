@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarOff, Plus } from "lucide-react-native";
+import { CalendarOff, Plus } from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { leaveStatusMeta, leaveTypeMeta } from "../../src/constants";

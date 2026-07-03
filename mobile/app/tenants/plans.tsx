@@ -19,7 +19,7 @@ import {
   RotateCcw,
   Save,
   Trash2,
-} from "lucide-react-native";
+} from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import {

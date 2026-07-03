@@ -9,7 +9,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { BellOff, CheckCheck } from "lucide-react-native";
+import { BellOff, CheckCheck } from "../src/icons";
 
 import type { Theme } from "../src/theme";
 import { useTheme } from "../src/theme/ThemeProvider";

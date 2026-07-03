@@ -22,7 +22,7 @@ import {
   Trash2,
   Video as VideoIcon,
   X,
-} from "lucide-react-native";
+} from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { useEffect, useMemo, useState } from "react";

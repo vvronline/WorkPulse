@@ -36,7 +36,7 @@ import {
   Trash2,
   Video,
   X,
-} from "lucide-react-native";
+} from "../src/icons";
 import { useAuth } from "../src/auth/AuthContext";
 import { triggerUpdateCheck } from "../src/components/UpdateChecker";
 import { getCurrentVersion } from "../src/updater";

@@ -23,7 +23,7 @@ import {
   Share2,
   Trash2,
   X,
-} from "lucide-react-native";
+} from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { useNotes } from "../../src/notes/NotesContext";

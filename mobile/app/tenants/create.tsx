@@ -19,7 +19,7 @@ import {
   Sprout,
   UserPlus,
   Users,
-} from "lucide-react-native";
+} from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import {

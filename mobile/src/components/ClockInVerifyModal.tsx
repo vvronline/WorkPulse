@@ -14,7 +14,7 @@ import {
   MapPin,
   ShieldCheck,
   X,
-} from "lucide-react-native";
+} from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import FaceCaptureWebView from "./FaceCaptureWebView";

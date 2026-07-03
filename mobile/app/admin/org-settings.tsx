@@ -34,7 +34,7 @@ import {
   UserCog,
   Wifi,
   X,
-} from "lucide-react-native";
+} from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import {
   useKeyboardInset,

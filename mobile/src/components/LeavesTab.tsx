@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Pencil, Plus, Trash2, X } from "lucide-react-native";
+import { Pencil, Plus, Trash2, X } from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import { useDialog } from "../hooks/useDialog";

@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import { Pressable, StyleSheet, Text, View, Image } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
-import { Bell } from "lucide-react-native";
+import { Bell } from "../icons";
 import { useEffect, useState } from "react";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";

@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import WheelColorPicker from "react-native-wheel-color-picker";
-import { Check, X } from "lucide-react-native";
+import { Check, X } from "../icons";
 import { isValidHex } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 

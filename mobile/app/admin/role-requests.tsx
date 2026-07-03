@@ -10,7 +10,7 @@ import {
   View,
 } from "react-native";
 import { Stack } from "expo-router";
-import { ArrowRight, Check, RefreshCw, X } from "lucide-react-native";
+import { ArrowRight, Check, RefreshCw, X } from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { roleLabel } from "../../src/constants/roles";

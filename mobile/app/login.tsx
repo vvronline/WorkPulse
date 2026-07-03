@@ -20,7 +20,7 @@ import {
   EyeOff,
   ScanFace,
   Fingerprint,
-} from "lucide-react-native";
+} from "../src/icons";
 import { useAuth } from "../src/auth/AuthContext";
 import type { Theme } from "../src/theme";
 import { useTheme } from "../src/theme/ThemeProvider";

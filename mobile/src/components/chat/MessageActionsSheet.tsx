@@ -6,7 +6,7 @@ import {
   Pin,
   Star,
   Trash2,
-} from "lucide-react-native";
+} from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage, Conversation } from "../../features";

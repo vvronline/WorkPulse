@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Pin, X as XIcon } from "lucide-react-native";
+import { Pin, X as XIcon } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { PinnedMessage } from "../../features";

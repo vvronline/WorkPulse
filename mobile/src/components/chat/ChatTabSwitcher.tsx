@@ -10,7 +10,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { MessageSquare, Phone, Search, Video, X } from "lucide-react-native";
+import { MessageSquare, Phone, Search, Video, X } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 

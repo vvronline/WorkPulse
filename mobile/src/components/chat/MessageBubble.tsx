@@ -12,7 +12,7 @@ import Animated, {
   LinearTransition,
   interpolateColor,
 } from "react-native-reanimated";
-import { Check, CornerUpLeft, Pin, Star } from "lucide-react-native";
+import { Check, CornerUpLeft, Pin, Star } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";

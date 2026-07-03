@@ -10,7 +10,7 @@ import {
   View,
 } from "react-native";
 import { Stack, useRouter } from "expo-router";
-import { Building2, Pause, Play, Search, Trash2, X } from "lucide-react-native";
+import { Building2, Pause, Play, Search, Trash2, X } from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { PromptModal } from "../../src/components/PromptModal";

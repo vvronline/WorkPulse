@@ -6,7 +6,7 @@ import {
   PhoneOff,
   PhoneOutgoing,
   Video,
-} from "lucide-react-native";
+} from "../../icons";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { Theme } from "../../theme";
 import type { ChatMessage } from "../../features";

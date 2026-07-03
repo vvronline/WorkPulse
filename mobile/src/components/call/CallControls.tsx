@@ -9,8 +9,8 @@ import {
   VideoOff,
   Volume1,
   Volume2,
-} from 'lucide-react-native';
-import type { LucideIcon } from 'lucide-react-native';
+} from "../../icons";
+import type { LucideIcon } from "../../icons";
 import { useTheme } from '../../theme/ThemeProvider';
 import type { Theme } from '../../theme';
 import { useResponsive } from '../../utils/responsive';

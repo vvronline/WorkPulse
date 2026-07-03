@@ -23,7 +23,7 @@ import {
   Search,
   SlidersHorizontal,
   X,
-} from "lucide-react-native";
+} from "../../src/icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Theme } from "../../src/theme";

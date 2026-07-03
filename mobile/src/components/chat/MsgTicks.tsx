@@ -10,7 +10,7 @@ import Animated, {
   cancelAnimation,
 } from "react-native-reanimated";
 import Svg, { Circle, Path } from "react-native-svg";
-import { AlertTriangle, RefreshCw } from "lucide-react-native";
+import { AlertTriangle, RefreshCw } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";

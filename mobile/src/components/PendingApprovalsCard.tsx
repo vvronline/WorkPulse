@@ -7,7 +7,7 @@ import {
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { Check, ClipboardCheck, X } from "lucide-react-native";
+import { Check, ClipboardCheck, X } from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import {

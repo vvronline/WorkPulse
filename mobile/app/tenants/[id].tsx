@@ -30,7 +30,7 @@ import {
   Trash2,
   Users,
   X,
-} from "lucide-react-native";
+} from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { roleLabel } from "../../src/constants/roles";

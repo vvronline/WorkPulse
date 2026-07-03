@@ -22,7 +22,7 @@ import {
   useWindowDimensions,
   type ViewToken,
 } from "react-native";
-import { Delete, Search as SearchIcon, X as XIcon } from "lucide-react-native";
+import { Delete, Search as SearchIcon, X as XIcon } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import EmojiImage from "../../emoji/EmojiImage";

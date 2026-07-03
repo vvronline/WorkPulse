@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { BarChart3, Calendar, Palmtree, Target, Building2 } from "lucide-react-native";
+import { BarChart3, Calendar, Palmtree, Target, Building2 } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 

@@ -13,7 +13,7 @@ import {
   Users,
   Repeat,
   type LucideIcon,
-} from "lucide-react-native";
+} from "../icons";
 import type { DailyPrefill, OneOnOnePrefill } from "../features";
 
 const todayLabel = () =>

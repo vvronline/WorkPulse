@@ -19,7 +19,7 @@ import {
   Timer,
   Trash2,
   X,
-} from "lucide-react-native";
+} from "../../icons";
 import Svg, { Path } from "react-native-svg";
 import ViewShot, { captureRef } from "react-native-view-shot";
 import * as ImageManipulator from "expo-image-manipulator";

@@ -27,7 +27,7 @@ import {
   Share2,
   Trash2,
   X,
-} from "lucide-react-native";
+} from "../../icons";
 import { uploadUrl } from "../../config";
 import {
   forwardMessage,

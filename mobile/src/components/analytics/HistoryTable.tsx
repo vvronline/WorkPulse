@@ -6,7 +6,7 @@ import {
   ClipboardList,
   House,
   X,
-} from "lucide-react-native";
+} from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import { formatTime } from "../../utils/time";

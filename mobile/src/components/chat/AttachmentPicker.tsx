@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
-import { Camera, FileText, Image as ImageIcon } from "lucide-react-native";
+import { Camera, FileText, Image as ImageIcon } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import RecentMediaStrip, { type RecentMediaItem } from "./RecentMediaStrip";

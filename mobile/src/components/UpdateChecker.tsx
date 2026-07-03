@@ -9,7 +9,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { Download, Sparkles, X } from "lucide-react-native";
+import { Download, Sparkles, X } from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import {

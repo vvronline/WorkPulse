@@ -14,7 +14,7 @@ import {
   Images as ImagesIcon,
   Settings2,
   Video as VideoIcon,
-} from "lucide-react-native";
+} from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 

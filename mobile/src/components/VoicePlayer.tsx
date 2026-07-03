@@ -11,7 +11,7 @@ import {
   useAudioPlayer,
   useAudioPlayerStatus,
 } from "expo-audio";
-import { Pause, Play } from "lucide-react-native";
+import { Pause, Play } from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import { getToken } from "../auth/tokenStore";
