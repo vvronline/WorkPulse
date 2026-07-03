@@ -3353,7 +3353,7 @@ router.get("/calls", auth, async (req: Request, res: Response) => {
         `
             SELECT * FROM (
                 SELECT DISTINCT ON (cl.id)
-                    cl.id, cl.caller_id, cl.call_type, cl.status,
+                    cl.id, cl.conversation_id, cl.caller_id, cl.call_type, cl.status,
                     cl.started_at, cl.ended_at, cl.duration, cl.created_at,
                     caller.full_name AS caller_name, caller.avatar AS caller_avatar,
                     other_u.id AS other_user_id,
