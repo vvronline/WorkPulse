@@ -140,6 +140,14 @@ function ThemedStack() {
         }}
       />
       <Stack.Screen
+        name="group-call/ring"
+        options={{
+          headerShown: false,
+          animation: "fade",
+          presentation: "fullScreenModal",
+        }}
+      />
+      <Stack.Screen
         name="call-info/[callId]"
         options={{ ...headerScreen, title: "Call info" }}
       />

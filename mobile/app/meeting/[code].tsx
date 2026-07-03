@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState } from "react";
 import { ActivityIndicator,
   Image,
@@ -31,6 +32,7 @@ import {
   RefreshCw,
   SmilePlus,
   SwitchCamera,
+  UserPlus,
   Users,
   Video as VideoIcon,
   VideoOff,
@@ -40,7 +42,7 @@ import {
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { useAuth } from "../../src/auth/AuthContext";
-import { getMeeting } from "../../src/features";
+import { getMeeting, searchChatUsers } from "../../src/features";
 import { SERVER_ORIGIN } from "../../src/config";
 import { socket } from "../../src/realtime/socket";
 import {
@@ -101,6 +103,19 @@ export default function MeetingScreen() {
   const [showMore, setShowMore] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
   const [recording, setRecording] = useState(false);
+  // Add-participant (Signal-style "add to call"). Any joined member of a
+  // huddle can pull in another tenant user; the server rings them natively.
+  const [showAddPeople, setShowAddPeople] = useState(false);
+  const [addQuery, setAddQuery] = useState("");
+  const [addSearching, setAddSearching] = useState(false);
+  const [addResults, setAddResults] = useState<
+    Array<{ id: number | string; full_name?: string; username?: string }>
+  >([]);
+  const addTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // userIds we invited that haven't joined yet → "Ringing…" rows.
+  const [pendingInvites, setPendingInvites] = useState<
+    Map<string, { name: string; declined?: boolean }>
+  >(new Map());
   const [showChat, setShowChat] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
   const [chatText, setChatText] = useState("");
@@ -179,6 +194,31 @@ export default function MeetingScreen() {
         }
         return;
       }
+      if (msg.type === "huddle_declined") {
+        // An invited member declined the group-call ring — drop/mark their
+        // pending "Ringing…" row.
+        if (Number(d.meetingId) !== Number(meetingId)) return;
+        const key = String(d.userId);
+        setPendingInvites((prev) => {
+          if (!prev.has(key)) return prev;
+          const next = new Map(prev);
+          next.set(key, { ...next.get(key)!, declined: true });
+          return next;
+        });
+        return;
+      }
+      if (msg.type === "meeting_participant_joined") {
+        // An invited member answered — clear their pending row.
+        if (Number(d.meetingId) !== Number(meetingId)) return;
+        const key = String(d.userId);
+        setPendingInvites((prev) => {
+          if (!prev.has(key)) return prev;
+          const next = new Map(prev);
+          next.delete(key);
+          return next;
+        });
+        return;
+      }
       if (msg.type === "meeting_message") {
         if (Number(d.meetingId) !== Number(meetingId)) return;
         const m = d.message || {};
@@ -203,6 +243,26 @@ export default function MeetingScreen() {
     });
     return off;
   }, [meetingId, showChat, user?.id]);
+
+  const inviteUser = (u: {
+    id: number | string;
+    full_name?: string;
+    username?: string;
+  }) => {
+    if (!meetingId) return;
+    socket.send("meeting_add_participant", {
+      meetingId,
+      targetUserId: Number(u.id),
+    });
+    setPendingInvites((prev) => {
+      const next = new Map(prev);
+      next.set(String(u.id), { name: u.full_name || u.username || "User" });
+      return next;
+    });
+    setShowAddPeople(false);
+    setAddQuery("");
+    setAddResults([]);
+  };
 
   const sendMeetingChat = () => {
     const content = chatText.trim();
@@ -347,31 +407,40 @@ export default function MeetingScreen() {
   const connecting = status === "joining" || status === "connecting";
   // Tile count = self + remote participants. Drives the adaptive grid columns.
   const tileCount = remoteParticipants.length + 1;
+  // A huddle is a CALL, not a meeting — never show meeting-flavoured copy
+  // ("Joining…"). While nobody has answered yet the call is "Ringing…".
   const statusText =
     status === "connected"
       ? `${tileCount} in call`
-      : status === "connecting"
-        ? "Connecting…"
-        : "Joining…";
+      : isHuddle
+        ? remoteParticipants.length === 0
+          ? "Ringing…"
+          : "Connecting…"
+        : status === "connecting"
+          ? "Connecting…"
+          : "Joining…";
 
   return (
     <SafeAreaView style={styles.screen} edges={["top", "bottom"]}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      {/* Header */}
+      {/* Header — huddles hide the meeting-code pill (a group CALL has no
+          user-facing meeting artifacts). */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.headerTitle} numberOfLines={1}>
             {title}
           </Text>
-          <Pressable style={styles.codePill} onPress={copyCode}>
-            <Text style={styles.codeText}>{code}</Text>
-            {codeCopied ? (
-              <Check size={12} color={theme.success} />
-            ) : (
-              <Copy size={12} color={theme.textMuted} />
-            )}
-          </Pressable>
+          {!isHuddle ? (
+            <Pressable style={styles.codePill} onPress={copyCode}>
+              <Text style={styles.codeText}>{code}</Text>
+              {codeCopied ? (
+                <Check size={12} color={theme.success} />
+              ) : (
+                <Copy size={12} color={theme.textMuted} />
+              )}
+            </Pressable>
+          ) : null}
         </View>
         <View style={styles.headerRight}>
           <Text style={styles.headerStatus}>
@@ -415,10 +484,13 @@ export default function MeetingScreen() {
         ))}
       </ScrollView>
 
-      {connecting && remoteParticipants.length === 0 ? (
+      {(connecting || status === "connected") &&
+      remoteParticipants.length === 0 ? (
         <View style={styles.waiting} pointerEvents="none">
           <ActivityIndicator color={theme.primary} />
-          <Text style={styles.waitingText}>Waiting for others to join…</Text>
+          <Text style={styles.waitingText}>
+            {isHuddle ? "Ringing…" : "Waiting for others to join…"}
+          </Text>
         </View>
       ) : null}
 
@@ -523,6 +595,16 @@ export default function MeetingScreen() {
               <Text style={styles.sheetItemText}>
                 Participants ({tileCount})
               </Text>
+            </Pressable>
+            <Pressable
+              style={styles.sheetItem}
+              onPress={() => {
+                setShowMore(false);
+                setShowAddPeople(true);
+              }}
+            >
+              <UserPlus size={18} color={theme.text} />
+              <Text style={styles.sheetItemText}>Add people</Text>
             </Pressable>
             <Pressable
               style={styles.sheetItem}
@@ -658,6 +740,119 @@ export default function MeetingScreen() {
         </View>
       </Modal>
 
+      {/* Add-people modal — search tenant users and ring them into the call.
+          The server handles the native ring (`call_incoming` for huddles /
+          `meeting_invite` for meetings). */}
+      <Modal
+        visible={showAddPeople}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowAddPeople(false)}
+      >
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setShowAddPeople(false)}
+        >
+          <Pressable style={styles.participantsPanel}>
+            <View style={styles.participantsHeader}>
+              <Text style={styles.participantsTitle}>Add people</Text>
+              <Pressable onPress={() => setShowAddPeople(false)}>
+                <X size={20} color={theme.text} />
+              </Pressable>
+            </View>
+            <View
+              style={{
+                borderWidth: 1,
+                borderColor: theme.border,
+                borderRadius: 12,
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                marginBottom: 10,
+              }}
+            >
+              <TextInput
+                value={addQuery}
+                onChangeText={(val) => {
+                  setAddQuery(val);
+                  if (addTimerRef.current) clearTimeout(addTimerRef.current);
+                  if (val.trim().length < 2) {
+                    setAddResults([]);
+                    setAddSearching(false);
+                    return;
+                  }
+                  addTimerRef.current = setTimeout(async () => {
+                    setAddSearching(true);
+                    try {
+                      const r = await searchChatUsers(val.trim());
+                      const selfId = Number(user?.id || 0);
+                      const inCall = new Set(
+                        remoteParticipants.map((p) => Number(p.userId)),
+                      );
+                      const rows = (r.data || []).filter((u: any) => {
+                        const uid = Number(u.id);
+                        return uid > 0 && uid !== selfId && !inCall.has(uid);
+                      });
+                      setAddResults(rows);
+                    } catch {
+                      setAddResults([]);
+                    } finally {
+                      setAddSearching(false);
+                    }
+                  }, 300);
+                }}
+                placeholder="Search people…"
+                placeholderTextColor={theme.textMuted}
+                style={{ color: theme.text, fontSize: 15 }}
+                autoFocus
+              />
+            </View>
+            {addSearching ? (
+              <View style={{ paddingVertical: 14, alignItems: "center" }}>
+                <ActivityIndicator color={theme.primary} />
+              </View>
+            ) : null}
+            <ScrollView keyboardShouldPersistTaps="handled">
+              {addResults.map((u) => (
+                <Pressable
+                  key={String(u.id)}
+                  style={{
+                    paddingVertical: 12,
+                    borderBottomWidth: 1,
+                    borderBottomColor: theme.border,
+                  }}
+                  onPress={() => inviteUser(u)}
+                >
+                  <Text
+                    style={{ color: theme.text, fontSize: 15 }}
+                    numberOfLines={1}
+                  >
+                    {u.full_name || u.username || "User"}
+                  </Text>
+                  {u.username ? (
+                    <Text style={{ color: theme.textMuted, fontSize: 12 }}>
+                      @{u.username}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              ))}
+              {!addSearching &&
+              addQuery.trim().length >= 2 &&
+              addResults.length === 0 ? (
+                <Text
+                  style={{
+                    color: theme.textMuted,
+                    textAlign: "center",
+                    paddingVertical: 16,
+                  }}
+                >
+                  No matching users
+                </Text>
+              ) : null}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Participants list modal. */}
       <Modal
         visible={showParticipants}
@@ -695,6 +890,26 @@ export default function MeetingScreen() {
                   muted={p.muted}
                   raisedHand={raisedHands.has(String(p.userId))}
                 />
+              ))}
+              {Array.from(pendingInvites.entries()).map(([uid, info]) => (
+                <View key={`pending-${uid}`} style={styles.participantRow}>
+                  <View style={styles.participantAvatar}>
+                    <Text style={styles.participantAvatarText}>
+                      {(info.name || "?")[0]?.toUpperCase()}
+                    </Text>
+                  </View>
+                  <Text style={styles.participantName} numberOfLines={1}>
+                    {info.name}
+                  </Text>
+                  <Text
+                    style={{
+                      color: info.declined ? theme.danger : theme.textMuted,
+                      fontSize: 12,
+                    }}
+                  >
+                    {info.declined ? "Declined" : "Ringing…"}
+                  </Text>
+                </View>
               ))}
             </ScrollView>
           </Pressable>

@@ -2483,6 +2483,38 @@ async function handleChatMessage(
     // Tag this WS connection so we can clean up on disconnect
     ws._activeMeetingId = meetingId;
 
+    // HUDDLE ANSWERED-ELSEWHERE (Signal/WhatsApp parity): joining a group CALL
+    // is the "answer". Dismiss the ring on the answerer's OTHER devices (WS
+    // frame for live sockets + push-cancel for backgrounded/killed twins) so a
+    // user who answers on their phone doesn't keep ringing on their desktop.
+    // Best-effort; never blocks the join.
+    if (meeting.is_huddle) {
+      try {
+        sendToUser(tenantId, senderId, "call_handled_elsewhere", {
+          callId: meeting.id,
+          conversationId: meeting.conversation_id,
+          action: "accepted",
+        });
+        pushNotifications
+          .sendCallCancellation(db.query as any, senderId, tenantId, {
+            callId: meeting.id,
+            conversationId: meeting.conversation_id,
+            reason: "answered_elsewhere",
+          })
+          .catch((err: any) =>
+            logger.warn(
+              { err: err?.message, userId: senderId, meetingId },
+              "huddle answered-elsewhere push-cancel failed",
+            ),
+          );
+      } catch (err: any) {
+        logger.warn(
+          { err: err?.message, meetingId },
+          "huddle answered-elsewhere ring-cancel failed",
+        );
+      }
+    }
+
     // Determine if we should notify other participants
     const isRestart = meeting.status === "ended";
     const isFirstStart = meeting.status === "scheduled";
@@ -3047,18 +3079,115 @@ async function handleChatMessage(
         userId: senderId,
       });
     }
+  } else if (msg.type === "huddle_decline") {
+    // GROUP-CALL DECLINE (Signal/WhatsApp parity): a rung member declines the
+    // huddle ring. Unlike a 1:1 `call_reject` this does NOT end the call —
+    // the mesh keeps running for everyone who joined. We:
+    //   1. mark the decliner's participant row 'declined' so they are not
+    //      re-rung by lifecycle events,
+    //   2. dismiss the ring on ALL the decliner's devices (WS + push-cancel),
+    //   3. tell the joined members that this user declined (UI can show
+    //      "<name> declined" on the pending tile).
+    const { meetingId, clientMsgId: rawIdHd } = msg.data || {};
+    if (!meetingId) return;
+    await withIdempotency(
+      { tenantId, senderId, type: "huddle_decline", clientMsgId: rawIdHd },
+      async () => {
+        const meeting = (
+          await db.query(
+            "SELECT id, is_huddle, conversation_id FROM meetings WHERE id = $1",
+            [meetingId],
+          )
+        ).rows[0];
+        if (!meeting || !meeting.is_huddle) return;
+        // Only an invited (not-yet-joined) member can decline the ring.
+        const mpRow = (
+          await db.query(
+            "SELECT status FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2",
+            [meetingId, senderId],
+          )
+        ).rows[0];
+        if (!mpRow || mpRow.status === "joined") return;
+        await db.query(
+          `UPDATE meeting_participants SET status = 'declined' WHERE meeting_id = $1 AND user_id = $2 AND status != 'joined'`,
+          [meetingId, senderId],
+        );
+
+        // Dismiss the ring on every one of the decliner's devices.
+        sendToUser(tenantId, senderId, "call_handled_elsewhere", {
+          callId: meeting.id,
+          conversationId: meeting.conversation_id,
+          action: "rejected",
+        });
+        pushNotifications
+          .sendCallCancellation(db.query as any, senderId, tenantId, {
+            callId: meeting.id,
+            conversationId: meeting.conversation_id,
+            reason: "rejected",
+          })
+          .catch((err: any) =>
+            logger.warn(
+              { err: err?.message, userId: senderId, meetingId },
+              "huddle_decline push-cancel failed",
+            ),
+          );
+
+        // Notify joined members so their UI can drop the "Ringing…" state.
+        const decliner = (
+          await db.query("SELECT full_name FROM users WHERE id = $1", [
+            senderId,
+          ])
+        ).rows[0];
+        const joined = (
+          await db.query(
+            `SELECT user_id FROM meeting_participants WHERE meeting_id = $1 AND status = 'joined'`,
+            [meetingId],
+          )
+        ).rows;
+        for (const p of joined) {
+          sendToUser(tenantId, p.user_id, "huddle_declined", {
+            meetingId,
+            callId: meeting.id,
+            conversationId: meeting.conversation_id,
+            userId: senderId,
+            userName: decliner?.full_name,
+          });
+        }
+      },
+    );
   } else if (msg.type === "meeting_add_participant") {
-    // Organizer adds someone to an active meeting
+    // Add someone to an active meeting / group CALL (huddle).
+    // Meetings: gated by the permission preset (default: host only).
+    // Huddles: ANY joined member may pull in another tenant user
+    // (Signal/Slack "add to call" parity — a group call has no "host").
     const { meetingId, targetUserId } = msg.data || {};
     if (!meetingId || !targetUserId) return;
 
     const meeting = (
-      await db.query(
-        "SELECT * FROM meetings WHERE id = $1 AND created_by = $2",
-        [meetingId, senderId],
-      )
+      await db.query("SELECT * FROM meetings WHERE id = $1", [meetingId])
     ).rows[0];
     if (!meeting || meeting.status === "ended") return;
+
+    if (meeting.is_huddle) {
+      // Any *joined* member of the live call can add people.
+      const joinedOk = (
+        await db.query(
+          `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status = 'joined'`,
+          [meetingId, senderId],
+        )
+      ).rows[0];
+      if (!joinedOk) return;
+    } else {
+      const meetingPerms = require("./meetingPermissions");
+      if (
+        !meetingPerms.can(
+          { userId: senderId },
+          meeting,
+          meetingPerms.ACTIONS.ADD_PARTICIPANT,
+        )
+      )
+        return;
+    }
 
     const targetUser = (
       await db.query("SELECT full_name, avatar FROM users WHERE id = $1", [

@@ -31,22 +31,57 @@ export default function IncomingCallListener() {
         if (pathname?.startsWith("/call/")) return;
 
         // Group CALL (huddle): a `meetingCode` means the callee joins the n-way
-        // meeting mesh, NOT the 1:1 p2p call screen. When the app is active we
-        // navigate straight to the meeting room (Signal-style "join group
-        // call"); when backgrounded the FCM→Notifee full-screen-intent owns the
-        // surface and its tap deep-links into the meeting. We ring/warm here.
+        // meeting mesh, NOT the 1:1 p2p call screen.
+        //
+        // FOREGROUND: show the full-screen INCOMING GROUP-CALL ring screen
+        // (Accept / Decline) — previously this auto-navigated straight into
+        // the meeting room ("Joining…") with no chance to accept or decline.
+        //
+        // BACKGROUND: post the same full-screen-intent ringing notification
+        // from the WS path too (Signal parity — "the socket is the source of
+        // truth; push is only a wake-up"). Previously the group path relied
+        // 100% on the FCM push: if push delivery failed (dev build without
+        // FCM, permission revoked, Doze delay) the phone NEVER rang. The
+        // notification id is derived from callId+conversationId so a later
+        // FCM push REPLACES it rather than stacking, and cancelled-call
+        // tombstones still suppress dead calls.
         if (d.meetingCode) {
           if (AppState.currentState !== "active") {
             void warmIceConfig();
+            void notifeeService.displayIncomingCall({
+              type: "call_incoming",
+              callId: String(d.callId),
+              conversationId: String(d.conversationId),
+              callerId: d.callerId != null ? String(d.callerId) : undefined,
+              callerName: d.callerName || undefined,
+              callerAvatar: d.callerAvatar || undefined,
+              callType: d.callType === "video" ? "video" : "voice",
+              isGroup: "1",
+              groupName: d.groupName || undefined,
+              meetingCode: String(d.meetingCode),
+            });
             return;
           }
           if (pathname?.startsWith(`/meeting/${d.meetingCode}`)) return;
+          if (pathname?.startsWith("/group-call/ring")) return;
+          if (!beginCallNavigation(d.callId, d.conversationId)) return;
           ringingRef.current = d.callId;
-          // Huddle auto-join (no meeting lobby) + audio-only for a voice call.
+          void warmIceConfig();
           const ct = d.callType === "video" ? "video" : "voice";
-          router.push(
-            `/meeting/${d.meetingCode}?huddle=1&callType=${ct}` as never,
-          );
+          router.push({
+            pathname: "/group-call/ring",
+            params: {
+              meetingCode: String(d.meetingCode),
+              callId: String(d.callId),
+              meetingId: d.meetingId != null ? String(d.meetingId) : String(d.callId),
+              conversationId:
+                d.conversationId != null ? String(d.conversationId) : "",
+              callType: ct,
+              callerName: d.callerName || "",
+              callerAvatar: d.callerAvatar || "",
+              groupName: d.groupName || "",
+            },
+          } as never);
           return;
         }
 

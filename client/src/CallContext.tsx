@@ -143,10 +143,23 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
     const rejectGlobalCall = useCallback(() => {
         if (globalIncomingCall) {
-            wsSend("call_reject", {
-                callId: globalIncomingCall.callId,
-                conversationId: globalIncomingCall.conversationId,
-            });
+            // Group CALL (huddle): a `meetingCode` means this ring came from the
+            // meeting-mesh path, not a call_logs row — `call_reject` would be a
+            // silent no-op server-side (no matching call log). Send the
+            // dedicated `huddle_decline` instead: the server marks us declined,
+            // dismisses the ring on our other devices, and notifies the joined
+            // members. For huddles callId === meetingId.
+            if (globalIncomingCall.meetingCode) {
+                wsSend("huddle_decline", {
+                    meetingId: globalIncomingCall.callId,
+                    clientMsgId: `hd-${globalIncomingCall.callId}-${Date.now()}`,
+                });
+            } else {
+                wsSend("call_reject", {
+                    callId: globalIncomingCall.callId,
+                    conversationId: globalIncomingCall.conversationId,
+                });
+            }
             setGlobalIncomingCall(null);
         }
     }, [globalIncomingCall, wsSend]);
