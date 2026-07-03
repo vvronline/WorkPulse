@@ -13,7 +13,12 @@ import { socket } from "./socket";
 import { emitChatUnreadChanged, chatUnreadManager } from "./chatUnreadEvents";
 import { backgroundPushService } from "../services/backgroundPushService";
 import { notifeeService } from "../services/notifeeService";
-import { beginCallNavigation, endCallNavigation } from "./callRouting";
+import {
+  beginCallNavigation,
+  endCallNavigation,
+  isCallActive,
+} from "./callRouting";
+import { emitAnswerIntent } from "./callAnswerIntent";
 import {
   persistPendingChat,
   setPendingChat,
@@ -241,10 +246,19 @@ function handleCallNotification(
   // Cross-path guard: IncomingCallListener (websocket) may also navigate for
   // this same call. Claim navigation so only ONE path pushes the /call screen —
   // a double push crashes React Native Fabric ("child already has a parent").
-  // Exception: when the user tapped "Answer" we still want to ensure the screen
-  // is shown, so only skip if it's already active for THIS call.
+  //
+  // When the user tapped "Answer" but the claim FAILS, the call screen for this
+  // call is ALREADY mounted (the websocket path pushed it while ringing). We
+  // must NOT push again — the old `!isAccept` bypass double-mounted the /call
+  // fullScreenModal, which is a fatal Fabric crash: the JS thread dies while
+  // native WebRTC audio keeps flowing ("no call UI but I can still talk").
+  // Instead, deliver the answer to the mounted screen via the answer-intent
+  // bus (built exactly for this): it runs acceptIncoming() on the live screen.
   const isAccept = callData.notificationAction === "accept_call";
-  if (!beginCallNavigation(callData.callId, callData.conversationId) && !isAccept) {
+  if (!beginCallNavigation(callData.callId, callData.conversationId)) {
+    if (isAccept && isCallActive(callData.callId, callData.conversationId)) {
+      emitAnswerIntent(callData.callId, callData.conversationId);
+    }
     return;
   }
 

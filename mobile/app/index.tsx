@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Redirect } from "expo-router";
 import { ActivityIndicator, View } from "react-native";
 import { useAuth } from "../src/auth/AuthContext";
@@ -51,6 +51,12 @@ export default function Index() {
   const { user, loading } = useAuth();
   const theme = useTheme();
 
+  // Whether THIS component claimed call navigation for the cold-start call
+  // route ("claimed"), was refused because another path already owns it
+  // ("denied"), or hasn't tried yet (null). A ref (not state) so the claim is
+  // attempted exactly once across re-renders.
+  const callClaimRef = useRef<"claimed" | "denied" | null>(null);
+
   // Tri-state: undefined = still checking for a cold-start call; null = no
   // pending call (normal launch); route = launch straight into the call.
   const [callRoute, setCallRoute] = useState<
@@ -90,44 +96,48 @@ export default function Index() {
             String(persisted.callId) === String(nativeAction.callId) &&
             String(persisted.conversationId) ===
               String(nativeAction.conversationId);
-          const base: PendingCallRoute =
-            matches && persisted
-              ? persisted
-              : {
-                  conversationId: String(nativeAction.conversationId),
-                  callId: String(nativeAction.callId),
-                  dedupeKey: `call:${nativeAction.callId}`,
-                  callType: "voice",
-                  peerId: "",
-                  peerName: "Incoming call",
-                  peerAvatar: "",
-                  autoAnswer: "0",
-                };
-          const merged: PendingCallRoute = {
-            ...base,
-            autoAnswer: nativeAction.action === "answer" ? "1" : "0",
-            ...(nativeAction.action === "decline"
-              ? { action: "decline" }
-              : { action: undefined }),
-          };
-          clearPendingCallAction();
-          // Stash the merged route in memory too so the unauthenticated
-          // fall-through (login → PendingCallNavigator) can still route it.
-          setPendingCall(merged);
-          console.log(
-            `[WP-COLDSTART] native call-action fast path action=${nativeAction.action} ` +
-              `call=${merged.callId} conv=${merged.conversationId}`,
-          );
-          if (merged.dedupeKey) {
-            notificationLogger.logStateTransition(
-              merged.dedupeKey,
-              merged.conversationId,
-              NotificationState.ROUTE_CONSUMED,
-              { source: "app_index_native_action_fast_path" },
+          if (matches && persisted) {
+            const merged: PendingCallRoute = {
+              ...persisted,
+              autoAnswer: nativeAction.action === "answer" ? "1" : "0",
+              ...(nativeAction.action === "decline"
+                ? { action: "decline" }
+                : { action: undefined }),
+            };
+            clearPendingCallAction();
+            // Stash the merged route in memory too so the unauthenticated
+            // fall-through (login → PendingCallNavigator) can still route it.
+            setPendingCall(merged);
+            console.log(
+              `[WP-COLDSTART] native call-action fast path action=${nativeAction.action} ` +
+                `call=${merged.callId} conv=${merged.conversationId}`,
             );
+            if (merged.dedupeKey) {
+              notificationLogger.logStateTransition(
+                merged.dedupeKey,
+                merged.conversationId,
+                NotificationState.ROUTE_CONSUMED,
+                { source: "app_index_native_action_fast_path" },
+              );
+            }
+            setCallRoute(merged);
+            return;
           }
-          setCallRoute(merged);
-          return;
+          // STALE / MISMATCHED native action: no ring-time route matches this
+          // tap (the ring was for a different/older call, or its persisted
+          // route was already consumed after the call died). Previously we
+          // SYNTHESIZED a bare route from the native action and launched the
+          // call screen anyway — with no peerId and a possibly-dead callId the
+          // screen auto-accepted into thin air and hung on "Connecting…"
+          // forever. Worse, when the params-carrying paths handled the action,
+          // the native store was NEVER cleared (60s TTL), so a NEW call in the
+          // same conversation within that window was instantly auto-answered/
+          // declined. Clear it and fall through to the normal launch flow.
+          clearPendingCallAction();
+          console.log(
+            `[WP-COLDSTART] discarded stale native call-action action=${nativeAction.action} ` +
+              `call=${nativeAction.callId} conv=${nativeAction.conversationId}`,
+          );
         }
       } catch {
         // best-effort — fall through to the normal dispatcher path below
@@ -328,7 +338,24 @@ export default function Index() {
     // this same call, and claim navigation to prevent a double-mount.
     consumePendingCall();
     void clearPersistedPendingCall();
-    beginCallNavigation(callRoute.callId, callRoute.conversationId);
+    // HONOUR the claim result. If ANOTHER path (PendingCallNavigator, the
+    // websocket IncomingCallListener, a Notifee tap handler) already claimed
+    // navigation for this call, the /call fullScreenModal is already mounted
+    // (or being mounted) — redirecting here anyway would MOUNT IT A SECOND
+    // TIME, which is a fatal Fabric crash ("child already has a parent"): the
+    // JS thread dies while native WebRTC audio keeps flowing. Remember when WE
+    // claimed it (ref) so re-renders of this component don't self-deny.
+    if (!callClaimRef.current) {
+      callClaimRef.current = beginCallNavigation(
+        callRoute.callId,
+        callRoute.conversationId,
+      )
+        ? "claimed"
+        : "denied";
+    }
+    if (callClaimRef.current === "denied") {
+      return <Redirect href={user ? "/(tabs)" : "/login"} />;
+    }
     if (callRoute.dedupeKey) {
       notificationLogger.logStateTransition(callRoute.dedupeKey, callRoute.conversationId, NotificationState.ROUTE_CONSUMED, { source: "app_index_cold_start" });
       notificationLogger.logStateTransition(callRoute.dedupeKey, callRoute.conversationId, NotificationState.NAVIGATION_STARTED, { target: "call", source: "app_index_cold_start" });

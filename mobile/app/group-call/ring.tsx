@@ -13,7 +13,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from "expo-audio";
 import { Phone, PhoneOff, Users } from "../../src/icons";
 import { socket } from "../../src/realtime/socket";
-import { endCallNavigation } from "../../src/realtime/callRouting";
+import { endCallNavigation, isCallActive } from "../../src/realtime/callRouting";
 import { useAuth } from "../../src/auth/AuthContext";
 import { notifeeService } from "../../src/services/notifeeService";
 import { loadCallPrefs } from "../../src/services/callPrefsStore";
@@ -70,6 +70,23 @@ export default function GroupCallRingScreen() {
   const [muteAll, setMuteAll] = useState(false);
   const [ringtoneId, setRingtoneId] = useState("classic");
   const handledRef = useRef(false);
+
+  // SCOPED claim release. This ring screen was navigated to under a
+  // beginCallNavigation(callId, conversationId) claim (IncomingCallListener).
+  // Releasing the claim UNCONDITIONALLY here clobbered the claim of an
+  // unrelated LIVE 1:1 call (e.g. a group ring surfaced and timed out while a
+  // 1:1 call was ongoing) — which re-showed the "Return to call" banner over a
+  // live call and let a second path double-mount the /call screen (Fabric
+  // crash). Only release when THIS ring's call actually owns the claim.
+  const releaseOwnClaim = () => {
+    if (
+      callId != null &&
+      params.conversationId &&
+      isCallActive(callId, String(params.conversationId))
+    ) {
+      endCallNavigation();
+    }
+  };
 
   const ringPlayer = useAudioPlayer();
   const ringStatus = useAudioPlayerStatus(ringPlayer);
@@ -182,7 +199,7 @@ export default function GroupCallRingScreen() {
         if (callId != null && String(d.callId) !== callId) return;
         if (handledRef.current) return;
         handledRef.current = true;
-        endCallNavigation();
+        releaseOwnClaim();
         router.back();
       }
     });
@@ -201,7 +218,7 @@ export default function GroupCallRingScreen() {
           clientMsgId: `hd-timeout-${meetingId}-${Date.now()}`,
         });
       }
-      endCallNavigation();
+      releaseOwnClaim();
       router.back();
     }, RING_TIMEOUT_MS);
     return () => clearTimeout(t);
@@ -217,8 +234,8 @@ export default function GroupCallRingScreen() {
     }
     // Release the incoming-call navigation claim — the meeting room is not a
     // /call screen, so keeping the claim would block a FUTURE incoming call's
-    // ring navigation.
-    endCallNavigation();
+    // ring navigation. Scoped: only release if this ring's call owns it.
+    releaseOwnClaim();
     // Replace (not push) so Back from the call room doesn't return to a dead
     // ring screen.
     router.replace(
@@ -235,9 +252,27 @@ export default function GroupCallRingScreen() {
         clientMsgId: `hd-${meetingId}-${user?.id ?? 0}-${Date.now()}`,
       });
     }
-    endCallNavigation();
+    releaseOwnClaim();
     router.back();
   };
+
+  // Safety net: if this screen is dismissed via ANY path that skipped the
+  // handlers above (hardware back, navigation reset, parent unmount), release
+  // this ring's navigation claim on unmount. A leaked claim permanently
+  // blocked the NEXT incoming call's ring navigation ("phone rings but no
+  // call UI appears" until app restart).
+  useEffect(() => {
+    return () => {
+      if (
+        callId != null &&
+        params.conversationId &&
+        isCallActive(callId, String(params.conversationId))
+      ) {
+        endCallNavigation();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const styles = useMemo(() => makeStyles(), []);
   const callLabel =

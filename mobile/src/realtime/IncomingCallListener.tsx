@@ -3,7 +3,11 @@ import { AppState } from "react-native";
 import { useRouter, usePathname } from "expo-router";
 import { socket } from "./socket";
 import { useAuth } from "../auth/AuthContext";
-import { beginCallNavigation, endCallNavigation } from "./callRouting";
+import {
+  beginCallNavigation,
+  endCallNavigation,
+  isCallActive,
+} from "./callRouting";
 import { clearPersistedPendingCall } from "./pendingCall";
 import { notifeeService } from "../services/notifeeService";
 import { nativeCallService } from "../services/nativeCallService";
@@ -151,7 +155,25 @@ export default function IncomingCallListener() {
         msg.type === "call_handled_elsewhere"
       ) {
         if (ringingRef.current === d.callId) ringingRef.current = null;
-        endCallNavigation();
+        // SCOPED teardown: only release the cross-path navigation claim when
+        // this event refers to the SAME call that currently owns it. The
+        // group-call overhaul made these events far more frequent (the server
+        // echoes `call_handled_elsewhere` to the answerer's own devices on
+        // every huddle join/decline) — an UNCONDITIONAL endCallNavigation()
+        // here silently released the claim of a LIVE, unrelated 1:1 call.
+        // With the claim gone: (a) the OngoingCallBanner ("Return to call")
+        // re-appeared over the chat list while the call screen was still up,
+        // and (b) a second navigation path could re-push the /call
+        // fullScreenModal for the same call, double-mounting it and crashing
+        // Fabric ("child already has a parent") — the "call UI disappears but
+        // voice keeps going" symptom.
+        if (
+          d.callId != null &&
+          d.conversationId != null &&
+          isCallActive(d.callId, d.conversationId)
+        ) {
+          endCallNavigation();
+        }
         // Tear down any ringing call notification AND drop the persisted route
         // so a later cold start never re-opens this now-dead call. cancelCall
         // also clears the persisted entry internally; the explicit clear covers

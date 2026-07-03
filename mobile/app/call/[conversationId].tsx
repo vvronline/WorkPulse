@@ -383,6 +383,12 @@ export default function CallScreen() {
       ) => RTCPeerConnection)
     | null
   >(null);
+  // Stable ref to recoverDeadVideoTrack so the connection-state handler
+  // (created before the callback is defined below) can invoke the LATEST
+  // version without a stale closure.
+  const recoverDeadVideoTrackRef = useRef<(() => Promise<boolean>) | null>(
+    null,
+  );
   // ── Signal serialization queue (mirrors the web client's buffered, ordered
   // signal handling). Every incoming WS signal used to spawn an UNORDERED
   // async IIFE: while the offer handler was awaiting getUserMedia/ICE-config,
@@ -1099,13 +1105,17 @@ export default function CallScreen() {
 
       // Safety net: if we never reach "connected" within 30s, the negotiation
       // stalled (lost candidate, blocked TURN). Tear down so the user isn't
-      // stuck on an endless "Connecting…" screen.
+      // stuck on an endless "Connecting…" screen. Send call_end (idempotent)
+      // so the server commits the terminal state — previously this tore down
+      // LOCALLY only, leaving the call_logs row stuck at `answered`, which
+      // kept the stale "Ongoing call — Return" banner haunting the chat list.
       if (connectionTimeoutRef.current) {
         clearTimeout(connectionTimeoutRef.current);
       }
       connectionTimeoutRef.current = setTimeout(() => {
+        if (pcRef.current !== pc) return;
         if ((pc as any).connectionState !== "connected") {
-          endAndLeave(false);
+          endAndLeave(true);
         }
       }, 30000);
 
@@ -1284,6 +1294,16 @@ export default function CallScreen() {
           // Ramp the video bitrate up now that the link is established
           // (mirrors web applyBitrateRampUp).
           applyBitrateRampUp(pc);
+          // SELF-VIEW watchdog: if this is a video call with the camera ON but
+          // our local video track is dead/missing at connect time (camera came
+          // up behind the keyguard, or another surface briefly stole the
+          // exclusive Android camera), re-acquire and republish it. Previously
+          // this recovery only ran on an AppState resume — a call that
+          // connected while already foregrounded never healed, leaving the
+          // self preview invisible for the whole call.
+          if (recoverDeadVideoTrackRef.current) {
+            void recoverDeadVideoTrackRef.current();
+          }
           // P1.10 watchdog armed: if a video call still has no live remote
           // video a few seconds after connect, ask the peer to re-announce.
           if (callType === "video" && !videoStateRequestedRef.current) {
@@ -1323,7 +1343,10 @@ export default function CallScreen() {
               pcRef.current === pc &&
               (pc as any).connectionState !== "connected"
             ) {
-              endAndLeave(false);
+              // Failure teardown must be authoritative: tell the server the
+              // call ended (idempotent) or the `answered` row lingers and the
+              // stale "Return to call" banner re-appears after the drop.
+              endAndLeave(true);
             }
           }, 8000);
         } else if (st === "failed") {
@@ -1352,7 +1375,7 @@ export default function CallScreen() {
                   },
                 });
               } catch {
-                endAndLeave(false);
+                endAndLeave(true);
               }
             })();
           } else if (!relayOnlyRef.current) {
@@ -1376,7 +1399,7 @@ export default function CallScreen() {
             (async () => {
               try {
                 const builder = createPCRef.current;
-                if (!builder || !localStr) return endAndLeave(false);
+                if (!builder || !localStr) return endAndLeave(true);
                 const newPc = builder(localStr, targetUserId, true);
                 // Apply the conservative initial encoding cap on the rebuilt PC
                 // too. The relay-only rebuild previously skipped this, so the
@@ -1397,14 +1420,19 @@ export default function CallScreen() {
                   signal: { type: "offer", sdp: offer.sdp },
                 });
               } catch {
-                endAndLeave(false);
+                endAndLeave(true);
               }
             })();
           } else {
-            endAndLeave(false);
+            endAndLeave(true);
           }
         } else if (st === "closed") {
-          endAndLeave(false);
+          // Only end for a SPONTANEOUS close of the CURRENT PC. We close stale
+          // PCs ourselves during the relay-only rebuild / reconnect re-offer —
+          // their late "closed" event must not tear down the fresh call.
+          if (pcRef.current === pc) {
+            endAndLeave(true);
+          }
         }
       };
 
@@ -1538,6 +1566,27 @@ export default function CallScreen() {
       iceOutQueueRef.current = [];
       bitrateRampTimersRef.current.forEach((t) => clearTimeout(t));
       bitrateRampTimersRef.current = [];
+      // MEDIA / PEER-CONNECTION teardown safety net. endAndLeave() normally
+      // stops the tracks and closes the PC, but this screen can unmount via
+      // paths that BYPASS it (navigation replace/reset, a surviving duplicate
+      // mount being reconciled away, parent teardown). Without this, the mic/
+      // camera and the native WebRTC session kept running with NO UI — the
+      // "call screen disappeared but I can still talk, had to reboot" bug.
+      try {
+        localStreamRef.current?.getTracks().forEach((t) => t.stop());
+      } catch {
+        /* ignore */
+      }
+      try {
+        pcRef.current?.close();
+      } catch {
+        /* ignore */
+      }
+      pcRef.current = null;
+      localStreamRef.current = null;
+      remoteStreamRef.current = null;
+      // The active-call foreground service + PiP flags have their own unmount
+      // effects; the lock-screen flag likewise. Nothing further to stop here.
       // Safety net: always release the navigation guard on unmount, even if the
       // screen was dismissed without going through endAndLeave.
       endCallNavigation();
@@ -1725,7 +1774,10 @@ export default function CallScreen() {
         // A PC exists → the peer re-offered and negotiation is underway; the
         // per-PC 30s connect timeout (in createPC) now owns the deadline.
         if (pcRef.current) return;
-        endAndLeave(false);
+        // The peer never re-offered — the call is effectively dead. Commit the
+        // end server-side (idempotent) so the `answered` row can't keep the
+        // stale "Return to call" banner alive.
+        endAndLeave(true);
       }, 20000);
     })();
     return () => {
@@ -1884,6 +1936,10 @@ export default function CallScreen() {
       return false;
     }
   }, [callType, videoOff, usingFrontCamera, conversationId, runSerialized]);
+
+  // Keep the ref current so createPC's connected handler always calls the
+  // latest recovery closure (videoOff/camera state can change mid-call).
+  recoverDeadVideoTrackRef.current = recoverDeadVideoTrack;
 
   // AppState-resume media retry. When a call is answered while the app is
   // backgrounded or over the lock screen, Android cannot show the runtime
@@ -2898,6 +2954,16 @@ export default function CallScreen() {
 
   useEffect(() => {
     if (mode !== "incoming" || !autoAnswer || status !== "ringing") return;
+    // The notification tap that carried autoAnswer=1 may ALSO have recorded
+    // the choice in the native PendingCallActionStore (60s TTL). Clear it now
+    // that the params-path is handling the answer — otherwise a NEW call in
+    // the same conversation within that window would be silently auto-answered
+    // by the killed-state safety net below.
+    try {
+      clearPendingCallAction();
+    } catch {
+      /* best-effort */
+    }
     acceptIncoming().catch(() => {});
   }, [acceptIncoming, autoAnswer, mode, status]);
 
@@ -2940,6 +3006,13 @@ export default function CallScreen() {
   // Auto-decline when launched from the notification's "Decline" action.
   useEffect(() => {
     if (mode !== "incoming" || !autoDecline || status !== "ringing") return;
+    // Mirror the autoAnswer path: clear the native pending action so a stale
+    // decline can never affect a later unrelated call in this conversation.
+    try {
+      clearPendingCallAction();
+    } catch {
+      /* best-effort */
+    }
     rejectIncoming().catch(() => {});
   }, [autoDecline, mode, rejectIncoming, status]);
 
