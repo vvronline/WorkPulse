@@ -41,18 +41,22 @@ function makeWs() {
 function makeHappyPathDb({ persistedId = 999 }: { persistedId?: number; mentions?: any[] } = {}) {
     const queries: any[] = [];
     const responses = [
-        // 1. participant check
-        { rows: [{ "?column?": 1 }] },
-        // 2. INSERT messages → returns id + created_at
+        // 1. participant check (now returns is_group + group_name)
+        { rows: [{ is_group: false, group_name: null }] },
+        // 2. block-check (Signal parity) — empty = not blocked
+        { rows: [] },
+        // 3. INSERT messages → returns id + created_at
         { rows: [{ id: persistedId, created_at: "2026-01-01T00:00:00Z" }] },
-        // 3. UPDATE conversations (no return assertion needed)
+        // 4. UPDATE conversations (no return assertion needed)
         { rows: [] },
-        // 4. INSERT/UPDATE message_reads
+        // 5. INSERT/UPDATE message_reads
         { rows: [] },
-        // 5. SELECT participants
+        // 6. SELECT participants
         { rows: [{ user_id: 7 }, { user_id: 8 }, { user_id: 9 }] },
-        // 6. SELECT sender
+        // 7. SELECT sender
         { rows: [{ full_name: "Test User", avatar: null, username: "tu" }] },
+        // 8. muted-recipients lookup (push suppression) — none muted
+        { rows: [] },
     ];
     const query = jest.fn((..._args: any[]) => Promise.resolve(responses.shift() || { rows: [] }));
     return { query, queries };
@@ -131,10 +135,11 @@ describe("chatMessage handler — happy path", () => {
             data: { conversationId: 5, content: "hello world", clientMsgId: "abc" },
             ws, sendToUser: send,
         });
-        // 1 participant check + 1 INSERT + 1 conv touch + 1 read upsert + 1 participants
-        // fetch + 1 sender fetch = 6 core queries, PLUS 1 getTotalUnread badge query per
-        // non-sender participant (2 here: users 8 and 9) fired from the fan-out loop = 8.
-        expect(db.query).toHaveBeenCalledTimes(8);
+        // 1 participant check + 1 block-check + 1 INSERT + 1 conv touch + 1 read upsert
+        // + 1 participants fetch + 1 sender fetch + 1 muted-recipients lookup = 8 core
+        // queries, PLUS 1 getTotalUnread badge query per non-sender participant
+        // (2 here: users 8 and 9) fired from the fan-out loop = 10.
+        expect(db.query).toHaveBeenCalledTimes(10);
         // 3 broadcasts (one per participant)
         const broadcasts = send.mock.calls.filter((c: any[]) => c[2] === "chat_message");
         expect(broadcasts).toHaveLength(3);
@@ -185,7 +190,8 @@ describe("chatMessage handler — happy path", () => {
             data: { conversationId: 5, content: "hi", formatType: "weird-unknown" },
             ws, sendToUser: send,
         });
-        const insertCall = db.query.mock.calls[1];
+        // Index 2: [0]=participant check, [1]=block check, [2]=INSERT.
+        const insertCall = db.query.mock.calls[2];
         expect(insertCall[1][4]).toBe("text");
     });
 
@@ -197,7 +203,7 @@ describe("chatMessage handler — happy path", () => {
                 data: { conversationId: 5, content: "x", formatType: ft },
                 ws: makeWs(), sendToUser: jest.fn(),
             });
-            expect(db.query.mock.calls[1][1][4]).toBe(ft);
+            expect(db.query.mock.calls[2][1][4]).toBe(ft);
         }
     });
 });

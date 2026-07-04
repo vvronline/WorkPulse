@@ -870,6 +870,28 @@ export const togglePinConversation = (convId: number | string) =>
     API.post(`/chat/conversations/${convId}/pin`);
 export const toggleFavouriteConversation = (convId: number | string) =>
     API.post(`/chat/conversations/${convId}/favourite`);
+// Mute with Signal-style durations: "1h" | "8h" | "1d" | "1w" | "always";
+// pass null to unmute. Omit the argument for legacy toggle behaviour.
+export const muteConversation = (
+    convId: number | string,
+    duration?: "1h" | "8h" | "1d" | "1w" | "always" | null,
+) =>
+    duration === undefined
+        ? API.post(`/chat/conversations/${convId}/mute`)
+        : API.post(`/chat/conversations/${convId}/mute`, { duration });
+export const toggleArchiveConversation = (convId: number | string) =>
+    API.post(`/chat/conversations/${convId}/archive`);
+export const markConversationUnread = (convId: number | string) =>
+    API.post(`/chat/conversations/${convId}/unread`);
+// Block users (Signal parity)
+export const getBlockedUsers = () => API.get("/chat/blocked");
+export const blockUser = (userId: number | string) =>
+    API.post(`/chat/users/${userId}/block`);
+export const unblockUser = (userId: number | string) =>
+    API.delete(`/chat/users/${userId}/block`);
+// Link preview (sender-generated, Signal parity)
+export const getLinkPreview = (url: string) =>
+    API.get("/chat/link-preview", { params: { url } });
 export const getCallHistory = (convId: number | string) =>
     API.get(`/chat/conversations/${convId}/calls`);
 export const getAllCallHistory = () => API.get("/chat/calls");

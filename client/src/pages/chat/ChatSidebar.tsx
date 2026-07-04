@@ -1,4 +1,4 @@
-import { Pin, Star, Users, UserPlus, X, Search, Phone, MessageSquare, Video } from "lucide-react";
+import { Pin, Star, Users, UserPlus, X, Search, Phone, MessageSquare, Video, Archive, ChevronLeft } from "lucide-react";
 import { useState } from "react";
 import { ChatAvatar } from "../../components/chat";
 import { useFeatures } from "../../FeaturesContext";
@@ -27,6 +27,8 @@ interface ChatSidebarProps {
     onPinConv: (...args: any[]) => void;
     onFavConv: (...args: any[]) => void;
     onDeleteConv: (...args: any[]) => void;
+    onMuteConv?: (...args: any[]) => void;
+    onArchiveConv?: (...args: any[]) => void;
     onNewGroup: () => void;
     searchInputRef: React.RefObject<HTMLInputElement>;
 }
@@ -51,16 +53,28 @@ export default function ChatSidebar({
     onPinConv,
     onFavConv,
     onDeleteConv,
+    onMuteConv,
+    onArchiveConv,
     onNewGroup,
     searchInputRef,
 }: ChatSidebarProps) {
     const { hasFeature } = useFeatures() as any;
-    const totalUnread = conversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
     const [sidebarTab, setSidebarTab] = useState("msgs");
+    // Signal-style Archived section: archived chats are hidden from the main
+    // list and live behind an "Archived (n)" row at the bottom.
+    const [showArchived, setShowArchived] = useState(false);
 
     // Separate meeting conversations from regular ones
-    const regularConvs = conversations.filter((c) => !c.is_meeting_chat);
+    const allRegular = conversations.filter((c) => !c.is_meeting_chat);
     const meetingConvs = conversations.filter((c) => c.is_meeting_chat);
+
+    const archivedConvs = allRegular.filter((c) => c.is_archived);
+    const regularConvs = allRegular.filter((c) => !c.is_archived);
+    // Muted chats don't contribute to the aggregate unread badge (Signal parity)
+    const totalUnread = regularConvs.reduce(
+        (sum, c) => sum + (c.is_muted ? 0 : c.unread_count || 0),
+        0,
+    );
 
     const pinned = regularConvs.filter((c) => c.is_pinned);
     const favourites = regularConvs.filter((c) => c.is_favourite && !c.is_pinned);
@@ -77,6 +91,8 @@ export default function ChatSidebar({
         onPin: onPinConv,
         onFav: onFavConv,
         onDelete: onDeleteConv,
+        onMute: onMuteConv,
+        onArchive: onArchiveConv,
     };
     const [showSearch, setShowSearch] = useState(false);
 
@@ -226,7 +242,25 @@ export default function ChatSidebar({
                         </div>
                     )}
 
-                    {!search && (
+                    {!search && showArchived ? (
+                        <div className={s.convList}>
+                            <div
+                                className={s.convSection}
+                                style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}
+                                onClick={() => setShowArchived(false)}
+                            >
+                                <ChevronLeft size={14} /> <Archive size={13} /> Archived ({archivedConvs.length})
+                            </div>
+                            {archivedConvs.length === 0 ? (
+                                <div className={s.empty}>No archived chats</div>
+                            ) : (
+                                archivedConvs.map((c) => (
+                                    <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />
+                                ))
+                            )}
+                        </div>
+                    ) : null}
+                    {!search && !showArchived && (
                         <div className={s.convList}>
                             {loadingConvs ? (
                                 <div className={s.skeletonList}>
@@ -296,6 +330,22 @@ export default function ChatSidebar({
                                     {others.map((c) => (
                                         <ConversationItem key={c.id} conv={c} onOpen={onOpenConv} {...convProps} />
                                     ))}
+                                    {archivedConvs.length > 0 && (
+                                        <div
+                                            className={s.convSection}
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: "0.35rem",
+                                                cursor: "pointer",
+                                                marginTop: "0.5rem",
+                                            }}
+                                            onClick={() => setShowArchived(true)}
+                                            title="Show archived chats"
+                                        >
+                                            <Archive size={13} /> Archived ({archivedConvs.length})
+                                        </div>
+                                    )}
                                 </>
                             )}
                         </div>

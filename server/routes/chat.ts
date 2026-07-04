@@ -1066,12 +1066,18 @@ router.get("/conversations", auth, async (req: Request, res: Response) => {
                 -- thread. read = any OTHER participant's last_read_at is at or
                 -- after the message; delivered = the message's delivered_to
                 -- array is non-empty.
+                -- Read receipts are RECIPROCAL (Signal parity): the caller only
+                -- sees read state when THEIR read-receipts pref is on, and only
+                -- from readers whose pref is also on.
                 (SELECT EXISTS (
                     SELECT 1 FROM message_reads mr2
+                    JOIN users ur ON ur.id = mr2.user_id
                     WHERE mr2.conversation_id = c.id
                       AND mr2.user_id != $1
                       AND mr2.last_read_at >= m.created_at
-                )) AS last_message_read,
+                      AND COALESCE((ur.notification_prefs->>'readReceipts')::boolean, TRUE)
+                ) AND COALESCE((SELECT (notification_prefs->>'readReceipts')::boolean
+                                  FROM users WHERE id = $1), TRUE)) AS last_message_read,
                 COALESCE(jsonb_array_length(m.delivered_to), 0) > 0 AS last_message_delivered,
                 COALESCE(mr.last_read_at, '1970-01-01'::timestamptz) AS last_read_at,
                 (SELECT COUNT(*)::int FROM messages msg
@@ -1103,8 +1109,16 @@ router.get("/conversations", auth, async (req: Request, res: Response) => {
                 END AS group_member_avatars,
                 cp.is_pinned,
                 cp.is_favourite,
-                cp.is_muted,
+                (cp.is_muted AND (cp.muted_until IS NULL OR cp.muted_until > NOW())) AS is_muted,
+                cp.muted_until,
                 cp.is_archived,
+                -- Block state (Signal parity): only expose whether *I* blocked
+                -- the other user in a direct chat. Being blocked BY someone is
+                -- never revealed to the client.
+                CASE WHEN c.is_group = FALSE AND u.id IS NOT NULL THEN
+                    EXISTS (SELECT 1 FROM blocked_users b
+                             WHERE b.blocker_id = $1 AND b.blocked_id = u.id)
+                ELSE FALSE END AS is_blocked,
                 CASE WHEN mtg.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_meeting_chat,
                 mtg.meeting_code
             FROM conversations c
@@ -1187,7 +1201,7 @@ router.get(
             SELECT m.id, m.sender_id, m.content, m.created_at,
                    m.reply_to_id, m.file_url, m.file_name, m.file_type, m.file_size,
                    m.edited_at, m.deleted_at, m.forwarded_from_id,
-                   m.pinned_at, m.pinned_by,
+                   m.pinned_at, m.pinned_by, m.link_preview,
                    m.format_type, m.metadata, m.delivered_to,
                    cmj.id AS media_job_id, cmj.status AS media_state, cmj.stage AS media_stage, cmj.progress AS media_progress, cmj.failure_reason AS media_failure_reason, cmj.pipeline_meta AS media_pipeline_meta,
                    u.full_name AS sender_name, u.avatar AS sender_avatar, u.username AS sender_username,
@@ -1332,6 +1346,20 @@ router.get(
         return res.status(403).json({ error: "Not a participant" });
       }
 
+      // Reciprocal read receipts (Signal parity): if the CALLER has turned
+      // receipts off they see nobody's read state; and readers who turned
+      // their receipts off are excluded from everyone's results.
+      const myPref = (
+        await req.db!.query(
+          `SELECT COALESCE((notification_prefs->>'readReceipts')::boolean, TRUE) AS on
+             FROM users WHERE id = $1`,
+          [req.userId],
+        )
+      ).rows[0];
+      if (myPref && myPref.on === false) {
+        return res.json([]);
+      }
+
       const rows = (
         await req.db!.query(
           `
@@ -1339,6 +1367,7 @@ router.get(
             FROM message_reads mr
             JOIN users u ON u.id = mr.user_id
             WHERE mr.conversation_id = $1 AND mr.user_id != $2
+              AND COALESCE((u.notification_prefs->>'readReceipts')::boolean, TRUE)
         `,
           [convId, req.userId],
         )
@@ -1390,6 +1419,28 @@ router.post(
           [convId],
         )
       ).rows[0];
+
+      // Block enforcement (direct chats only, Signal parity): if either side
+      // has blocked the other, the message is rejected. Group messages are
+      // NOT filtered (matches Signal).
+      if (conversation && !conversation.is_group) {
+        const blockedPair = (
+          await req.db!.query(
+            `SELECT 1 FROM blocked_users b
+               JOIN conversation_participants cp
+                 ON cp.conversation_id = $1 AND cp.user_id != $2
+              WHERE (b.blocker_id = $2 AND b.blocked_id = cp.user_id)
+                 OR (b.blocker_id = cp.user_id AND b.blocked_id = $2)
+              LIMIT 1`,
+            [convId, req.userId],
+          )
+        ).rows[0];
+        if (blockedPair) {
+          return res
+            .status(403)
+            .json({ error: "Cannot send message", code: "blocked" });
+        }
+      }
 
       const content = String(req.body.content ?? "").trim();
       if (!content)
@@ -2956,9 +3007,20 @@ router.post(
 
 /**
  * POST /api/chat/conversations/:id/mute
- * Toggle mute (notification silencing) for the current user. Signal parity for
- * the mobile chat-list long-press action sheet.
+ * Mute (notification silencing) for the current user. Signal parity:
+ * accepts an optional { duration } — one of "1h" | "8h" | "1d" | "1w" |
+ * "always". A NULL muted_until with is_muted=TRUE means muted forever
+ * ("always", Signal's Long.MAX_VALUE). Passing { duration: null } or an
+ * empty body with the chat already muted UNMUTES (legacy toggle behaviour
+ * is preserved for old clients that send no body).
  */
+const MUTE_DURATIONS_MS: Record<string, number> = {
+  "1h": 60 * 60 * 1000,
+  "8h": 8 * 60 * 60 * 1000,
+  "1d": 24 * 60 * 60 * 1000,
+  "1w": 7 * 24 * 60 * 60 * 1000,
+};
+
 router.post(
   "/conversations/:id/mute",
   auth,
@@ -2976,15 +3038,69 @@ router.post(
       ) {
         return res.status(403).json({ error: "Not a participant" });
       }
-      const result = (
-        await req.db!.query(
-          `UPDATE conversation_participants SET is_muted = NOT is_muted
-             WHERE conversation_id = $1 AND user_id = $2
-             RETURNING is_muted`,
-          [convId, req.userId],
-        )
-      ).rows[0];
-      res.json({ muted: result.is_muted });
+
+      const rawDuration = (req.body || {}).duration;
+      let result;
+      if (rawDuration === undefined) {
+        // Legacy toggle (no body) — flip the flag, clear any timed mute.
+        result = (
+          await req.db!.query(
+            `UPDATE conversation_participants
+                SET is_muted = NOT (is_muted AND (muted_until IS NULL OR muted_until > NOW())),
+                    muted_until = NULL
+              WHERE conversation_id = $1 AND user_id = $2
+              RETURNING is_muted, muted_until`,
+            [convId, req.userId],
+          )
+        ).rows[0];
+      } else if (rawDuration === null || rawDuration === "") {
+        // Explicit unmute.
+        result = (
+          await req.db!.query(
+            `UPDATE conversation_participants
+                SET is_muted = FALSE, muted_until = NULL
+              WHERE conversation_id = $1 AND user_id = $2
+              RETURNING is_muted, muted_until`,
+            [convId, req.userId],
+          )
+        ).rows[0];
+      } else if (rawDuration === "always") {
+        result = (
+          await req.db!.query(
+            `UPDATE conversation_participants
+                SET is_muted = TRUE, muted_until = NULL
+              WHERE conversation_id = $1 AND user_id = $2
+              RETURNING is_muted, muted_until`,
+            [convId, req.userId],
+          )
+        ).rows[0];
+      } else if (MUTE_DURATIONS_MS[String(rawDuration)]) {
+        const until = new Date(
+          Date.now() + MUTE_DURATIONS_MS[String(rawDuration)],
+        ).toISOString();
+        result = (
+          await req.db!.query(
+            `UPDATE conversation_participants
+                SET is_muted = TRUE, muted_until = $3
+              WHERE conversation_id = $1 AND user_id = $2
+              RETURNING is_muted, muted_until`,
+            [convId, req.userId, until],
+          )
+        ).rows[0];
+      } else {
+        return res.status(400).json({
+          error: "Invalid duration (expected 1h | 8h | 1d | 1w | always | null)",
+        });
+      }
+
+      // Cross-device sync: tell the user's OTHER sessions about the change.
+      sendToUser(req.tenantId, req.userId, "chat_conv_muted", {
+        conversationId: convId,
+        muted: result.is_muted,
+        mutedUntil: result.muted_until || null,
+      });
+
+      res.json({ muted: result.is_muted, mutedUntil: result.muted_until || null });
     } catch (err) {
       req.log.error({ err }, "Mute conversation error");
       res.status(500).json({ error: "Failed to mute conversation" });
@@ -3021,6 +3137,11 @@ router.post(
           [convId, req.userId],
         )
       ).rows[0];
+      // Cross-device sync.
+      sendToUser(req.tenantId, req.userId, "chat_conv_archived", {
+        conversationId: convId,
+        archived: result.is_archived,
+      });
       res.json({ archived: result.is_archived });
     } catch (err) {
       req.log.error({ err }, "Archive conversation error");
@@ -3912,6 +4033,291 @@ router.post("/calls/:callId/end", auth, async (req: Request, res: Response) => {
   } catch (err) {
     req.log.error({ err }, "HTTP call end error");
     res.status(500).json({ error: "Failed to end call" });
+  }
+});
+
+// ─────────────────────────────────────────────
+// BLOCK USERS (Signal parity)
+// ─────────────────────────────────────────────
+
+/**
+ * GET /api/chat/blocked
+ * Returns the current user's block list.
+ */
+router.get("/blocked", auth, async (req: Request, res: Response) => {
+  try {
+    const rows = (
+      await req.db!.query(
+        `SELECT u.id, u.username, u.full_name, u.avatar, b.created_at AS blocked_at
+           FROM blocked_users b
+           JOIN users u ON u.id = b.blocked_id
+          WHERE b.blocker_id = $1
+          ORDER BY u.full_name ASC`,
+        [req.userId],
+      )
+    ).rows;
+    res.json(rows);
+  } catch (err) {
+    req.log.error({ err }, "Get blocked users error");
+    res.status(500).json({ error: "Failed to get blocked users" });
+  }
+});
+
+/**
+ * POST /api/chat/users/:userId/block
+ * Block a user. Idempotent.
+ */
+router.post(
+  "/users/:userId/block",
+  auth,
+  async (req: Request, res: Response) => {
+    try {
+      const targetId = parseInt(String(req.params.userId), 10);
+      if (isNaN(targetId) || targetId === req.userId) {
+        return res.status(400).json({ error: "Invalid user" });
+      }
+      // Same-org check.
+      const orgId = await getUserOrg(req.userId, req.db as unknown as DbLike);
+      const target = (
+        await req.db!.query(
+          "SELECT id FROM users WHERE id = $1 AND org_id = $2",
+          [targetId, orgId],
+        )
+      ).rows[0];
+      if (!target) return res.status(404).json({ error: "User not found" });
+
+      await req.db!.query(
+        `INSERT INTO blocked_users (blocker_id, blocked_id)
+             VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [req.userId, targetId],
+      );
+
+      // Cross-device sync for the blocker only. Signal never notifies the
+      // blocked party.
+      sendToUser(req.tenantId, req.userId, "chat_user_blocked", {
+        userId: targetId,
+        blocked: true,
+      });
+
+      res.json({ ok: true, blocked: true });
+    } catch (err) {
+      req.log.error({ err }, "Block user error");
+      res.status(500).json({ error: "Failed to block user" });
+    }
+  },
+);
+
+/**
+ * DELETE /api/chat/users/:userId/block
+ * Unblock a user. Idempotent.
+ */
+router.delete(
+  "/users/:userId/block",
+  auth,
+  async (req: Request, res: Response) => {
+    try {
+      const targetId = parseInt(String(req.params.userId), 10);
+      if (isNaN(targetId)) return res.status(400).json({ error: "Invalid user" });
+
+      await req.db!.query(
+        "DELETE FROM blocked_users WHERE blocker_id = $1 AND blocked_id = $2",
+        [req.userId, targetId],
+      );
+
+      sendToUser(req.tenantId, req.userId, "chat_user_blocked", {
+        userId: targetId,
+        blocked: false,
+      });
+
+      res.json({ ok: true, blocked: false });
+    } catch (err) {
+      req.log.error({ err }, "Unblock user error");
+      res.status(500).json({ error: "Failed to unblock user" });
+    }
+  },
+);
+
+// ─────────────────────────────────────────────
+// LINK PREVIEWS (Signal parity — SENDER-generated)
+// ─────────────────────────────────────────────
+//
+// The sender's client calls this endpoint while composing; the resulting
+// preview object is attached to the outgoing message (messages.link_preview)
+// so recipients NEVER fetch the URL themselves. Browsers can't fetch
+// cross-origin pages, so the server acts as the fetcher — hardened against
+// SSRF (private/loopback IPs rejected), with a timeout, size cap and an
+// HTML-only content-type gate.
+
+const dns = require("dns").promises;
+const net = require("net");
+
+/** Reject URLs that resolve to private / loopback / link-local addresses. */
+function isPrivateIp(ip: string): boolean {
+  if (net.isIPv6(ip)) {
+    const lower = ip.toLowerCase();
+    return (
+      lower === "::1" ||
+      lower.startsWith("fc") ||
+      lower.startsWith("fd") ||
+      lower.startsWith("fe80") ||
+      lower.startsWith("::ffff:127.") ||
+      lower.startsWith("::ffff:10.") ||
+      lower.startsWith("::ffff:192.168.")
+    );
+  }
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4) return true;
+  const [a, b] = parts;
+  return (
+    a === 127 || // loopback
+    a === 10 || // private
+    a === 0 ||
+    (a === 172 && b >= 16 && b <= 31) || // private
+    (a === 192 && b === 168) || // private
+    (a === 169 && b === 254) // link-local / cloud metadata
+  );
+}
+
+/** Minimal OpenGraph / title extraction without extra dependencies. */
+function extractPreviewMeta(html: string): {
+  title?: string;
+  description?: string;
+  image?: string;
+  siteName?: string;
+} {
+  const pick = (property: string): string | undefined => {
+    // <meta property="og:x" content="..."> in either attribute order.
+    const re1 = new RegExp(
+      `<meta[^>]+(?:property|name)=["']${property}["'][^>]+content=["']([^"']*)["']`,
+      "i",
+    );
+    const re2 = new RegExp(
+      `<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["']${property}["']`,
+      "i",
+    );
+    const m = html.match(re1) || html.match(re2);
+    return m?.[1]?.trim() || undefined;
+  };
+  const decode = (s?: string) =>
+    s
+      ?.replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&#x27;/g, "'");
+
+  const titleTag = html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1]?.trim();
+  return {
+    title: decode(pick("og:title") || titleTag)?.slice(0, 200),
+    description: decode(
+      pick("og:description") || pick("description"),
+    )?.slice(0, 300),
+    image: pick("og:image")?.slice(0, 1024),
+    siteName: decode(pick("og:site_name"))?.slice(0, 100),
+  };
+}
+
+/**
+ * GET /api/chat/link-preview?url=https://...
+ * Fetch OpenGraph metadata for a URL on behalf of the SENDER.
+ */
+router.get("/link-preview", auth, async (req: Request, res: Response) => {
+  try {
+    const rawUrl = String(req.query.url || "");
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      return res.status(400).json({ error: "Invalid URL" });
+    }
+    if (!/^https?:$/.test(parsed.protocol)) {
+      return res.status(400).json({ error: "Only http/https URLs supported" });
+    }
+
+    // SSRF guard: resolve the hostname and reject private ranges.
+    try {
+      const { address } = await dns.lookup(parsed.hostname);
+      if (isPrivateIp(address)) {
+        return res.status(400).json({ error: "URL not allowed" });
+      }
+    } catch {
+      return res.status(400).json({ error: "Could not resolve host" });
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    let response: any;
+    try {
+      response = await fetch(parsed.toString(), {
+        signal: controller.signal,
+        redirect: "follow",
+        headers: {
+          "User-Agent": "WorkPulseBot/1.0 (+link-preview)",
+          Accept: "text/html,application/xhtml+xml",
+        },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!response.ok) {
+      return res.status(422).json({ error: "Page not reachable" });
+    }
+    const contentType = String(response.headers.get("content-type") || "");
+    if (!contentType.includes("text/html")) {
+      return res.status(422).json({ error: "Not an HTML page" });
+    }
+
+    // Read at most ~512 KB — enough for <head> metadata.
+    const reader = response.body?.getReader?.();
+    let html = "";
+    if (reader) {
+      const decoder = new TextDecoder();
+      let bytes = 0;
+      while (bytes < 512 * 1024) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        html += decoder.decode(value, { stream: true });
+        if (html.includes("</head>")) break; // metadata is in <head>
+      }
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore */
+      }
+    } else {
+      html = (await response.text()).slice(0, 512 * 1024);
+    }
+
+    const meta = extractPreviewMeta(html);
+    if (!meta.title && !meta.description && !meta.image) {
+      return res.status(422).json({ error: "No preview available" });
+    }
+
+    // Resolve a relative og:image against the page URL.
+    if (meta.image && !/^https?:\/\//i.test(meta.image)) {
+      try {
+        meta.image = new URL(meta.image, parsed).toString();
+      } catch {
+        meta.image = undefined;
+      }
+    }
+
+    res.json({
+      url: parsed.toString(),
+      title: meta.title || parsed.hostname,
+      description: meta.description || "",
+      image: meta.image || null,
+      siteName: meta.siteName || parsed.hostname,
+    });
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return res.status(422).json({ error: "Preview timed out" });
+    }
+    req.log.error({ err }, "Link preview error");
+    res.status(500).json({ error: "Failed to fetch preview" });
   }
 });
 

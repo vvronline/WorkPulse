@@ -82,8 +82,11 @@ export default function useMessageActions(state: ChatState) {
         };
     }, []);
 
-    const handleSend = (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleSend = (
+        e: React.FormEvent,
+        extras?: { linkPreview?: unknown | null },
+    ) => {
+        e?.preventDefault?.();
         if (!input.trim() || !activeConv) return;
         const content = input.trim();
         if (editingMsg) {
@@ -123,6 +126,7 @@ export default function useMessageActions(state: ChatState) {
                 content,
                 created_at: new Date().toISOString(),
                 reply_to_id: replyTo?.id || null,
+                link_preview: extras?.linkPreview || null,
                 reactions: [],
             },
         ]);
@@ -132,6 +136,7 @@ export default function useMessageActions(state: ChatState) {
             clientMsgId,
             ...(replyTo ? { replyToId: replyTo.id } : {}),
             ...(mentions.length > 0 ? { mentions } : {}),
+            ...(extras?.linkPreview ? { linkPreview: extras.linkPreview } : {}),
         });
         setInput("");
         setReplyTo(null);

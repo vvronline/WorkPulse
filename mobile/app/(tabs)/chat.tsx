@@ -82,9 +82,22 @@ type ListRow =
       kind: "section";
       key: string;
       title: string;
-      icon: "pin" | "star" | "msg";
+      icon: "pin" | "star" | "msg" | "archive";
     }
-  | { kind: "conv"; key: string; conv: Conversation };
+  | { kind: "conv"; key: string; conv: Conversation }
+  | { kind: "archivedToggle"; key: string; count: number };
+
+// Signal-style mute durations offered in the mute sheet.
+const MUTE_OPTIONS: Array<{
+  key: "1h" | "8h" | "1d" | "1w" | "always";
+  label: string;
+}> = [
+  { key: "1h", label: "For 1 hour" },
+  { key: "8h", label: "For 8 hours" },
+  { key: "1d", label: "For 1 day" },
+  { key: "1w", label: "For 1 week" },
+  { key: "always", label: "Always" },
+];
 
 type SearchUser = {
   id: number;
@@ -158,6 +171,10 @@ export default function ChatScreen() {
 
   // Per-conversation action menu.
   const [menuConv, setMenuConv] = useState<Conversation | null>(null);
+  // Mute-duration picker (opens after tapping "Mute" for an unmuted chat).
+  const [muteSheetConv, setMuteSheetConv] = useState<Conversation | null>(null);
+  // Signal-style Archived section: hidden behind an "Archived (n)" row.
+  const [showArchived, setShowArchived] = useState(false);
 
   // Signal-style multi-select. `selectionMode` flips the list into selection
   // behaviour (tap toggles a row instead of opening it) and swaps the header
@@ -531,7 +548,23 @@ export default function ChatScreen() {
 
   function doMute(c: Conversation) {
     setMenuConv(null);
-    muteConversation(c.id)
+    if (c.is_muted) {
+      // Unmute directly.
+      muteConversation(c.id, null)
+        .then(load)
+        .catch(() => {});
+    } else {
+      // Open the Signal-style duration picker.
+      setMuteSheetConv(c);
+    }
+  }
+
+  function doMuteWithDuration(
+    c: Conversation,
+    duration: "1h" | "8h" | "1d" | "1w" | "always",
+  ) {
+    setMuteSheetConv(null);
+    muteConversation(c.id, duration)
       .then(load)
       .catch(() => {});
   }
@@ -539,7 +572,13 @@ export default function ChatScreen() {
   function doArchive(c: Conversation) {
     setMenuConv(null);
     archiveConversation(c.id)
-      .then(() => setItems((prev) => prev.filter((x) => x.id !== c.id)))
+      .then((r) =>
+        setItems((prev) =>
+          prev.map((x) =>
+            x.id === c.id ? { ...x, is_archived: r.data?.archived } : x,
+          ),
+        ),
+      )
       .catch(() => {});
   }
 
@@ -572,7 +611,12 @@ export default function ChatScreen() {
   );
 
   // Derived lists (mirror web ChatSidebar grouping), filtered in-place.
-  const regular = items.filter((c) => !c.is_meeting_chat && matchesConversation(c));
+  // Archived chats are hidden from the main list (Signal parity).
+  const nonMeeting = items.filter(
+    (c) => !c.is_meeting_chat && matchesConversation(c),
+  );
+  const archived = nonMeeting.filter((c) => c.is_archived);
+  const regular = nonMeeting.filter((c) => !c.is_archived);
   const meetingConvs = allMeetingConvs.filter(matchesConversation);
   const pinned = regular.filter((c) => c.is_pinned);
   const favourites = regular.filter((c) => c.is_favourite && !c.is_pinned);
@@ -598,7 +642,12 @@ export default function ChatScreen() {
     });
   }, [calls, isFiltering, normalizedQuery, user?.id]);
 
-  const totalUnread = items.reduce((s, c) => s + (c.unread_count || 0), 0);
+  // Muted + archived chats don't count toward the aggregate badge (Signal parity).
+  const totalUnread = items.reduce(
+    (s, c) =>
+      s + (c.is_muted || c.is_archived || c.is_meeting_chat ? 0 : c.unread_count || 0),
+    0,
+  );
   const meetingUnread = allMeetingConvs.reduce(
     (s, c) => s + (c.unread_count || 0),
     0,
@@ -686,6 +735,17 @@ export default function ChatScreen() {
   const listRows = useMemo<ListRow[]>(() => {
     const rows: ListRow[] = [];
     if (tab === "msgs") {
+      if (showArchived) {
+        rows.push({
+          kind: "section",
+          key: "sec-archived",
+          title: `Archived (${archived.length})`,
+          icon: "archive",
+        });
+        for (const c of archived)
+          rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+        return rows;
+      }
       if (pinned.length > 0) {
         rows.push({
           kind: "section",
@@ -716,16 +776,24 @@ export default function ChatScreen() {
       }
       for (const c of others)
         rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
+      if (archived.length > 0) {
+        rows.push({
+          kind: "archivedToggle",
+          key: "archived-toggle",
+          count: archived.length,
+        });
+      }
     } else if (tab === "meetings") {
       for (const c of meetingConvs)
         rows.push({ kind: "conv", key: `c-${c.id}`, conv: c });
     }
     return rows;
-  }, [tab, pinned, favourites, others, meetingConvs]);
+  }, [tab, pinned, favourites, others, meetingConvs, archived, showArchived]);
 
-  function renderSectionIcon(icon: "pin" | "star" | "msg") {
+  function renderSectionIcon(icon: "pin" | "star" | "msg" | "archive") {
     if (icon === "pin") return <Pin size={13} color={theme.textMuted} />;
     if (icon === "star") return <Star size={13} color={theme.warning} />;
+    if (icon === "archive") return <Archive size={13} color={theme.textMuted} />;
     return <MessageSquare size={13} color={theme.textMuted} />;
   }
 
@@ -1286,11 +1354,44 @@ export default function ChatScreen() {
               tintColor={theme.primary}
             />
           }
-          renderItem={({ item }: { item: ListRow }) =>
-            item.kind === "section"
-              ? renderSection(item.title, renderSectionIcon(item.icon))
-              : renderConv(item.conv)
-          }
+          renderItem={({ item }: { item: ListRow }) => {
+            if (item.kind === "section") {
+              // The Archived header doubles as the "back" affordance.
+              if (item.key === "sec-archived") {
+                return (
+                  <Pressable onPress={() => setShowArchived(false)}>
+                    {renderSection(
+                      `‹  ${item.title}`,
+                      renderSectionIcon(item.icon),
+                    )}
+                  </Pressable>
+                );
+              }
+              return renderSection(item.title, renderSectionIcon(item.icon));
+            }
+            if (item.kind === "archivedToggle") {
+              return (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.row,
+                    pressed && styles.rowPressed,
+                  ]}
+                  onPress={() => setShowArchived(true)}
+                >
+                  <View style={styles.archivedIconWrap}>
+                    <Archive size={20} color={theme.textSecondary} />
+                  </View>
+                  <View style={styles.body}>
+                    <Text style={styles.name}>Archived</Text>
+                    <Text style={styles.preview}>
+                      {item.count} chat{item.count === 1 ? "" : "s"}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            }
+            return renderConv(item.conv);
+          }}
         />
       )}
 
@@ -1416,6 +1517,40 @@ export default function ChatScreen() {
                 Delete
               </Text>
             </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Mute-duration picker (Signal-style: 1h / 8h / 1d / 1w / Always). */}
+      <Modal
+        visible={!!muteSheetConv}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setMuteSheetConv(null)}
+      >
+        <Pressable
+          style={styles.sheetOverlay}
+          onPress={() => setMuteSheetConv(null)}
+        >
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <BellOff size={20} color={theme.text} />
+              <Text style={styles.sheetTitle} numberOfLines={1}>
+                Mute {muteSheetConv ? convName(muteSheetConv) : ""}
+              </Text>
+            </View>
+            {MUTE_OPTIONS.map((opt) => (
+              <Pressable
+                key={opt.key}
+                style={styles.sheetRow}
+                onPress={() =>
+                  muteSheetConv && doMuteWithDuration(muteSheetConv, opt.key)
+                }
+              >
+                <Text style={styles.sheetText}>{opt.label}</Text>
+              </Pressable>
+            ))}
           </Pressable>
         </Pressable>
       </Modal>
@@ -1660,4 +1795,13 @@ const makeStyles = (theme: Theme) =>
       paddingVertical: 14,
     },
     sheetText: { fontSize: 15, color: theme.text, fontWeight: "500" },
+    // Archived-row leading icon (Signal-style grey circle).
+    archivedIconWrap: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: theme.surface,
+      alignItems: "center",
+      justifyContent: "center",
+    },
   });

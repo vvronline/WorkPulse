@@ -318,6 +318,35 @@ export default function ChatThread() {
               onCancel={() => c.setReplyTo(null)}
             />
           ) : null}
+          {c.isBlocked && !c.isGroupConv ? (
+            <View
+              style={{
+                paddingVertical: 14,
+                paddingHorizontal: 16,
+                alignItems: "center",
+                gap: 10,
+                borderTopWidth: StyleSheet.hairlineWidth,
+                borderTopColor: theme.glassBorder,
+              }}
+            >
+              <Text style={{ color: theme.textSecondary, fontSize: 13, textAlign: "center" }}>
+                You blocked this user. Unblock to send messages.
+              </Text>
+              <Pressable
+                onPress={c.doToggleBlock}
+                style={{
+                  backgroundColor: theme.primary,
+                  borderRadius: 8,
+                  paddingVertical: 8,
+                  paddingHorizontal: 18,
+                }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "600", fontSize: 13 }}>
+                  Unblock
+                </Text>
+              </Pressable>
+            </View>
+          ) : (
           <Composer
             ref={c.inputRef}
             text={c.text}
@@ -341,6 +370,7 @@ export default function ChatThread() {
             onCancelRecording={c.cancelRecording}
             onStopAndSend={c.stopRecordingAndSend}
           />
+          )}
           {/* Docked in-app emoji keyboard (shown in place of the system
               keyboard when the composer's emoji toggle is active). */}
           <EmojiKeyboard
@@ -511,6 +541,10 @@ export default function ChatThread() {
         onSharedMedia={() => c.openSharedMedia("media")}
         onSaved={c.openSavedScreen}
         onClearChat={c.doClearChat}
+        onToggleBlock={
+          !c.isGroupConv && c.peerUserId ? c.doToggleBlock : undefined
+        }
+        isBlocked={c.isBlocked}
       />
 
       {c.dialog}

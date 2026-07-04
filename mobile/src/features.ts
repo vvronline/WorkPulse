@@ -456,9 +456,21 @@ export type Conversation = {
   is_pinned?: boolean;
   is_favourite?: boolean;
   is_muted?: boolean;
+  muted_until?: string | null;
   is_archived?: boolean;
+  is_blocked?: boolean;
   is_meeting_chat?: boolean;
   meeting_code?: string | null;
+};
+
+export type MuteDuration = "1h" | "8h" | "1d" | "1w" | "always";
+
+export type LinkPreview = {
+  url: string;
+  title: string;
+  description: string;
+  image: string | null;
+  siteName: string;
 };
 
 export type CallLogEntry = {
@@ -920,8 +932,23 @@ export function deleteConversation(convId: number) {
   return api.delete(`/chat/conversations/${convId}`);
 }
 
-export function muteConversation(convId: number) {
-  return api.post<{ muted: boolean }>(`/chat/conversations/${convId}/mute`);
+/**
+ * Mute with Signal-style durations ("1h" | "8h" | "1d" | "1w" | "always");
+ * pass null to unmute. Omit the argument for legacy toggle behaviour.
+ */
+export function muteConversation(
+  convId: number,
+  duration?: MuteDuration | null,
+) {
+  if (duration === undefined) {
+    return api.post<{ muted: boolean; mutedUntil?: string | null }>(
+      `/chat/conversations/${convId}/mute`,
+    );
+  }
+  return api.post<{ muted: boolean; mutedUntil?: string | null }>(
+    `/chat/conversations/${convId}/mute`,
+    { duration },
+  );
 }
 
 export function archiveConversation(convId: number) {
@@ -934,6 +961,36 @@ export function markConversationUnread(convId: number) {
   return api.post<{ ok: boolean; unread: boolean }>(
     `/chat/conversations/${convId}/unread`,
   );
+}
+
+// ── Block users (Signal parity) ──
+export function getBlockedUsers() {
+  return api.get<
+    Array<{
+      id: number;
+      username: string;
+      full_name: string;
+      avatar?: string | null;
+      blocked_at: string;
+    }>
+  >("/chat/blocked");
+}
+
+export function blockUser(userId: number) {
+  return api.post<{ ok: boolean; blocked: boolean }>(
+    `/chat/users/${userId}/block`,
+  );
+}
+
+export function unblockUser(userId: number) {
+  return api.delete<{ ok: boolean; blocked: boolean }>(
+    `/chat/users/${userId}/block`,
+  );
+}
+
+// ── Link preview (sender-generated, Signal parity) ──
+export function getLinkPreview(url: string) {
+  return api.get<LinkPreview>("/chat/link-preview", { params: { url } });
 }
 
 export function getAllCallHistory() {
@@ -1499,6 +1556,9 @@ export type NotificationPrefs = {
   playWhenFocused?: boolean;
   playOnSend?: boolean;
   hideSensitiveContent?: boolean;
+  // Privacy (Signal parity): reciprocal read receipts. When false, the server
+  // neither shares your read state nor shows you others'.
+  readReceipts?: boolean;
 };
 
 export function getNotificationPrefs() {

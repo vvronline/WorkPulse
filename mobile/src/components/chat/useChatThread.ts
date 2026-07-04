@@ -29,6 +29,8 @@ import { useAuth } from "../../auth/AuthContext";
 import { useDialog } from "../../hooks/useDialog";
 import {
   ackDelivered,
+  blockUser,
+  unblockUser,
   cancelChatMediaJob,
   createMeeting,
   deleteMessage,
@@ -429,6 +431,9 @@ export function useChatThread() {
   const selectionMode = selectedIds.size > 0;
   // Top-anchored overflow menu (Signal-style) open state.
   const [menuOpen, setMenuOpen] = useState(false);
+  // Block state for the 1:1 peer (Signal parity). When blocked, the composer
+  // is replaced with an Unblock banner and sends are rejected server-side.
+  const [isBlocked, setIsBlocked] = useState(false);
   // ── Signal-style IN-CONVERSATION search ──────────────────────────────────
   // Instead of pushing a separate route, search runs in-place over the
   // currently-loaded thread: the header swaps to a search bar and a bottom
@@ -808,6 +813,7 @@ export function useChatThread() {
         : conv.other_avatar || null;
       if (!params.name && resolvedName) setName(resolvedName);
       if (!params.avatar && resolvedAvatar) setHeaderAvatar(resolvedAvatar);
+      if (typeof conv.is_blocked === "boolean") setIsBlocked(conv.is_blocked);
       if (!conv.is_group && conv.other_user_id) {
         const uid = conv.other_user_id;
         setPeerUserId(uid);
@@ -818,6 +824,16 @@ export function useChatThread() {
           .catch(() => {});
       }
     };
+
+    // Seed the block state from the cached conversation row even when the
+    // route already supplied the header identity (list-open path early-returns
+    // below and would otherwise skip applyConv → isBlocked stays false).
+    const cachedBlockConv = (getCachedConversations() || []).find(
+      (c) => c.id === convId,
+    );
+    if (typeof cachedBlockConv?.is_blocked === "boolean") {
+      setIsBlocked(cachedBlockConv.is_blocked);
+    }
 
     if (peerFromParam) {
       setPeerUserId(peerFromParam);
@@ -2468,6 +2484,29 @@ export function useChatThread() {
   // messages not yet loaded via pagination — while NEW messages that arrive
   // afterwards still appear. The cutoff is persisted so the clear survives
   // reloads/app restarts.
+  // Block / unblock the 1:1 peer (Signal parity — the peer is never notified).
+  function doToggleBlock() {
+    if (!peerUserId) return;
+    if (isBlocked) {
+      unblockUser(peerUserId)
+        .then(() => setIsBlocked(false))
+        .catch(() => {});
+      return;
+    }
+    confirm({
+      title: `Block ${name || "this user"}?`,
+      message:
+        "Blocked people can't send you messages or call you. They won't be notified.",
+      confirmText: "Block",
+      isDanger: true,
+      onConfirm: () => {
+        blockUser(peerUserId)
+          .then(() => setIsBlocked(true))
+          .catch(() => {});
+      },
+    });
+  }
+
   function doClearChat() {
     setHeaderSheet(null);
     // Defer so the confirm dialog never collides with the dismissing modal.
@@ -3345,6 +3384,9 @@ export function useChatThread() {
     jumpFromSheet,
     unstarFromSheet,
     doClearChat,
+    // block user (Signal parity)
+    isBlocked,
+    doToggleBlock,
     // dialog
     dialog,
   };

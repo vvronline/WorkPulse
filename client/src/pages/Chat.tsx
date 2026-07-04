@@ -49,7 +49,7 @@ export default function Chat() {
         handleReply, handleEdit, handleDelete, handlePin, handleReact,
         handleForward, handleStar, handleRetryMessage, handleCancelMediaUpload, handleCreatePoll, handleEmojiInsert,
         handleJumpTo, handleUnpin,
-        handleDeleteConv, handlePinConv, handleFavConv, handleClearChat,
+        handleDeleteConv, handlePinConv, handleFavConv, handleMuteConv, handleArchiveConv, handleToggleBlock, handleClearChat,
         openGroupEdit, handleTyping,
         handleVoiceCall, handleVideoCall, handleEndCall,
     } = actions;
@@ -59,6 +59,13 @@ export default function Chat() {
     const userStatusMap = user ? { ...rawStatusMap, [user.id]: myStatus } : rawStatusMap;
 
     const [clearConfirm, setClearConfirm] = useState<any>(null);
+
+    // The activeConv set by openConversation carries only minimal meta —
+    // merge in the full row from the conversation list so per-user flags
+    // (is_blocked, is_muted, is_archived) are available to the header/input.
+    const activeConvFull = activeConv
+        ? { ...(conversations.find((c: any) => c.id === activeConv.id) || {}), ...activeConv, is_blocked: conversations.find((c: any) => c.id === activeConv.id)?.is_blocked ?? activeConv.is_blocked }
+        : null;
 
     // Warn before closing/refreshing during an active call
     useEffect(() => {
@@ -158,6 +165,8 @@ export default function Chat() {
                 onMenuToggle={(id: any) => setConvMenu(convMenu === id ? null : id)}
                 onPinConv={handlePinConv}
                 onFavConv={handleFavConv}
+                onMuteConv={handleMuteConv}
+                onArchiveConv={handleArchiveConv}
                 onDeleteConv={(c: any) => { setConvMenu(null); setDeleteConfirm(c); }}
                 onNewGroup={() => { setGroupEditData(null); setShowGroupModal(true); }}
                 searchInputRef={searchInputRef}
@@ -173,7 +182,7 @@ export default function Chat() {
                 ) : (
                     <>
                         <ChatHeader
-                            activeConv={activeConv}
+                            activeConv={activeConvFull || activeConv}
                             onlineUsers={onlineUsers}
                             userStatusMap={userStatusMap}
                             onBack={() => setMobileView("list")}
@@ -188,6 +197,7 @@ export default function Chat() {
                             onVoiceCall={handleVoiceCall}
                             onVideoCall={handleVideoCall}
                             onClearChat={(convId: any) => setClearConfirm(convId)}
+                            onToggleBlock={handleToggleBlock}
                         />
 
                         <ChatMessages
@@ -226,6 +236,37 @@ export default function Chat() {
                             onJumpToStarred={(convId: any, msgId: any) => { setShowStarred(false); jumpTo(msgId); }}
                         />
 
+                        {activeConvFull?.is_blocked ? (
+                            <div
+                                style={{
+                                    padding: "0.9rem 1rem",
+                                    textAlign: "center",
+                                    fontSize: "0.85rem",
+                                    color: "var(--text-secondary)",
+                                    borderTop: "1px solid var(--border)",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    gap: "0.6rem",
+                                }}
+                            >
+                                <span>You blocked this user. Unblock to send messages.</span>
+                                <button
+                                    onClick={() => handleToggleBlock(activeConvFull)}
+                                    style={{
+                                        background: "var(--primary)",
+                                        color: "#fff",
+                                        border: "none",
+                                        borderRadius: "6px",
+                                        padding: "0.35rem 0.8rem",
+                                        cursor: "pointer",
+                                        fontSize: "0.82rem",
+                                    }}
+                                >
+                                    Unblock
+                                </button>
+                            </div>
+                        ) : (
                         <ChatInputBar
                             input={input}
                             setInput={setInput}
@@ -249,6 +290,7 @@ export default function Chat() {
                             onClearEdit={() => { setEditingMsg(null); setInput(""); }}
                             onTyping={handleTyping}
                         />
+                        )}
                     </>
                 )}
             </div>

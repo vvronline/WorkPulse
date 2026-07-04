@@ -3,6 +3,10 @@ import {
     clearChat,
     togglePinConversation,
     toggleFavouriteConversation,
+    muteConversation,
+    toggleArchiveConversation,
+    blockUser,
+    unblockUser,
     getMembers,
 } from "../../api";
 import type useChatState from "./useChatState";
@@ -93,6 +97,78 @@ export default function useConversationActions(state: ChatState) {
         setConvMenu(null);
     };
 
+    // Signal-style mute with duration: "1h" | "8h" | "1d" | "1w" | "always",
+    // or null to unmute.
+    const handleMuteConv = async (
+        convId: number | string,
+        duration: "1h" | "8h" | "1d" | "1w" | "always" | null,
+    ) => {
+        try {
+            const { data } = await muteConversation(convId, duration);
+            const d = data as { muted?: boolean; mutedUntil?: string | null };
+            setConversations((prev) =>
+                prev.map((c) =>
+                    c.id === convId
+                        ? { ...c, is_muted: d.muted, muted_until: d.mutedUntil }
+                        : c,
+                ),
+            );
+        } catch {
+            /* ignore */
+        }
+        setConvMenu(null);
+    };
+
+    // Archive / unarchive (Signal parity: stays archived on new messages).
+    const handleArchiveConv = async (convId: number | string) => {
+        try {
+            const { data } = await toggleArchiveConversation(convId);
+            const archived = (data as { archived?: boolean }).archived;
+            setConversations((prev) =>
+                prev.map((c) =>
+                    c.id === convId ? { ...c, is_archived: archived } : c,
+                ),
+            );
+            if (archived && activeConv?.id === convId) {
+                setActiveConv(null);
+                setMessages([]);
+            }
+        } catch {
+            /* ignore */
+        }
+        setConvMenu(null);
+    };
+
+    // Block / unblock the other user of a direct chat (Signal parity — the
+    // blocked party is never notified).
+    const handleToggleBlock = async (conv: {
+        id: number | string;
+        other_user_id?: number | string;
+        is_blocked?: boolean;
+    }) => {
+        if (!conv?.other_user_id) return;
+        try {
+            if (conv.is_blocked) {
+                await unblockUser(conv.other_user_id);
+            } else {
+                await blockUser(conv.other_user_id);
+            }
+            const nowBlocked = !conv.is_blocked;
+            setConversations((prev) =>
+                prev.map((c) =>
+                    c.id === conv.id ? { ...c, is_blocked: nowBlocked } : c,
+                ),
+            );
+            if (activeConv?.id === conv.id) {
+                setActiveConv((prevConv: any) =>
+                    prevConv ? { ...prevConv, is_blocked: nowBlocked } : prevConv,
+                );
+            }
+        } catch {
+            /* ignore */
+        }
+    };
+
     const openGroupEdit = async () => {
         if (!activeConv?.is_group) return;
         try {
@@ -114,6 +190,9 @@ export default function useConversationActions(state: ChatState) {
         handleClearChat,
         handlePinConv,
         handleFavConv,
+        handleMuteConv,
+        handleArchiveConv,
+        handleToggleBlock,
         openGroupEdit,
     };
 }

@@ -1255,6 +1255,11 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
     await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS forwarded_from_id INTEGER REFERENCES messages(id) ON DELETE SET NULL`);
     await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ`);
     await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS pinned_by INTEGER REFERENCES users(id) ON DELETE SET NULL`);
+    // Link previews (Signal parity): the SENDER generates the preview (title /
+    // description / image / site name) and it travels WITH the message, so
+    // recipients never fetch the URL themselves. Stored as a small JSONB blob:
+    //   { url, title, description, image, siteName }
+    await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS link_preview JSONB`);
     // client_msg_id powers the at-least-once delivery story for in-meeting
     // chat (and any future chat surface). The migration runner also adds
     // this column on existing tenants; declaring it here keeps fresh
@@ -1334,6 +1339,22 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
             PRIMARY KEY (user_id, message_id)
         )
     `);
+
+    // ---- Blocked Users (Signal parity) ----
+    // Directional block list: blocker_id blocks blocked_id. Enforcement lives
+    // at the application layer (message send, call initiate, typing fan-out,
+    // push dispatch) — a block in EITHER direction stops direct-message
+    // delivery between the pair. Group messages are NOT filtered (matching
+    // Signal, where blocked users' group messages still appear).
+    await q(`
+        CREATE TABLE IF NOT EXISTS blocked_users (
+            blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (blocker_id, blocked_id)
+        )
+    `);
+    await q(`CREATE INDEX IF NOT EXISTS idx_blocked_users_blocked ON blocked_users(blocked_id)`);
 
     // ---- Polls ----
     await q(`

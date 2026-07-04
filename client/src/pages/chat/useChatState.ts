@@ -152,6 +152,7 @@ export default function useChatState() {
                             forwarded_from_id: d.forwardedFromId,
                             format_type: d.formatType || "text",
                             metadata: d.metadata || null,
+                            link_preview: d.linkPreview || null,
                             media_job_id: d.mediaJobId || null,
                             media_state: d.mediaState || null,
                             media_progress:
@@ -538,6 +539,40 @@ export default function useChatState() {
                         setMessages([]);
                     }
                     loadConversations();
+                    break;
+                }
+                case "chat_conv_muted": {
+                    setConversations((prev) =>
+                        prev.map((c) =>
+                            c.id === d.conversationId
+                                ? {
+                                      ...c,
+                                      is_muted: d.muted,
+                                      muted_until: d.mutedUntil || null,
+                                  }
+                                : c,
+                        ),
+                    );
+                    break;
+                }
+                case "chat_conv_archived": {
+                    setConversations((prev) =>
+                        prev.map((c) =>
+                            c.id === d.conversationId
+                                ? { ...c, is_archived: d.archived }
+                                : c,
+                        ),
+                    );
+                    break;
+                }
+                case "chat_user_blocked": {
+                    setConversations((prev) =>
+                        prev.map((c) =>
+                            !c.is_group && c.other_user_id === d.userId
+                                ? { ...c, is_blocked: d.blocked }
+                                : c,
+                        ),
+                    );
                     break;
                 }
                 case "chat_conv_deleted": {

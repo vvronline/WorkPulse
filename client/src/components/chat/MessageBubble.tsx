@@ -457,6 +457,75 @@ function MessageBubble({
             <MessageContent text={msg.content} isMine={isMine} />
           )}
 
+          {/* Link preview card (Signal parity — sender-generated) */}
+          {msg.link_preview && !isPoll && (
+            <a
+              href={(msg.link_preview as any).url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "flex",
+                gap: "0.55rem",
+                alignItems: "center",
+                marginTop: "0.4rem",
+                padding: "0.5rem",
+                borderRadius: "8px",
+                background: "rgba(0,0,0,0.12)",
+                borderLeft: "3px solid var(--primary)",
+                textDecoration: "none",
+                color: "inherit",
+                maxWidth: 340,
+              }}
+            >
+              {(msg.link_preview as any).image && (
+                <img
+                  src={(msg.link_preview as any).image}
+                  alt=""
+                  style={{
+                    width: 52,
+                    height: 52,
+                    objectFit: "cover",
+                    borderRadius: 6,
+                    flexShrink: 0,
+                  }}
+                  onError={(e) =>
+                    ((e.target as HTMLImageElement).style.display = "none")
+                  }
+                />
+              )}
+              <div style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: "0.8rem",
+                    fontWeight: 600,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {(msg.link_preview as any).title}
+                </div>
+                {(msg.link_preview as any).description && (
+                  <div
+                    style={{
+                      fontSize: "0.72rem",
+                      opacity: 0.75,
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                    }}
+                  >
+                    {(msg.link_preview as any).description}
+                  </div>
+                )}
+                <div style={{ fontSize: "0.68rem", opacity: 0.55 }}>
+                  {(msg.link_preview as any).siteName}
+                </div>
+              </div>
+            </a>
+          )}
+
           <div className={s.meta}>
             {isFailed && !isPendingMedia && (
               <button

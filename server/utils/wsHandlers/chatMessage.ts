@@ -80,7 +80,38 @@ const chatMessageSchema = {
   // `mentions` arrives as an array of user ids — we don't yet have a
   // schema.arr() helper, so this is validated below by hand and the
   // schema just confirms it's present (optional).
+  // `linkPreview` (optional object) is validated by hand below — Signal
+  // parity: SENDER-generated preview travels with the message.
 };
+
+/**
+ * Sanitise a sender-provided link preview to a small, known shape.
+ * Returns null when it isn't a plausible preview object.
+ */
+function sanitizeLinkPreview(raw: unknown): {
+  url: string;
+  title: string;
+  description: string;
+  image: string | null;
+  siteName: string;
+} | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Record<string, unknown>;
+  const url = typeof p.url === "string" ? p.url.slice(0, 1024) : "";
+  if (!/^https?:\/\//i.test(url)) return null;
+  const image =
+    typeof p.image === "string" && /^https?:\/\//i.test(p.image)
+      ? p.image.slice(0, 1024)
+      : null;
+  return {
+    url,
+    title: typeof p.title === "string" ? p.title.slice(0, 200) : "",
+    description:
+      typeof p.description === "string" ? p.description.slice(0, 300) : "",
+    image,
+    siteName: typeof p.siteName === "string" ? p.siteName.slice(0, 100) : "",
+  };
+}
 
 /**
  * Defense-in-depth: reject blatant injection patterns.
@@ -213,6 +244,28 @@ async function chatMessage({
     return;
   }
 
+  // ── 2b. Block enforcement (direct chats only, Signal parity) ───────
+  // A block in EITHER direction stops direct-message delivery. Group
+  // messages are NOT filtered (matches Signal, where blocked users'
+  // group messages still render).
+  if (!participant.is_group) {
+    const blockedPair = (
+      await db.query(
+        `SELECT 1 FROM blocked_users b
+           JOIN conversation_participants cp
+             ON cp.conversation_id = $1 AND cp.user_id != $2
+          WHERE (b.blocker_id = $2 AND b.blocked_id = cp.user_id)
+             OR (b.blocker_id = cp.user_id AND b.blocked_id = $2)
+          LIMIT 1`,
+        [conversationId, senderId],
+      )
+    ).rows[0];
+    if (blockedPair) {
+      sendErrorAck(ws, clientMsgId, "blocked");
+      return;
+    }
+  }
+
   // ── 3. Insert + bump conversation timestamp + update read cursor ───
   //
   // IDEMPOTENT PERSIST (offline-outbox support, mirrors the meeting_chat
@@ -231,10 +284,11 @@ async function chatMessage({
     clientMsgId.length <= 64
       ? clientMsgId
       : null;
+  const linkPreview = sanitizeLinkPreview(data?.linkPreview);
   let result = (
     await db.query(
-      `INSERT INTO messages (conversation_id, sender_id, content, reply_to_id, format_type, client_msg_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO messages (conversation_id, sender_id, content, reply_to_id, format_type, client_msg_id, link_preview)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (conversation_id, sender_id, client_msg_id)
          WHERE client_msg_id IS NOT NULL
          DO NOTHING
@@ -246,6 +300,7 @@ async function chatMessage({
         replyToId || null,
         fmtType,
         safeClientMsgId,
+        linkPreview ? JSON.stringify(linkPreview) : null,
       ],
     )
   ).rows[0];
@@ -328,6 +383,7 @@ async function chatMessage({
     replyFileName,
     createdAt: result.created_at,
     clientMsgId: clientMsgId || null,
+    linkPreview: linkPreview || null,
   };
 
   // ── 5. Fan-out + unread counters ───────────────────────────────────
@@ -340,10 +396,34 @@ async function chatMessage({
     sendToUser(tenantId, senderId, "chat_message", outMsg);
     return;
   }
+
+  // Mute-aware push suppression (Signal parity): recipients who muted this
+  // conversation (indefinitely OR with an unexpired timed mute) still get
+  // the WS message + unread bump, but no push notification. Best-effort —
+  // on any error we fall back to sending pushes to everyone.
+  const mutedRecipients = new Set<number>();
+  try {
+    const mutedRows = (
+      await db.query(
+        `SELECT user_id FROM conversation_participants
+          WHERE conversation_id = $1
+            AND is_muted = TRUE
+            AND (muted_until IS NULL OR muted_until > NOW())`,
+        [conversationId],
+      )
+    ).rows;
+    for (const r of mutedRows) mutedRecipients.add(r.user_id);
+  } catch {
+    /* fall back to pushing everyone */
+  }
+
   for (const p of participants) {
     sendToUser(tenantId, p.user_id, "chat_message", outMsg);
     if (p.user_id !== senderId) {
       redis.incrUnread(tenantId, p.user_id, conversationId);
+
+      // Muted chats never dispatch pushes (WS delivery above still happens).
+      if (mutedRecipients.has(p.user_id)) continue;
 
       // Compute the recipient's TOTAL unread across ALL conversations so the
       // push carries the true badge count (iOS aps.badge + Android

@@ -11,6 +11,7 @@ import {
     MoreVertical,
     Search,
     Trash2,
+    Ban,
 } from "lucide-react";
 import { ChatAvatar } from "../../components/chat";
 import { useClickOutside } from "../../hooks/useClickOutside";
@@ -52,6 +53,7 @@ interface ChatHeaderProps {
     onVoiceCall: () => void;
     onVideoCall: () => void;
     onClearChat?: (id: number | string) => void;
+    onToggleBlock?: (conv: any) => void;
 }
 
 export default function ChatHeader({
@@ -70,6 +72,7 @@ export default function ChatHeader({
     onVoiceCall,
     onVideoCall,
     onClearChat,
+    onToggleBlock,
 }: ChatHeaderProps) {
     const [moreOpen, setMoreOpen] = useState(false);
     const moreRef = useRef<HTMLDivElement | null>(null);
@@ -89,6 +92,17 @@ export default function ChatHeader({
         { label: "Saved messages", icon: Star, action: onToggleStarred },
         ...(activeConv.is_group ? [{ label: "Group settings", icon: Settings, action: onGroupEdit }] : []),
         { divider: true },
+        // Block/unblock (direct chats only — Signal parity; you can't block a group)
+        ...(!activeConv.is_group && !activeConv.is_self_chat && activeConv.other_user_id && onToggleBlock
+            ? [
+                  {
+                      label: activeConv.is_blocked ? "Unblock user" : "Block user",
+                      icon: Ban,
+                      action: () => onToggleBlock(activeConv),
+                      danger: !activeConv.is_blocked,
+                  },
+              ]
+            : []),
         { label: "Clear chat", icon: Trash2, action: () => onClearChat?.(activeConv.id), danger: true },
     ];
 

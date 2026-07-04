@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
-import { Pin, Star, Users, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Pin, Star, Users, Trash2, BellOff, Bell, Archive, ArchiveRestore, ChevronRight } from "lucide-react";
 import { ChatAvatar } from "../../components/chat";
 import { fmtTime, getConvName, getConvAvatar, isUserOnline } from "./chatUtils";
 import s from "./ChatSidebar.module.css";
@@ -44,7 +45,17 @@ interface ConversationItemProps {
     onPin: (id: number | string) => void;
     onFav: (id: number | string) => void;
     onDelete: (c: any) => void;
+    onMute?: (id: number | string, duration: "1h" | "8h" | "1d" | "1w" | "always" | null) => void;
+    onArchive?: (id: number | string) => void;
 }
+
+const MUTE_OPTIONS: Array<{ key: "1h" | "8h" | "1d" | "1w" | "always"; label: string }> = [
+    { key: "1h", label: "For 1 hour" },
+    { key: "8h", label: "For 8 hours" },
+    { key: "1d", label: "For 1 day" },
+    { key: "1w", label: "For 1 week" },
+    { key: "always", label: "Always" },
+];
 
 /**
  * Signal-style conversation-list delivery tick for the caller's OWN last
@@ -126,8 +137,11 @@ export default function ConversationItem({
     onPin,
     onFav,
     onDelete,
+    onMute,
+    onArchive,
 }: ConversationItemProps) {
     const c = conv;
+    const [showMuteMenu, setShowMuteMenu] = useState(false);
     const otherStatus = !c.is_group && c.other_user_id ? userStatusMap[c.other_user_id] : undefined;
     return (
         <div className={`${s.convItem} ${activeConvId === c.id ? s.active : ""}`} onClick={() => onOpen(c)}>
@@ -160,6 +174,17 @@ export default function ConversationItem({
                             />
                         )}
                         {getConvName(c)}
+                        {c.is_muted && (
+                            <BellOff
+                                size={12}
+                                style={{
+                                    display: "inline",
+                                    verticalAlign: "middle",
+                                    marginLeft: "4px",
+                                    opacity: 0.55,
+                                }}
+                            />
+                        )}
                     </span>
                     <span className={s.convTime}>{fmtTime(c.last_message_at)}</span>
                 </div>
@@ -217,6 +242,69 @@ export default function ConversationItem({
                         >
                             <Star size={13} /> {c.is_favourite ? "Unfavourite" : "Favourite"}
                         </button>
+                        {onMute &&
+                            (c.is_muted ? (
+                                <button
+                                    onClick={() => onMute(c.id, null)}
+                                    style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}
+                                >
+                                    <Bell size={13} /> Unmute
+                                </button>
+                            ) : (
+                                <div style={{ position: "relative" }}>
+                                    <button
+                                        onClick={() => setShowMuteMenu((v) => !v)}
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: "0.35rem",
+                                            width: "100%",
+                                        }}
+                                    >
+                                        <BellOff size={13} /> Mute…
+                                        <ChevronRight size={12} style={{ marginLeft: "auto" }} />
+                                    </button>
+                                    {showMuteMenu && (
+                                        <div
+                                            className={s.convMenuDropdown}
+                                            style={{
+                                                position: "absolute",
+                                                left: "100%",
+                                                top: 0,
+                                                marginLeft: "2px",
+                                            }}
+                                        >
+                                            {MUTE_OPTIONS.map((opt) => (
+                                                <button
+                                                    key={opt.key}
+                                                    onClick={() => {
+                                                        setShowMuteMenu(false);
+                                                        onMute(c.id, opt.key);
+                                                    }}
+                                                >
+                                                    {opt.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        {onArchive && (
+                            <button
+                                onClick={() => onArchive(c.id)}
+                                style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}
+                            >
+                                {c.is_archived ? (
+                                    <>
+                                        <ArchiveRestore size={13} /> Unarchive
+                                    </>
+                                ) : (
+                                    <>
+                                        <Archive size={13} /> Archive
+                                    </>
+                                )}
+                            </button>
+                        )}
                         <button
                             className={s.menuDanger}
                             onClick={() => onDelete(c)}

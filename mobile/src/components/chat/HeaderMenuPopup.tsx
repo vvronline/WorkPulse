@@ -27,6 +27,8 @@ export default function HeaderMenuPopup({
   onSharedMedia,
   onSaved,
   onClearChat,
+  onToggleBlock,
+  isBlocked,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -35,6 +37,9 @@ export default function HeaderMenuPopup({
   onSharedMedia: () => void;
   onSaved: () => void;
   onClearChat: () => void;
+  /** Block/unblock the peer (direct chats only — omit for groups). */
+  onToggleBlock?: () => void;
+  isBlocked?: boolean;
 }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -84,6 +89,14 @@ export default function HeaderMenuPopup({
             styles={styles}
           />
           <View style={styles.divider} />
+          {onToggleBlock ? (
+            <MenuRow
+              label={isBlocked ? "Unblock user" : "Block user"}
+              danger={!isBlocked}
+              onPress={run(onToggleBlock)}
+              styles={styles}
+            />
+          ) : null}
           <MenuRow
             label="Clear chat"
             danger

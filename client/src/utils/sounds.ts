@@ -363,6 +363,9 @@ export const DEFAULT_PREFS = {
     reactionVolume: 0.4,
     playWhenFocused: false,
     playOnSend: false,
+    // Privacy (Signal parity): reciprocal read receipts. When false, the
+    // server neither shares your read state nor shows you others'.
+    readReceipts: true,
 };
 
 /**

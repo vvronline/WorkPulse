@@ -307,6 +307,26 @@ export default function NotificationSoundsModal({ onClose }: NotificationSoundsM
                             </span>
                         </label>
                     </div>
+
+                    {/* Privacy */}
+                    <div className={s.section}>
+                        <div className={s.sectionTitle}>Privacy</div>
+
+                        <label className={s.checkboxRow}>
+                            <input
+                                type="checkbox"
+                                checked={(prefs as any).readReceipts !== false}
+                                onChange={(e) => updatePrefs({ readReceipts: e.target.checked } as any)}
+                            />
+                            <span>
+                                <span className={s.checkboxTitle}>Read receipts</span>
+                                <span className={s.checkboxHint}>
+                                    When off, others won't see when you've read their
+                                    messages — and you won't see theirs either.
+                                </span>
+                            </span>
+                        </label>
+                    </div>
                 </div>
 
                 <div className={s.footer}>
