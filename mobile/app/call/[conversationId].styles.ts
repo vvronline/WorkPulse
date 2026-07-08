@@ -4,6 +4,17 @@ import type { Theme } from "../../src/theme";
 export const makeStyles = (theme: Theme) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: "#0a0a0a" },
+    // Transparent full-screen layer that captures taps to toggle the auto-hide
+    // call chrome (WhatsApp/Signal style). Sits above the media stage but below
+    // the overlay chrome so the actual control buttons still receive their taps.
+    tapToToggleLayer: {
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 2,
+    },
     // Dark fades behind the top info + bottom controls so the white call name
     // and control glyphs remain legible on the system-themed (possibly light)
     // video-off background and over bright video.

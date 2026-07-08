@@ -251,6 +251,16 @@ export default function CallScreen() {
   // OS PiP tile (user left the app mid-call). Drives the collapsed layout below
   // (remote video / avatar only, no controls) — Signal-Android parity.
   const [isInPip, setIsInPip] = useState(false);
+  // Auto-hide call chrome (peer name, duration, status/quality badges and the
+  // control bar) after a few seconds of no touch — WhatsApp/Signal parity and
+  // mirrors the web client's `controlsVisible` behaviour. Only active while the
+  // call is CONNECTED (during ringing/incoming the accept/decline controls must
+  // always stay visible). A tap anywhere on the call surface toggles the chrome
+  // back on and re-arms the idle timer.
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const controlsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const ringPlayer = useAudioPlayer();
   const ringStatus = useAudioPlayerStatus(ringPlayer);
   const ringToneKeyRef = useRef<string | null>(null);
@@ -3214,9 +3224,79 @@ export default function CallScreen() {
         ? `${SERVER_ORIGIN}${peerAvatar.startsWith("/") ? "" : "/"}${peerAvatar}`
         : null;
 
+  // ── Auto-hide call chrome after 4s idle (WhatsApp/Signal + web parity) ─────
+  const CONTROLS_IDLE_MS = 4000;
+  // Show the chrome and (re)arm the 4s idle timer. Only auto-hides while the
+  // call is CONNECTED and not in PiP — during ringing/incoming the controls
+  // must always stay visible so the user can accept/decline/hang up.
+  const resetControlsTimer = useCallback(() => {
+    setControlsVisible(true);
+    if (controlsHideTimerRef.current) {
+      clearTimeout(controlsHideTimerRef.current);
+      controlsHideTimerRef.current = null;
+    }
+    if (status === "connected" && !isInPip) {
+      controlsHideTimerRef.current = setTimeout(() => {
+        setControlsVisible(false);
+      }, CONTROLS_IDLE_MS);
+    }
+  }, [status, isInPip]);
+
+  // Tap anywhere on the call surface toggles the chrome: if it's currently
+  // visible, hide it immediately; otherwise show it and re-arm the idle timer.
+  const handleSurfaceTap = useCallback(() => {
+    if (status !== "connected" || isInPip) return;
+    if (controlsVisible) {
+      if (controlsHideTimerRef.current) {
+        clearTimeout(controlsHideTimerRef.current);
+        controlsHideTimerRef.current = null;
+      }
+      setControlsVisible(false);
+    } else {
+      resetControlsTimer();
+    }
+  }, [status, isInPip, controlsVisible, resetControlsTimer]);
+
+  // Arm the idle timer when the call becomes connected; keep the chrome always
+  // visible (and the timer cleared) in every other phase and while in PiP.
+  useEffect(() => {
+    if (status === "connected" && !isInPip) {
+      setControlsVisible(true);
+      if (controlsHideTimerRef.current) {
+        clearTimeout(controlsHideTimerRef.current);
+      }
+      controlsHideTimerRef.current = setTimeout(() => {
+        setControlsVisible(false);
+      }, CONTROLS_IDLE_MS);
+    } else {
+      setControlsVisible(true);
+      if (controlsHideTimerRef.current) {
+        clearTimeout(controlsHideTimerRef.current);
+        controlsHideTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (controlsHideTimerRef.current) {
+        clearTimeout(controlsHideTimerRef.current);
+        controlsHideTimerRef.current = null;
+      }
+    };
+  }, [status, isInPip]);
+
   return (
     <View style={styles.screen}>
       <Stack.Screen options={{ headerShown: false }} />
+
+      {/* Tap-to-toggle surface: a transparent full-screen layer BEHIND the
+          overlay chrome that captures taps on empty areas of the call to
+          show/hide the controls (WhatsApp/Signal style). Only active while the
+          call is connected and not in PiP. */}
+      {status === "connected" && !isInPip ? (
+        <Pressable
+          style={styles.tapToToggleLayer}
+          onPress={handleSurfaceTap}
+        />
+      ) : null}
 
       <CallMediaStage
         styles={styles}
@@ -3238,6 +3318,7 @@ export default function CallScreen() {
         styles={styles}
         insets={insets}
         isInPip={isInPip}
+        controlsVisible={controlsVisible}
         status={status}
         mode={mode}
         statusLabel={statusLabel}

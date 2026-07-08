@@ -55,6 +55,10 @@ type Props = {
   styles: any;
   insets: { top: number; bottom: number };
   isInPip: boolean;
+  // Auto-hide: when false (and the call is connected) the peer name, duration,
+  // status/quality badges and the control bar fade out. During ringing/incoming
+  // they always stay visible so accept/decline/hang-up remain reachable.
+  controlsVisible: boolean;
   status: CallStatus;
   mode: "incoming" | "outgoing";
   statusLabel: string;
@@ -108,6 +112,7 @@ export default function CallScreenOverlay({
   styles,
   insets,
   isInPip,
+  controlsVisible,
   status,
   mode,
   statusLabel,
@@ -169,6 +174,11 @@ export default function CallScreenOverlay({
     borderRadius: ctrlDim / 2,
   };
 
+  // When the call is connected and the idle timer has elapsed, hide the call
+  // chrome (top badges, peer name + duration, control bar). The accept/decline
+  // incoming controls are NOT gated on this — they only show while ringing.
+  const hideChrome = status === "connected" && !controlsVisible;
+
   return (
     <>
       {/* Readability scrims. The video-off fallback background follows the
@@ -190,7 +200,7 @@ export default function CallScreenOverlay({
         </>
       ) : null}
 
-      {!isInPip && status === "connected" ? (
+      {!isInPip && status === "connected" && !hideChrome ? (
         <View style={[styles.topBar, { top: insets.top + 8 }]}>
           <View style={styles.qualityBadge}>
             <Signal size={13} color={qualityColor} />
@@ -224,7 +234,7 @@ export default function CallScreenOverlay({
         </View>
       ) : null}
 
-      {!isInPip ? (
+      {!isInPip && !hideChrome ? (
         <View style={[styles.info, { top: insets.top + 60 }]}>
           <Text style={styles.peerName} numberOfLines={1}>
             {peerName}
@@ -246,7 +256,7 @@ export default function CallScreenOverlay({
         </View>
       ) : null}
 
-      {!isInPip ? (
+      {!isInPip && !hideChrome ? (
         mode === "incoming" && status === "ringing" ? (
           <View
             style={[

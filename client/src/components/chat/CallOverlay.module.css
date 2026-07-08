@@ -1389,6 +1389,14 @@
     transition: opacity 0.3s ease;
 }
 
+/* Auto-hide the audio-call caller-info card (name + duration) after idle,
+   matching the controls bar / top bar fade — parity with the mobile app. */
+.callInfoHidden {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
 /* ─── Quality badge clickable wrapper ─── */
 .qualityBadgeBtn {
     background: none;

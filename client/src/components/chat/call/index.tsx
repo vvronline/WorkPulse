@@ -336,23 +336,28 @@ export default function CallOverlay({
     // ═══════════════════════════════════════════════════════════════
     //  FEATURE: Auto-hide controls (video mode, 4s idle)
     // ═══════════════════════════════════════════════════════════════
+    // Auto-hide the call chrome (controls bar, top status bar, name + duration)
+    // after 4s of no mouse/touch movement — for ALL connected calls, including
+    // AUDIO-ONLY ones (so the caller-info card with the name + duration hides
+    // too, matching the mobile app). Only active while connected; ringing /
+    // incoming / connecting always keep the controls visible.
     const resetControlsTimer = useCallback(() => {
         setControlsVisible(true);
         clearTimeout(mouseTimerRef.current as any);
-        if (isConnected && (isVideoCall || controls.screenSharing || webrtc.remoteHasVideo)) {
+        if (isConnected) {
             mouseTimerRef.current = setTimeout(() => setControlsVisible(false), 4000);
         }
-    }, [isConnected, isVideoCall, controls.screenSharing, webrtc.remoteHasVideo]);
+    }, [isConnected]);
 
     useEffect(() => {
-        if (!isConnected || (!isVideoCall && !controls.screenSharing && !webrtc.remoteHasVideo)) {
+        if (!isConnected) {
             setControlsVisible(true);
             clearTimeout(mouseTimerRef.current as any);
             return;
         }
         mouseTimerRef.current = setTimeout(() => setControlsVisible(false), 4000);
         return () => clearTimeout(mouseTimerRef.current as any);
-    }, [isConnected, isVideoCall, controls.screenSharing, webrtc.remoteHasVideo]);
+    }, [isConnected]);
 
     // ═══════════════════════════════════════════════════════════════
     //  FEATURE: Keyboard shortcuts
@@ -1107,8 +1112,13 @@ export default function CallOverlay({
                     showCallInfo = !webrtc.remoteHasVideo;
                 }
                 if (!showCallInfo) return null;
+                // Auto-hide the caller-info card (name + duration) once connected
+                // and idle — matches the controls bar / top bar fade so audio
+                // calls hide their chrome too. Pre-connect states (incoming /
+                // ringing / connecting / on-hold / reconnecting) always show it.
+                const callInfoHidden = isConnected && !controls.onHold && !controlsVisible;
                 return (
-                    <div className={s.callInfo}>
+                    <div className={`${s.callInfo} ${callInfoHidden ? s.callInfoHidden : ""}`}>
                         <div
                             className={`${s.avatarContainer} ${status === "incoming" || status === "ringing" ? s.pulsing : ""}`}
                         >
