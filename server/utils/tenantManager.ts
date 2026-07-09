@@ -295,6 +295,18 @@ async function createTenant(
         throw new Error(`Invalid tenant database name: ${dbName}`);
     }
 
+    // 0. Pre-check: verify the slug is actually available (not held by any non-deleted tenant).
+    //    The UNIQUE constraint on tenants.slug would catch this at INSERT time,
+    //    but an explicit check gives a clearer error and guards against edge cases
+    //    where a soft-delete tombstone UPDATE failed silently.
+    const existingBySlug = await masterQuery(
+        "SELECT id FROM tenants WHERE slug = $1 AND status != 'deleted' LIMIT 1",
+        [slug]
+    );
+    if (existingBySlug.rows.length > 0) {
+        throw Object.assign(new Error("A tenant with that slug already exists."), { code: "23505" });
+    }
+
     // 1. Register in master tenants catalog
     const result = await masterQuery(
         `INSERT INTO tenants (org_name, slug, db_name, plan, features, max_users, max_storage_mb)
@@ -370,19 +382,23 @@ async function deleteTenant(tenantId: number, hardDelete = false): Promise<Tenan
         // allocates a fresh, collision-free db_name for any future tenant.
         const tombstone = `_deleted_${tenantId}`;
         const tombstonedSlug = `${tenant.slug}${tombstone}`;
-        await masterQuery(
+        const updateResult = await masterQuery(
             `UPDATE tenants
                 SET status = 'deleted',
                     slug = $2,
                     custom_domain = NULL,
                     updated_at = NOW()
-              WHERE id = $1`,
+              WHERE id = $1
+              RETURNING slug`,
             [tenantId, tombstonedSlug]
         );
+        if (updateResult.rows.length === 0) {
+            logger.error({ tenantId }, "Soft-delete tombstone UPDATE returned 0 rows — slug may not be freed");
+        }
         // Drop the freed users from the global directory so their emails /
         // usernames can be reused and don't inflate cross-tenant lookups.
         await masterQuery("DELETE FROM user_directory WHERE tenant_id = $1", [tenantId]);
-        logger.info({ tenantId, dbName: tenant.db_name, freedSlug: tenant.slug }, "Tenant soft-deleted");
+        logger.info({ tenantId, dbName: tenant.db_name, freedSlug: tenant.slug, tombstonedSlug }, "Tenant soft-deleted");
     }
     return tenant;
 }

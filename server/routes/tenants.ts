@@ -239,7 +239,7 @@ router.get("/overview", async (req: Request, res: Response) => {
         const [statusRes, userRes, recentRes, planRes, trendRes] = await Promise.all([
             masterQuery(`SELECT status, COUNT(*) AS count FROM tenants GROUP BY status`),
             masterQuery(`SELECT COUNT(*) AS total_users FROM user_directory`),
-            masterQuery(`SELECT id, org_name, slug, status, created_at FROM tenants ORDER BY created_at DESC LIMIT 5`),
+            masterQuery(`SELECT id, org_name, slug, status, created_at FROM tenants WHERE status != 'deleted' ORDER BY created_at DESC LIMIT 5`),
             masterQuery(`SELECT plan, COUNT(*) AS count FROM tenants WHERE status = 'active' GROUP BY plan`),
             masterQuery(`SELECT DATE(created_at) AS day, COUNT(*) AS count FROM tenants WHERE created_at >= NOW() - INTERVAL '30 days' GROUP BY DATE(created_at) ORDER BY day`),
         ]);
@@ -251,7 +251,9 @@ router.get("/overview", async (req: Request, res: Response) => {
         for (const r of planRes.rows) byPlan[r.plan] = parseInt(r.count, 10);
 
         res.json({
-            total_tenants: Object.values(byStatus).reduce((a, b) => a + b, 0),
+            total_tenants: Object.entries(byStatus)
+                .filter(([status]) => status !== 'deleted')
+                .reduce((a, [, count]) => a + count, 0),
             total_users: parseInt(userRes.rows[0].total_users, 10),
             by_status: byStatus,
             by_plan: byPlan,
@@ -1042,6 +1044,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
         if (!result) return res.status(404).json({ error: "Tenant not found" });
 
         await redis.del(`tenant:id:${tid}`);
+        if (result.custom_domain) await redis.del(`tenant:domain:${result.custom_domain}`);
 
         logPlatformAction(req, hard ? "tenant_hard_deleted" : "tenant_soft_deleted", "tenant", tid, {
             hard,

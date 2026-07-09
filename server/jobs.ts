@@ -3,7 +3,7 @@
  * Falls back to setInterval when Redis is unavailable.
  */
 import { logger } from "./utils/logger";
-import { forEachTenant, getTenantPool } from "./utils/tenantManager";
+import { forEachTenant, getTenantPool, deleteTenant } from "./utils/tenantManager";
 import { masterQuery } from "./db";
 import { sendToUser, emitCallHistoryMessage } from "./utils/ws";
 import { pushNotifications } from "./services/pushNotifications";
@@ -178,15 +178,28 @@ async function runRetentionCleanup(): Promise<{
     stats.session_logs = r.rowCount || 0;
   }
 
-  // Hard-delete soft-deleted tenants past retention window
+  // Hard-delete soft-deleted tenants past retention window.
+  // Uses deleteTenant(id, true) which properly DROP DATABASE, terminate
+  // connections, destroy pools, and clean up user_directory — unlike a raw
+  // DELETE which would leave orphaned databases on the PostgreSQL cluster.
   if (policy.deletedTenantCleanupDays > 0) {
-    const r = await masterQuery(
-      `DELETE FROM tenants
+    const expired = await masterQuery(
+      `SELECT id, db_name, slug FROM tenants
              WHERE status = 'deleted'
                AND updated_at < NOW() - ($1 || ' days')::interval`,
       [String(policy.deletedTenantCleanupDays)],
     );
-    stats.tenants = r.rowCount || 0;
+    for (const tenant of expired.rows) {
+      try {
+        await deleteTenant(tenant.id, true);
+        stats.tenants++;
+        logger.info({ tenantId: tenant.id, dbName: tenant.db_name, slug: tenant.slug },
+          "Retention cleanup: hard-deleted expired soft-deleted tenant");
+      } catch (e: any) {
+        logger.error({ err: e.message, tenantId: tenant.id },
+          "Retention cleanup: failed to hard-delete expired tenant");
+      }
+    }
   }
 
   // Purge per-tenant audit logs
