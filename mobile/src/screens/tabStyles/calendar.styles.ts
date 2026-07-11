@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native";
-import type { Theme } from "../../src/theme";
+import type { Theme } from "../../theme";
 
 export const makeStyles = (theme: Theme) =>
   StyleSheet.create({
@@ -403,4 +403,5 @@ export const makeStyles = (theme: Theme) =>
   checkMark: { color: "#fff", fontSize: 13, fontWeight: "700" },
   settingText: { fontSize: 14, color: theme.text },
 });
+
 

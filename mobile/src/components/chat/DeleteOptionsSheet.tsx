@@ -1,8 +1,9 @@
 import { useMemo } from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Trash2 } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
+import NativeBottomSheet from "../native/NativeBottomSheet";
 
 /**
  * WhatsApp/Telegram/Signal-style delete chooser. Shown when deleting one or
@@ -14,7 +15,8 @@ import { useTheme } from "../../theme/ThemeProvider";
  *   • "Cancel".
  *
  * The buttons ARE the confirmation (no extra confirm dialog), matching the
- * native chat apps.
+ * native chat apps. Presented via the shared `NativeBottomSheet` (native
+ * `@expo/ui` sheet with a JS `Modal` fallback).
  */
 export default function DeleteOptionsSheet({
   visible,
@@ -34,60 +36,36 @@ export default function DeleteOptionsSheet({
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
-  const title =
-    count > 1 ? `Delete ${count} messages?` : "Delete message?";
+  const title = count > 1 ? `Delete ${count} messages?` : "Delete message?";
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={() => {}}>
-          <View style={styles.header}>
-            <Trash2 size={20} color={theme.danger} />
-            <Text style={styles.title}>{title}</Text>
-          </View>
+    <NativeBottomSheet visible={visible} onClose={onClose}>
+      <View style={styles.header}>
+        <Trash2 size={20} color={theme.danger} />
+        <Text style={styles.title}>{title}</Text>
+      </View>
 
-          {canDeleteForEveryone ? (
-            <Pressable style={styles.row} onPress={onDeleteForEveryone}>
-              <Text style={[styles.rowText, styles.rowDanger]}>
-                Delete for everyone
-              </Text>
-            </Pressable>
-          ) : null}
-
-          <Pressable style={styles.row} onPress={onDeleteForMe}>
-            <Text style={[styles.rowText, styles.rowDanger]}>
-              Delete for me
-            </Text>
-          </Pressable>
-
-          <Pressable style={styles.row} onPress={onClose}>
-            <Text style={styles.rowText}>Cancel</Text>
-          </Pressable>
+      {canDeleteForEveryone ? (
+        <Pressable style={styles.row} onPress={onDeleteForEveryone}>
+          <Text style={[styles.rowText, styles.rowDanger]}>
+            Delete for everyone
+          </Text>
         </Pressable>
+      ) : null}
+
+      <Pressable style={styles.row} onPress={onDeleteForMe}>
+        <Text style={[styles.rowText, styles.rowDanger]}>Delete for me</Text>
       </Pressable>
-    </Modal>
+
+      <Pressable style={styles.row} onPress={onClose}>
+        <Text style={styles.rowText}>Cancel</Text>
+      </Pressable>
+    </NativeBottomSheet>
   );
 }
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-    overlay: {
-      flex: 1,
-      backgroundColor: "rgba(0,0,0,0.5)",
-      justifyContent: "flex-end",
-    },
-    sheet: {
-      backgroundColor: theme.bgElevated,
-      borderTopLeftRadius: 18,
-      borderTopRightRadius: 18,
-      paddingTop: 8,
-      paddingBottom: 28,
-    },
     header: {
       flexDirection: "row",
       alignItems: "center",

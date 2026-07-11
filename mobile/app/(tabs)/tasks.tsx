@@ -57,7 +57,7 @@ import {
   type TaskStats,
   type TaskStatus,
 } from "../../src/features";
-import { makeStyles } from "./tasks.styles";
+import { makeStyles } from "../../src/screens/tabStyles/tasks.styles";
 
 type Tab = "backlog" | "sprint" | "service-desk";
 

@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import {
   ActivityIndicator,
   Linking,
-  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -29,12 +28,17 @@ import type {
   StarredMessage,
 } from "../../features";
 import { fmtDateTime, fmtSize, type HeaderSheet } from "./chatUtils";
+import NativeBottomSheet from "../native/NativeBottomSheet";
 
 /**
- * Header 3-dot menu (mirrors the web ChatHeader overflow menu) — one modal
+ * Header 3-dot menu (mirrors the web ChatHeader overflow menu) — one sheet
  * whose content switches between the menu rows and each panel (search /
- * pinned / files / saved). A single modal avoids the Android dismiss/present
+ * pinned / files / saved). A single sheet avoids the Android dismiss/present
  * race when switching between panels.
+ *
+ * Presented via the shared `NativeBottomSheet` (native `@expo/ui` sheet with a
+ * JS `Modal` fallback). A fixed `85%` snap point gives the scrollable panels
+ * room.
  */
 export default function HeaderMenuSheet({
   sheet,
@@ -85,224 +89,207 @@ export default function HeaderMenuSheet({
             ? "Saved messages"
             : name || "Chat";
 
-  return (
-    <Modal
-      visible={!!sheet}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <View style={styles.allOverlay}>
-        <Pressable style={styles.allScrim} onPress={onClose} />
-        <View style={styles.hmSheet}>
-          <View style={styles.allHeader}>
-            <Text style={styles.allTitle}>{title}</Text>
-            <Pressable onPress={onClose} hitSlop={8}>
-              <XIcon size={22} color={theme.textSecondary} />
-            </Pressable>
-          </View>
+  // The menu list is content-sized; the scrollable panels need a taller sheet.
+  const isPanel = sheet !== "menu" && !!sheet;
 
-          {sheet === "menu" ? (
-            <>
-              <Pressable
-                style={styles.plusRow}
-                onPress={() => onOpenPanel("search")}
-              >
-                <Search size={20} color={theme.text} />
-                <Text style={styles.plusText}>Search messages</Text>
-              </Pressable>
-              <Pressable
-                style={styles.plusRow}
-                onPress={() => onOpenPanel("pinned")}
-              >
-                <Pin size={20} color={theme.text} />
-                <Text style={styles.plusText}>Pinned messages</Text>
-              </Pressable>
-              <Pressable
-                style={styles.plusRow}
-                onPress={() => onOpenPanel("files")}
-              >
-                <FolderOpen size={20} color={theme.text} />
-                <Text style={styles.plusText}>Shared files</Text>
-              </Pressable>
-              <Pressable
-                style={styles.plusRow}
-                onPress={() => onOpenPanel("saved")}
-              >
-                <Star size={20} color={theme.text} />
-                <Text style={styles.plusText}>Saved messages</Text>
-              </Pressable>
-              <View style={styles.hmDivider} />
-              <Pressable style={styles.plusRow} onPress={onClearChat}>
-                <Trash2 size={20} color={theme.danger} />
-                <Text style={[styles.plusText, { color: theme.danger }]}>
-                  Clear chat
-                </Text>
-              </Pressable>
-            </>
-          ) : sheet === "search" ? (
-            <>
-              <TextInput
-                style={styles.hmSearchInput}
-                placeholder="Search in this chat…"
-                placeholderTextColor={theme.textMuted}
-                value={searchQ}
-                onChangeText={onSearchChange}
-                autoFocus
+  return (
+    <NativeBottomSheet
+      visible={!!sheet}
+      onClose={onClose}
+      snapPoints={isPanel ? ["85%"] : undefined}
+    >
+      <View style={styles.hmSheet}>
+        <View style={styles.allHeader}>
+          <Text style={styles.allTitle}>{title}</Text>
+          <Pressable onPress={onClose} hitSlop={8}>
+            <XIcon size={22} color={theme.textSecondary} />
+          </Pressable>
+        </View>
+
+        {sheet === "menu" ? (
+          <>
+            <Pressable
+              style={styles.plusRow}
+              onPress={() => onOpenPanel("search")}
+            >
+              <Search size={20} color={theme.text} />
+              <Text style={styles.plusText}>Search messages</Text>
+            </Pressable>
+            <Pressable
+              style={styles.plusRow}
+              onPress={() => onOpenPanel("pinned")}
+            >
+              <Pin size={20} color={theme.text} />
+              <Text style={styles.plusText}>Pinned messages</Text>
+            </Pressable>
+            <Pressable
+              style={styles.plusRow}
+              onPress={() => onOpenPanel("files")}
+            >
+              <FolderOpen size={20} color={theme.text} />
+              <Text style={styles.plusText}>Shared files</Text>
+            </Pressable>
+            <Pressable
+              style={styles.plusRow}
+              onPress={() => onOpenPanel("saved")}
+            >
+              <Star size={20} color={theme.text} />
+              <Text style={styles.plusText}>Saved messages</Text>
+            </Pressable>
+            <View style={styles.hmDivider} />
+            <Pressable style={styles.plusRow} onPress={onClearChat}>
+              <Trash2 size={20} color={theme.danger} />
+              <Text style={[styles.plusText, { color: theme.danger }]}>
+                Clear chat
+              </Text>
+            </Pressable>
+          </>
+        ) : sheet === "search" ? (
+          <>
+            <TextInput
+              style={styles.hmSearchInput}
+              placeholder="Search in this chat…"
+              placeholderTextColor={theme.textMuted}
+              value={searchQ}
+              onChangeText={onSearchChange}
+              autoFocus
+            />
+            {loading ? (
+              <ActivityIndicator
+                style={styles.hmLoading}
+                color={theme.primary}
               />
-              {loading ? (
-                <ActivityIndicator
-                  style={styles.hmLoading}
-                  color={theme.primary}
-                />
-              ) : (
-                <ScrollView style={styles.hmList}>
-                  {searchResults.length === 0 ? (
-                    <Text style={styles.hmEmpty}>
-                      {searchQ.trim().length < 2
-                        ? "Type at least 2 characters to search"
-                        : "No messages found"}
-                    </Text>
-                  ) : (
-                    searchResults.map((r) => (
-                      <Pressable
-                        key={r.id}
-                        style={styles.hmItem}
-                        onPress={() => onJump(r.id)}
-                      >
-                        <Text style={styles.hmItemName} numberOfLines={1}>
-                          {r.sender_name || "Unknown"} ·{" "}
-                          {fmtDateTime(r.created_at)}
-                        </Text>
-                        <Text style={styles.hmItemText} numberOfLines={2}>
-                          {r.content ||
-                            (r.file_name ? `📎 ${r.file_name}` : "Attachment")}
-                        </Text>
-                      </Pressable>
-                    ))
-                  )}
-                </ScrollView>
-              )}
-            </>
-          ) : sheet === "pinned" ? (
-            <ScrollView style={styles.hmList}>
-              {pinnedMsgs.length === 0 ? (
-                <Text style={styles.hmEmpty}>No pinned messages</Text>
-              ) : (
-                pinnedMsgs.map((p) => (
-                  <View key={p.id} style={styles.hmItemRow}>
-                    <Pressable style={{ flex: 1 }} onPress={() => onJump(p.id)}>
+            ) : (
+              <ScrollView style={styles.hmList}>
+                {searchResults.length === 0 ? (
+                  <Text style={styles.hmEmpty}>
+                    {searchQ.trim().length < 2
+                      ? "Type at least 2 characters to search"
+                      : "No messages found"}
+                  </Text>
+                ) : (
+                  searchResults.map((r) => (
+                    <Pressable
+                      key={r.id}
+                      style={styles.hmItem}
+                      onPress={() => onJump(r.id)}
+                    >
                       <Text style={styles.hmItemName} numberOfLines={1}>
-                        {p.sender_name || "Unknown"} ·{" "}
-                        {fmtDateTime(p.created_at)}
+                        {r.sender_name || "Unknown"} ·{" "}
+                        {fmtDateTime(r.created_at)}
                       </Text>
                       <Text style={styles.hmItemText} numberOfLines={2}>
-                        {p.content ||
-                          (p.file_name ? `📎 ${p.file_name}` : "Attachment")}
+                        {r.content ||
+                          (r.file_name ? `📎 ${r.file_name}` : "Attachment")}
                       </Text>
                     </Pressable>
-                    <Pressable hitSlop={8} onPress={() => onUnpin(p.id)}>
-                      <XIcon size={16} color={theme.textSecondary} />
+                  ))
+                )}
+              </ScrollView>
+            )}
+          </>
+        ) : sheet === "pinned" ? (
+          <ScrollView style={styles.hmList}>
+            {pinnedMsgs.length === 0 ? (
+              <Text style={styles.hmEmpty}>No pinned messages</Text>
+            ) : (
+              pinnedMsgs.map((p) => (
+                <View key={p.id} style={styles.hmItemRow}>
+                  <Pressable style={{ flex: 1 }} onPress={() => onJump(p.id)}>
+                    <Text style={styles.hmItemName} numberOfLines={1}>
+                      {p.sender_name || "Unknown"} · {fmtDateTime(p.created_at)}
+                    </Text>
+                    <Text style={styles.hmItemText} numberOfLines={2}>
+                      {p.content ||
+                        (p.file_name ? `📎 ${p.file_name}` : "Attachment")}
+                    </Text>
+                  </Pressable>
+                  <Pressable hitSlop={8} onPress={() => onUnpin(p.id)}>
+                    <XIcon size={16} color={theme.textSecondary} />
+                  </Pressable>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        ) : sheet === "files" ? (
+          loading ? (
+            <ActivityIndicator style={styles.hmLoading} color={theme.primary} />
+          ) : (
+            <ScrollView style={styles.hmList}>
+              {sharedFiles.length === 0 ? (
+                <Text style={styles.hmEmpty}>No shared files</Text>
+              ) : (
+                sharedFiles.map((f) => (
+                  <Pressable
+                    key={f.id}
+                    style={styles.hmItemRow}
+                    onPress={() => {
+                      const u = uploadUrl(f.file_url);
+                      if (u) Linking.openURL(u);
+                    }}
+                  >
+                    <FileText size={20} color={theme.primary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.hmItemTitle} numberOfLines={1}>
+                        {f.file_name || "File"}
+                      </Text>
+                      <Text style={styles.hmItemText} numberOfLines={1}>
+                        {f.sender_name || "Unknown"} ·{" "}
+                        {fmtDateTime(f.created_at)}
+                        {f.file_size ? ` · ${fmtSize(f.file_size)}` : ""}
+                      </Text>
+                    </View>
+                  </Pressable>
+                ))
+              )}
+            </ScrollView>
+          )
+        ) : sheet === "saved" ? (
+          loading ? (
+            <ActivityIndicator style={styles.hmLoading} color={theme.primary} />
+          ) : (
+            <ScrollView style={styles.hmList}>
+              {savedMsgs.length === 0 ? (
+                <Text style={styles.hmEmpty}>No saved messages</Text>
+              ) : (
+                savedMsgs.map((m) => (
+                  <View key={m.id} style={styles.hmItemRow}>
+                    <Pressable
+                      style={{ flex: 1 }}
+                      onPress={() => {
+                        // Jump only works for messages in THIS chat —
+                        // /chat/starred is global across conversations.
+                        if (m.conversation_id === convId) onJump(m.id);
+                      }}
+                    >
+                      <Text style={styles.hmItemName} numberOfLines={1}>
+                        {m.sender_name || "Unknown"} ·{" "}
+                        {fmtDateTime(m.created_at)}
+                        {m.conversation_id !== convId && m.group_name
+                          ? ` · ${m.group_name}`
+                          : ""}
+                      </Text>
+                      <Text style={styles.hmItemText} numberOfLines={2}>
+                        {m.content ||
+                          (m.file_name ? `📎 ${m.file_name}` : "Attachment")}
+                      </Text>
+                    </Pressable>
+                    <Pressable hitSlop={8} onPress={() => onUnstar(m.id)}>
+                      <Star size={16} color={theme.warning} />
                     </Pressable>
                   </View>
                 ))
               )}
             </ScrollView>
-          ) : sheet === "files" ? (
-            loading ? (
-              <ActivityIndicator
-                style={styles.hmLoading}
-                color={theme.primary}
-              />
-            ) : (
-              <ScrollView style={styles.hmList}>
-                {sharedFiles.length === 0 ? (
-                  <Text style={styles.hmEmpty}>No shared files</Text>
-                ) : (
-                  sharedFiles.map((f) => (
-                    <Pressable
-                      key={f.id}
-                      style={styles.hmItemRow}
-                      onPress={() => {
-                        const u = uploadUrl(f.file_url);
-                        if (u) Linking.openURL(u);
-                      }}
-                    >
-                      <FileText size={20} color={theme.primary} />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.hmItemTitle} numberOfLines={1}>
-                          {f.file_name || "File"}
-                        </Text>
-                        <Text style={styles.hmItemText} numberOfLines={1}>
-                          {f.sender_name || "Unknown"} ·{" "}
-                          {fmtDateTime(f.created_at)}
-                          {f.file_size ? ` · ${fmtSize(f.file_size)}` : ""}
-                        </Text>
-                      </View>
-                    </Pressable>
-                  ))
-                )}
-              </ScrollView>
-            )
-          ) : sheet === "saved" ? (
-            loading ? (
-              <ActivityIndicator
-                style={styles.hmLoading}
-                color={theme.primary}
-              />
-            ) : (
-              <ScrollView style={styles.hmList}>
-                {savedMsgs.length === 0 ? (
-                  <Text style={styles.hmEmpty}>No saved messages</Text>
-                ) : (
-                  savedMsgs.map((m) => (
-                    <View key={m.id} style={styles.hmItemRow}>
-                      <Pressable
-                        style={{ flex: 1 }}
-                        onPress={() => {
-                          // Jump only works for messages in THIS chat —
-                          // /chat/starred is global across conversations.
-                          if (m.conversation_id === convId) onJump(m.id);
-                        }}
-                      >
-                        <Text style={styles.hmItemName} numberOfLines={1}>
-                          {m.sender_name || "Unknown"} ·{" "}
-                          {fmtDateTime(m.created_at)}
-                          {m.conversation_id !== convId && m.group_name
-                            ? ` · ${m.group_name}`
-                            : ""}
-                        </Text>
-                        <Text style={styles.hmItemText} numberOfLines={2}>
-                          {m.content ||
-                            (m.file_name ? `📎 ${m.file_name}` : "Attachment")}
-                        </Text>
-                      </Pressable>
-                      <Pressable hitSlop={8} onPress={() => onUnstar(m.id)}>
-                        <Star size={16} color={theme.warning} />
-                      </Pressable>
-                    </View>
-                  ))
-                )}
-              </ScrollView>
-            )
-          ) : null}
-        </View>
+          )
+        ) : null}
       </View>
-    </Modal>
+    </NativeBottomSheet>
   );
 }
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-    allOverlay: { flex: 1, justifyContent: "flex-end" },
-    allScrim: {
-      position: "absolute",
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: "rgba(0,0,0,0.6)",
-    },
     allHeader: {
       flexDirection: "row",
       justifyContent: "space-between",
@@ -321,13 +308,9 @@ const makeStyles = (theme: Theme) =>
     plusText: { fontSize: 16, color: theme.text, fontWeight: "500" },
     // Header 3-dot menu sheet + panels.
     hmSheet: {
-      backgroundColor: theme.bgElevated,
-      borderTopLeftRadius: 20,
-      borderTopRightRadius: 20,
       paddingHorizontal: 12,
       paddingTop: 12,
-      paddingBottom: 28,
-      maxHeight: "75%",
+      paddingBottom: 12,
     },
     hmDivider: {
       height: 1,
@@ -347,7 +330,7 @@ const makeStyles = (theme: Theme) =>
       marginHorizontal: 6,
       marginBottom: 8,
     },
-    hmList: { maxHeight: 420 },
+    hmList: { maxHeight: 480 },
     hmEmpty: {
       fontSize: 13,
       color: theme.textMuted,

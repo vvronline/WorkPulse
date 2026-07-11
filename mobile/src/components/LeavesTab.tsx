@@ -7,7 +7,6 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -17,6 +16,7 @@ import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import { useDialog } from "../hooks/useDialog";
 import { useAuth } from "../auth/AuthContext";
+import NativeSwitch from "./native/NativeSwitch";
 import DatePicker from "./DatePicker";
 import MonthPicker from "./MonthPicker";
 import { Dropdown } from "./Dropdown";
@@ -1169,7 +1169,7 @@ function PoliciesTab() {
 
               <View style={styles.toggleRow}>
                 <Text style={styles.toggleLabel}>Allow Half-day requests</Text>
-                <Switch
+                <NativeSwitch
                   value={!!editing?.half_day_allowed}
                   onValueChange={(v) =>
                     setEditing((p) => (p ? { ...p, half_day_allowed: v } : p))
@@ -1181,7 +1181,7 @@ function PoliciesTab() {
                 <Text style={styles.toggleLabel}>
                   Allow Quarter-day requests
                 </Text>
-                <Switch
+                <NativeSwitch
                   value={!!editing?.quarter_day_allowed}
                   onValueChange={(v) =>
                     setEditing((p) =>

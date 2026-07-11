@@ -41,7 +41,7 @@ import { useRouter } from "expo-router";
 import { useFocusEffect } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { socket } from "../../src/realtime/socket";
-import { makeStyles } from "./calendar.styles";
+import { makeStyles } from "../../src/screens/tabStyles/calendar.styles";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 

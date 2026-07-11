@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native";
-import type { Theme } from "../../src/theme";
+import type { Theme } from "../../theme";
 
 export const makeStyles = (theme: Theme) =>
   StyleSheet.create({
@@ -418,4 +418,5 @@ export const makeStyles = (theme: Theme) =>
   },
   td: { flex: 1, fontSize: 13, color: theme.text },
 });
+
 

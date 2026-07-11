@@ -68,7 +68,7 @@ import {
   type TrackerEntry,
 } from "../../src/features";
 import type { WidgetsData } from "../../src/components/analytics/WidgetsGrid";
-import { makeStyles } from "./attendance.styles";
+import { makeStyles } from "../../src/screens/tabStyles/attendance.styles";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 

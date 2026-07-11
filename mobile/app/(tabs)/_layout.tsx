@@ -283,15 +283,11 @@ export default function TabsLayout() {
       {/* Reachable from the More menu, not shown as its own tab. */}
       <Tabs.Screen name="leaves" options={{ href: null }} />
       {/*
-        Co-located *.styles.ts files in this (tabs) directory are picked up by
-        expo-router as routes, which leaks them into the tab bar as broken
-        entries AFTER the "More" tab. Explicitly hide them with href: null so
-        only the real screens render. (Keep in sync with any new *.styles files
-        added here.)
+        NOTE: Screen style files live OUTSIDE the router tree
+        (src/screens/tabStyles/*.styles.ts) so expo-router no longer picks them
+        up as routes — the previous `href: null` workaround for leaked
+        `*.styles` route entries is no longer needed.
       */}
-      <Tabs.Screen name="attendance.styles" options={{ href: null }} />
-      <Tabs.Screen name="calendar.styles" options={{ href: null }} />
-      <Tabs.Screen name="tasks.styles" options={{ href: null }} />
     </Tabs>
   );
 }
