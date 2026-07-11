@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Redirect } from "expo-router";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, Platform, View } from "react-native";
 import { useAuth } from "../src/auth/AuthContext";
 import { useTheme } from "../src/theme/ThemeProvider";
 import {
@@ -144,6 +144,40 @@ export default function Index() {
         }
       } catch {
         // best-effort — fall through to the normal dispatcher path below
+      }
+      // COLD-START FAST PATH (plain launcher-icon open, ANDROID ONLY):
+      // The dispatcher's initialize() makes 2–3 async Notifee bridge round-trips
+      // (getInitialNotification + getDisplayedNotifications) before it can even
+      // conclude "this was NOT a notification launch". For the overwhelmingly
+      // common case — the user tapped the app icon, there is no native call
+      // action, no in-memory pending route, and NO notification was displayed
+      // recently (synchronous MMKV marker) — none of that work can produce a
+      // route, so we skip the entire async dispatcher path and redirect to the
+      // dashboard/login immediately. This shaves the Notifee bridge latency off
+      // every ordinary Android cold start.
+      //
+      // ANDROID-ONLY: the killed-state launch design is FCM data-push + Notifee
+      // + full-screen-intent, and every Notifee display path
+      // (displayIncomingCall / displayMessage / heads-up) now writes the
+      // synchronous `recordNotificationDisplayed()` MMKV marker BEFORE any early
+      // return — so a real notification launch always sets it and is never
+      // skipped here. iOS uses CallKit / expo-notifications with a different
+      // lifecycle that does NOT write this marker, so we keep the full dispatcher
+      // path on iOS (it already resolves quickly for a plain launch — the retry
+      // loop only engages when a candidate notification exists).
+      const hasInMemoryRoute =
+        Boolean(peekPendingCall()) || Boolean(peekPendingChat());
+      if (
+        Platform.OS === "android" &&
+        !hasInMemoryRoute &&
+        !wasNotificationDisplayedRecently()
+      ) {
+        console.log(
+          `[WP-COLDSTART] fast-path plain launch (no notif marker) ` +
+            `waitMs=${Date.now() - routeDecisionStartedAt}`,
+        );
+        setCallRoute(null);
+        return;
       }
       // mobile/index.js starts this once at JS entry, but Android's back button
       // can destroy only the Activity while the JS process/singletons survive.

@@ -915,6 +915,19 @@ class NotifeeService {
       return;
     }
 
+    // COLD-START FAST-PATH MARKER: set the synchronous MMKV "a notification was
+    // just displayed" marker for INCOMING CALLS (displayMessage already does the
+    // same for messages). This MUST run BEFORE the native-ringer early-return
+    // below so it also covers the CallStyle foreground-service path. On a LOCKED
+    // + KILLED device the full-screen intent AUTO-launches a brand-new process
+    // (NOT a notification tap) — getInitialNotification() is null and there is
+    // no in-memory pending route yet — so app/index.tsx's plain-launch fast path
+    // relies on this marker to know it MUST run the dispatcher and route to
+    // /call instead of skipping straight to the dashboard. The persisted call
+    // route still carries the actual routing data; this is only the "was this a
+    // notification launch?" signal.
+    void recordNotificationDisplayed();
+
     const notifee = this.resolve();
     // The native CallRinger foreground service (when present) OWNS the entire
     // incoming-call surface: it posts a branded CallStyle notification with a
@@ -1214,6 +1227,11 @@ class NotifeeService {
     // swap. PendingCallNavigator / the call screen consume it.
     const route = pendingCallFromData(data);
     if (route) await persistPendingCall(route);
+
+    // COLD-START FAST-PATH MARKER (see displayIncomingCall): mark that a call
+    // notification was just displayed so a subsequent cold start does not
+    // fast-path past the dispatcher and miss the persisted call route.
+    void recordNotificationDisplayed();
 
     try {
       await notifee.displayNotification({

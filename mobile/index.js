@@ -19,8 +19,14 @@
  * ONE-SHOT Notifee initial-notification read. The root route waits briefly for
  * the dispatcher result instead of reading getInitialNotification() itself.
  */
+import { markJsStart } from "./src/utils/appReady";
 import { backgroundPushService } from "./src/services/backgroundPushService";
 import { notificationDispatcher } from "./src/services/notificationDispatcher";
+
+// COLD-START TIMING: stamp the JS-eval start time as early as possible so
+// markAppReady() can log the full "JS eval → first frame" duration. This is the
+// FIRST executable statement so it captures the earliest JS timestamp available.
+markJsStart();
 
 // Step 1: Register the FCM background handler at import time (top-level).
 // Safe to call here: it is idempotent and no-ops if the native

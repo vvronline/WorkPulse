@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState } from "react-native";
+import { AppState, InteractionManager } from "react-native";
 import { usePathname } from "expo-router";
 import { setAudioModeAsync, useAudioPlayer } from "expo-audio";
 
@@ -93,12 +93,23 @@ export default function RealtimeSoundListener() {
 
   useEffect(() => {
     if (!user) return;
-    reloadPrefs();
+    // COLD-START PERF: defer the initial prefs network fetch until after the
+    // first interactions/animations settle (splash hand-off + first navigation)
+    // so it doesn't compete on the JS thread during the most latency-sensitive
+    // window. `prefsRef` already holds sensible DEFAULT_NOTIFICATION_PREFS, and
+    // the earliest a tone can play is a socket sound event — which cannot occur
+    // in the first frames — so nothing audible is lost by waiting.
+    const task = InteractionManager.runAfterInteractions(() => {
+      void reloadPrefs();
+    });
     const sub = AppState.addEventListener("change", (next) => {
       appActiveRef.current = next === "active";
       if (next === "active") reloadPrefs();
     });
-    return () => sub.remove();
+    return () => {
+      task.cancel();
+      sub.remove();
+    };
   }, [reloadPrefs, user]);
 
   useEffect(() => {
