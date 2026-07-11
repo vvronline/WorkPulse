@@ -1,6 +1,3 @@
-import NativeSelectField, {
-  nativeSelectAvailable,
-} from "./native/NativeSelectField";
 import {
   Dropdown as LegacyDropdown,
   MultiDropdown as LegacyMultiDropdown,
@@ -10,10 +7,14 @@ import {
 export type { DropdownOption } from "./Dropdown.fallback";
 
 /**
- * Single-select dropdown. Prefers the OS-native `@expo/ui` Picker (SwiftUI wheel
- * on iOS, Material 3 exposed dropdown on Android) and transparently falls back
- * to the pure-JS bottom-sheet implementation (`Dropdown.fallback.tsx`) when the
- * native module isn't available at runtime.
+ * Single-select dropdown. Uses the pure-JS, fully app-themed bottom-sheet
+ * implementation (`Dropdown.fallback.tsx`).
+ *
+ * NOTE: A previous refactor switched this to the OS-native `@expo/ui` Picker
+ * (`NativeSelectField`), but that picker renders with the OS's own styling
+ * (ignoring the app theme) and had unreliable selection behavior. We revert to
+ * the themed JS implementation, which matches the rest of the app and works
+ * consistently. `NativeSelectField.tsx` is kept in the repo for future use.
  *
  * Public API is unchanged (`label`, `value`, `options`, `onChange`,
  * `placeholder`) so no call sites need updating.
@@ -25,20 +26,7 @@ export function Dropdown(props: {
   onChange: (value: string | number | null) => void;
   placeholder?: string;
 }) {
-  if (!nativeSelectAvailable) {
-    return <LegacyDropdown {...props} />;
-  }
-
-  const { label, value, options, onChange, placeholder } = props;
-  return (
-    <NativeSelectField
-      label={label}
-      value={value}
-      options={options}
-      onChange={onChange}
-      placeholder={placeholder}
-    />
-  );
+  return <LegacyDropdown {...props} />;
 }
 
 /**
