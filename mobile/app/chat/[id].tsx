@@ -584,10 +584,23 @@ function ChatList({
   // fade into place, matching Signal-Android.
   const [entryAnimReady, setEntryAnimReady] = useState(false);
   useEffect(() => {
+    // Flip the per-bubble layout/enter animations ON only AFTER the open
+    // transition has fully settled AND one extra frame past the first idle
+    // frame. The hook's `load()` network reconcile also runs on that first idle
+    // frame (via its own InteractionManager); if `LinearTransition` were enabled
+    // in the SAME frame the reconcile's `setMessages` commits, every visible row
+    // would animate its layout at once — the "settle"/stutter right after the
+    // chat opens. Waiting an extra rAF lets the reconcile paint statically first,
+    // then we arm the animations so only genuinely new incoming/sent messages
+    // animate (Signal-Android feel).
+    let raf = 0;
     const task = InteractionManager.runAfterInteractions(() => {
-      setEntryAnimReady(true);
+      raf = requestAnimationFrame(() => setEntryAnimReady(true));
     });
-    return () => task.cancel();
+    return () => {
+      task.cancel();
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, []);
 
   return (
@@ -655,13 +668,17 @@ function ChatList({
         // row scrolled — making the reaction look delayed. Disabling it
         // forces the chip to paint instantly (matches the web).
         removeClippedSubviews={false}
-        // Windowing tuned for SMOOTH scrolling on long threads (Signal-Android
-        // feel): a small initial batch paints the thread fast on open, a larger
-        // render window keeps off-screen rows mounted so fast flings don't reveal
-        // blank gaps, and a short batching period commits new rows quickly.
-        initialNumToRender={12}
-        maxToRenderPerBatch={12}
-        windowSize={21}
+        // Windowing tuned for a SNAPPY open + smooth scrolling (Signal-Android
+        // feel). Each MessageBubble is relatively heavy to mount (a Pan gesture,
+        // several reanimated shared values / animated styles, a GestureDetector),
+        // so mounting a big batch DURING the native slide-in starved the JS
+        // thread and made the destination paint late/half-rendered (the "freeze"
+        // on open). A smaller initial batch + tighter window mounts far fewer
+        // rows during the transition while still keeping ~5 screens of history
+        // mounted each way so fast flings don't reveal blank gaps.
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={11}
         updateCellsBatchingPeriod={30}
         // In an inverted list the FOOTER renders at the visual TOP, so the
         // "load earlier" spinner/button belongs here (not the header).

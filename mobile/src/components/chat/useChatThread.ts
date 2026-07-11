@@ -551,9 +551,16 @@ export function useChatThread() {
     [],
   );
 
-  // Hydrate emoji recents + skin-tone preference once.
+  // Hydrate emoji recents + skin-tone preference once — but DEFER it past the
+  // open transition. It's only needed when the emoji panel/picker is first
+  // opened, so running it eagerly on mount just added JS-thread work competing
+  // with the screen's slide-in animation (part of the laggy open). Running it
+  // after interactions keeps the open snappy without any user-visible delay.
   useEffect(() => {
-    hydrateEmojiStore();
+    const task = InteractionManager.runAfterInteractions(() => {
+      hydrateEmojiStore();
+    });
+    return () => task.cancel();
   }, []);
 
   // If the system keyboard GENUINELY appears (user tapped the field), close the
@@ -825,58 +832,68 @@ export function useChatThread() {
       }
     };
 
-    // Seed the block state from the cached conversation row even when the
-    // route already supplied the header identity (list-open path early-returns
-    // below and would otherwise skip applyConv → isBlocked stays false).
-    const cachedBlockConv = (getCachedConversations() || []).find(
-      (c) => c.id === convId,
-    );
-    if (typeof cachedBlockConv?.is_blocked === "boolean") {
-      setIsBlocked(cachedBlockConv.is_blocked);
-    }
+    // Resolve the peer identity/status + block state. The header NAME/AVATAR
+    // already paint instantly from the route params (seeded into state above),
+    // so none of this is needed for the first frame — it only fills the live
+    // status badge, block banner and (on a cold deep-link) the resolved name.
+    // Running the presence network call + the cached-conversations scan eagerly
+    // on mount added JS-thread work that competed with the open animation, so
+    // we DEFER the whole resolution past the slide-in (Signal-Android feel).
+    // The badge/block/name simply light up a beat after the chat has opened,
+    // with no visible downgrade.
+    const task = InteractionManager.runAfterInteractions(() => {
+      if (!active) return;
 
-    if (peerFromParam) {
-      setPeerUserId(peerFromParam);
-      getChatPresence([peerFromParam])
-        .then((r) => {
-          if (active)
-            setPeerStatus(r.data?.[peerFromParam]?.userStatus ?? null);
-        })
-        .catch(() => {});
-      // The header name/avatar were supplied alongside the peer id — nothing to
-      // resolve. (This is the conversation-list open path.)
-      if (haveIdentity) {
-        return () => {
-          active = false;
-        };
+      // Seed the block state from the cached conversation row even when the
+      // route already supplied the header identity (list-open path early-returns
+      // below and would otherwise skip applyConv → isBlocked stays false).
+      const cachedBlockConv = (getCachedConversations() || []).find(
+        (c) => c.id === convId,
+      );
+      if (typeof cachedBlockConv?.is_blocked === "boolean") {
+        setIsBlocked(cachedBlockConv.is_blocked);
       }
-    }
 
-    // Resolve identity from the cached conversation list FIRST (synchronous, no
-    // network) so deep-links / notification taps light up the header instantly
-    // when the cache is warm.
-    const cachedConvs = getCachedConversations();
-    const conv = (cachedConvs || []).find((c) => c.id === convId);
-    if (conv) {
-      applyConv(conv);
-    }
+      if (peerFromParam) {
+        setPeerUserId(peerFromParam);
+        getChatPresence([peerFromParam])
+          .then((r) => {
+            if (active)
+              setPeerStatus(r.data?.[peerFromParam]?.userStatus ?? null);
+          })
+          .catch(() => {});
+        // The header name/avatar were supplied alongside the peer id — nothing
+        // to resolve. (This is the conversation-list open path.)
+        if (haveIdentity) return;
+      }
 
-    // If identity is STILL unresolved (cold cache after a notification cold-
-    // start — the #1 case for "tapping a message shows 'Chat' + '?'"), fetch
-    // the conversation list from the network and backfill. Mirrors Signal-
-    // Android resolving the recipient from its id on a notification launch.
-    if (!haveIdentity && !conv) {
-      getConversations()
-        .then((r) => {
-          if (!active) return;
-          const fresh = (r.data || []).find((c) => c.id === convId);
-          if (fresh) applyConv(fresh);
-        })
-        .catch(() => {});
-    }
+      // Resolve identity from the cached conversation list FIRST (synchronous,
+      // no network) so deep-links / notification taps light up the header
+      // when the cache is warm.
+      const cachedConvs = getCachedConversations();
+      const conv = (cachedConvs || []).find((c) => c.id === convId);
+      if (conv) {
+        applyConv(conv);
+      }
+
+      // If identity is STILL unresolved (cold cache after a notification cold-
+      // start — the #1 case for "tapping a message shows 'Chat' + '?'"), fetch
+      // the conversation list from the network and backfill. Mirrors Signal-
+      // Android resolving the recipient from its id on a notification launch.
+      if (!haveIdentity && !conv) {
+        getConversations()
+          .then((r) => {
+            if (!active) return;
+            const fresh = (r.data || []).find((c) => c.id === convId);
+            if (fresh) applyConv(fresh);
+          })
+          .catch(() => {});
+      }
+    });
 
     return () => {
       active = false;
+      task.cancel();
     };
   }, [
     convId,
