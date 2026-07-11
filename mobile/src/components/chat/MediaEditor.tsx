@@ -82,7 +82,7 @@ export default function MediaEditor({
   const [caption, setCaption] = useState("");
   const [busy, setBusy] = useState(false);
   const [currentPath, setCurrentPath] = useState("");
-  const shotRef = useRef<ViewShot | null>(null);
+  const shotRef = useRef<React.ComponentRef<typeof ViewShot> | null>(null);
 
   const active = items[activeIdx];
 

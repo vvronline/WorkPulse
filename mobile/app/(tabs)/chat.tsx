@@ -1345,6 +1345,12 @@ export default function ChatScreen() {
         <FlashList
           data={listRows}
           keyExtractor={(r) => r.key}
+          // FlashList recycles cells, but by default it treats every row as the
+          // same type — so a tall conversation row can get recycled into a thin
+          // section header (and vice-versa), forcing an extra layout pass on
+          // scroll. Telling it the row "type" keeps a separate recycle pool per
+          // kind, so headers reuse headers and conversation rows reuse rows.
+          getItemType={(item: ListRow) => item.kind}
           contentContainerStyle={styles.list}
           ListHeaderComponent={renderSearchUsersBlock}
           refreshControl={

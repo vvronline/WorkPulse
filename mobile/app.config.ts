@@ -88,6 +88,17 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   web: {
     favicon: "./assets/favicon.png",
   },
+  // RENDER PERF: enable the React Compiler (stable, babel-plugin-react-compiler
+  // ships with babel-preset-expo). It automatically memoizes components, hooks
+  // and derived values at build time, so the whole app avoids re-rendering
+  // subtrees whose inputs did not change — without hand-written useMemo/
+  // useCallback/React.memo. This complements (does not replace) the manual
+  // memoization already in place (e.g. MessageBubble) and is the app-wide
+  // counterpart to the list/worklet optimizations. React 19 has the compiler
+  // runtime built in, so no extra `react-compiler-runtime` dep is needed.
+  experiments: {
+    reactCompiler: true,
+  },
   plugins: [
     "expo-router",
     // Signal-style launch splash: the brand mark centered (small) on a solid
