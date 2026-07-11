@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Pencil, Plus, Trash2, X } from "../icons";
+import { Pencil, Plus, Trash2, X, FileText, PieChart, ClipboardList, BarChart3, type IconProps } from "../icons";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import { useDialog } from "../hooks/useDialog";
@@ -42,6 +42,7 @@ import {
   getLeaveType,
   type LeaveTypeMeta,
 } from "../constants/leaves";
+import type { FC } from "react";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -94,11 +95,18 @@ function isPublicHoliday(l: Leave | null | undefined): boolean {
 
 type SubTab = "request" | "balances" | "policies" | "allBalances";
 
+const TAB_ICONS: Record<SubTab, FC<IconProps>> = {
+  request: FileText,
+  balances: PieChart,
+  policies: ClipboardList,
+  allBalances: BarChart3,
+};
+
 const BASE_TABS: { id: SubTab; label: string; hr?: boolean }[] = [
-  { id: "request", label: "My Leaves" },
-  { id: "balances", label: "My Balances" },
+  { id: "request", label: "Leaves" },
+  { id: "balances", label: "Balances" },
   { id: "policies", label: "Policies", hr: true },
-  { id: "allBalances", label: "All Balances", hr: true },
+  { id: "allBalances", label: "Team Balances", hr: true },
 ];
 
 export default function LeavesTab() {
@@ -114,23 +122,28 @@ export default function LeavesTab() {
   return (
     <View style={{ flex: 1 }}>
       <View style={styles.subTabRow}>
-        {tabs.map((t) => (
-          <Pressable
-            key={t.id}
-            style={[styles.subTab, subTab === t.id && styles.subTabActive]}
-            onPress={() => setSubTab(t.id)}
-          >
-            <Text
-              style={[
-                styles.subTabText,
-                subTab === t.id && styles.subTabTextActive,
-              ]}
-              numberOfLines={1}
+        {tabs.map((t) => {
+          const Icon = TAB_ICONS[t.id];
+          const active = subTab === t.id;
+          return (
+            <Pressable
+              key={t.id}
+              style={[styles.subTab, active && styles.subTabActive]}
+              onPress={() => setSubTab(t.id)}
             >
-              {t.label}
-            </Text>
-          </Pressable>
-        ))}
+              <Icon size={18} color={active ? "#fff" : theme.textSecondary} />
+              <Text
+                style={[
+                  styles.subTabText,
+                  active && styles.subTabTextActive,
+                ]}
+                numberOfLines={1}
+              >
+                {t.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
       {subTab === "request" ? (
         <RequestTab />
@@ -1423,17 +1436,23 @@ const makeStyles = (theme: Theme) =>
     body: { padding: 16, paddingBottom: 40, gap: 12 },
     subTabRow: {
       flexDirection: "row",
+      flexWrap: "wrap",
       gap: 8,
       paddingHorizontal: 16,
       paddingTop: 12,
+      paddingBottom: 4,
     },
     subTab: {
-      flex: 1,
-      paddingVertical: 9,
-      paddingHorizontal: 6,
-      borderRadius: theme.radiusSm,
+      flexBasis: "47.5%",
+      flexGrow: 1,
+      flexShrink: 0,
+      flexDirection: "row",
       alignItems: "center",
       justifyContent: "center",
+      gap: 8,
+      paddingVertical: 14,
+      paddingHorizontal: 12,
+      borderRadius: theme.radius,
       backgroundColor: theme.glass,
       borderWidth: 1,
       borderColor: theme.glassBorder,
@@ -1442,7 +1461,7 @@ const makeStyles = (theme: Theme) =>
       backgroundColor: theme.primary,
       borderColor: theme.primary,
     },
-    subTabText: { fontSize: 13, color: theme.textSecondary, fontWeight: "600" },
+    subTabText: { fontSize: 14, color: theme.textSecondary, fontWeight: "600" },
     subTabTextActive: { color: "#fff" },
 
     // card / form

@@ -90,9 +90,9 @@ export function makeTheme(accent: string = DEFAULT_ACCENT) {
     danger: "#e03e3e",
 
     // Surfaces (dark)
-    bg: "#191919",
-    bgSecondary: "#202020",
-    bgElevated: "#252525",
+    bg: "#131314",
+    bgSecondary: "#1b1b1c",
+    bgElevated: "#202021",
     chatHeaderSurface: "rgba(255, 255, 255, 0.05)",
     chatSegmentSurface: "rgba(255, 255, 255, 0.06)",
     chatSegmentBorder: "rgba(255, 255, 255, 0.12)",

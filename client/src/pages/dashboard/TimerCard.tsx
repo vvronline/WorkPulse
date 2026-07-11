@@ -280,7 +280,7 @@ export default function TimerCard({
                                 <House size={15} /> Remote
                             </button>
                         </div>
-                        <button className="btn btn-success" onClick={handleClockIn} disabled={!!actionLoading}>
+                        <button className="btn btn-success login-btn" onClick={handleClockIn} disabled={!!actionLoading}>
                             {actionLoading === "clockIn" ? (
                                 "Logging in..."
                             ) : (

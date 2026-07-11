@@ -321,7 +321,7 @@ export default function WorkTimerCard() {
                   </Pressable>
                 </View>
                 <Pressable
-                  style={[styles.btn, styles.btnSuccess]}
+                  style={[styles.btn, styles.btnSuccess, styles.btnLogin]}
                   onPress={handleLogin}
                   disabled={!!action}
                 >
@@ -491,6 +491,7 @@ const makeStyles = (theme: Theme) =>
   btnFlex: { flex: 1 },
   btnText: { color: "#fff", fontSize: 14, fontWeight: "600" },
   btnSuccess: { backgroundColor: theme.success },
+  btnLogin: { backgroundColor: "#1a873b" },
   btnWarning: { backgroundColor: theme.warning },
   btnDanger: { backgroundColor: theme.danger },
   btnRow: { flexDirection: "row", gap: 8 },
