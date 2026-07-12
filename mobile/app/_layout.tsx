@@ -29,7 +29,7 @@ import PendingChatNavigator from "../src/realtime/PendingChatNavigator";
 import ChatCacheSync from "../src/realtime/ChatCacheSync";
 import ChatOutboxSync from "../src/realtime/ChatOutboxSync";
 import OngoingCallBanner from "../src/realtime/OngoingCallBanner";
-import { ThemeProvider, useTheme } from "../src/theme/ThemeProvider";
+import { ThemeProvider, useTheme, useThemeMode } from "../src/theme/ThemeProvider";
 import { nativeCallService } from "../src/services/nativeCallService";
 import { backgroundPushService } from "../src/services/backgroundPushService";
 import { notifeeService } from "../src/services/notifeeService";
@@ -69,6 +69,16 @@ const SPLASH_MAX_MS = 4000;
  * Themed navigation stack. Lives inside ThemeProvider so header colours track
  * the tenant's accent reactively.
  */
+/**
+ * Status bar whose icon colour follows the resolved theme mode — light icons on
+ * the dark theme, dark icons on the light theme — so the clock/battery stay
+ * legible against the themed header. Lives inside ThemeProvider.
+ */
+function ThemedStatusBar() {
+  const mode = useThemeMode();
+  return <StatusBar style={mode === "dark" ? "light" : "dark"} />;
+}
+
 function ThemedStack() {
   const theme = useTheme();
   const headerScreen = {
@@ -378,7 +388,7 @@ export default function RootLayout() {
         <AuthProvider>
           <ThemeProvider>
             <SafeAreaProvider>
-              <StatusBar style="light" />
+              <ThemedStatusBar />
               <PushNotificationInitializer />
               <IncomingCallListener />
               <MeetingStartedListener />

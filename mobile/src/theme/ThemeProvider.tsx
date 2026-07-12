@@ -7,14 +7,17 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { useColorScheme } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import {
   DEFAULT_ACCENT,
   isValidHex,
   makeTheme,
   type Theme,
+  type ThemeMode,
 } from "../theme";
 import { useAuth } from "../auth/AuthContext";
+import { useSettings } from "../store/settings";
 import { getBranding } from "../admin";
 import { socket } from "../realtime/socket";
 
@@ -37,13 +40,16 @@ export const BRAND_LOGO_CACHE_KEY = "wp_brand_logo_url";
 interface ThemeContextValue {
   theme: Theme;
   accent: string;
+  /** Resolved light/dark mode currently applied (after resolving "system"). */
+  mode: ThemeMode;
   refreshBranding: () => Promise<void>;
   setAccent: (hex: string) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: makeTheme(DEFAULT_ACCENT),
+  theme: makeTheme(DEFAULT_ACCENT, "dark"),
   accent: DEFAULT_ACCENT,
+  mode: "dark",
   refreshBranding: async () => {},
   setAccent: () => {},
 });
@@ -52,6 +58,18 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const [accent, setAccentState] = useState<string>(DEFAULT_ACCENT);
   const fetchedForUser = useRef<number | string | null>(null);
+
+  // Resolve the light/dark mode from the persisted device preference combined
+  // with the OS colour scheme (for the "system" option). Defaults to dark until
+  // the OS reports a scheme so the first paint matches the app's dark identity.
+  const themePref = useSettings((s) => s.theme);
+  const systemScheme = useColorScheme();
+  const mode: ThemeMode =
+    themePref === "system"
+      ? systemScheme === "light"
+        ? "light"
+        : "dark"
+      : themePref;
 
   // Hydrate the cached accent immediately so the UI doesn't flash the default.
   useEffect(() => {
@@ -125,11 +143,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return unsubscribe;
   }, [user?.id, refreshBranding]);
 
-  const theme = useMemo(() => makeTheme(accent), [accent]);
+  const theme = useMemo(() => makeTheme(accent, mode), [accent, mode]);
 
   const value = useMemo<ThemeContextValue>(
-    () => ({ theme, accent, refreshBranding, setAccent: applyAccent }),
-    [theme, accent, refreshBranding, applyAccent],
+    () => ({ theme, accent, mode, refreshBranding, setAccent: applyAccent }),
+    [theme, accent, mode, refreshBranding, applyAccent],
   );
 
   return (
@@ -140,6 +158,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 /** Reactive theme hook — returns the live, accent-derived theme object. */
 export function useTheme(): Theme {
   return useContext(ThemeContext).theme;
+}
+
+/** Resolved light/dark mode currently applied (after resolving "system"). */
+export function useThemeMode(): ThemeMode {
+  return useContext(ThemeContext).mode;
 }
 
 /** Full branding context (theme + accent + refresh/setters). */

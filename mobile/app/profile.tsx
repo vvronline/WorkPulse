@@ -28,6 +28,7 @@ import {
   KeyRound,
   LogOut,
   Minus,
+  Palette,
   Pencil,
   Phone,
   Play,
@@ -38,6 +39,7 @@ import {
   X,
 } from "../src/icons";
 import { useAuth } from "../src/auth/AuthContext";
+import { useSettings, type ThemePreference } from "../src/store/settings";
 import { triggerUpdateCheck } from "../src/components/UpdateChecker";
 import { getCurrentVersion } from "../src/updater";
 import type { Theme } from "../src/theme";
@@ -142,6 +144,28 @@ const STATUS_META: Record<string, StatusMetaEntry> = {
 
 const PICKABLE: ManualStatus[] = ["available", "busy", "dnd", "brb"];
 
+/* ─── Theme (appearance) options ─── */
+
+const THEME_LABELS: Record<ThemePreference, string> = {
+  system: "System",
+  light: "Light",
+  dark: "Dark",
+};
+
+const THEME_OPTIONS: {
+  key: ThemePreference;
+  label: string;
+  description: string;
+}[] = [
+  {
+    key: "system",
+    label: "System",
+    description: "Match your device's light / dark setting",
+  },
+  { key: "light", label: "Light", description: "Always use the light theme" },
+  { key: "dark", label: "Dark", description: "Always use the dark theme" },
+];
+
 function StatusGlyphIcon({
   glyph,
   size = 9,
@@ -216,7 +240,10 @@ export default function Profile() {
   const [pwOpen, setPwOpen] = useState(false);
   const [soundsOpen, setSoundsOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  const [themeOpen, setThemeOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
+
+  const themePref = useSettings((s) => s.theme);
 
   const [status, setStatus] = useState<StatusPayload | null>(null);
 
@@ -518,6 +545,12 @@ export default function Profile() {
         <Bell size={16} color={theme.text} />
         <Text style={styles.actionText}>Notification Sounds</Text>
       </Pressable>
+      <Pressable style={styles.action} onPress={() => setThemeOpen(true)}>
+        <Palette size={16} color={theme.text} />
+        <Text style={styles.actionText}>Appearance</Text>
+        <Text style={styles.versionText}>{THEME_LABELS[themePref]}</Text>
+        <ChevronDown size={16} color={theme.textSecondary} />
+      </Pressable>
       <Pressable
         style={styles.action}
         onPress={() => router.push("/profile/face")}
@@ -602,9 +635,49 @@ export default function Profile() {
         visible={soundsOpen}
         onClose={() => setSoundsOpen(false)}
       />
+      <ThemePickerModal
+        visible={themeOpen}
+        onClose={() => setThemeOpen(false)}
+      />
 
       {dialog}
     </ScrollView>
+  );
+}
+
+/* ─── Theme (appearance) picker modal ─── */
+
+function ThemePickerModal({
+  visible,
+  onClose,
+}: {
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const themePref = useSettings((s) => s.theme);
+  const setThemePref = useSettings((s) => s.setTheme);
+  return (
+    <ModalShell title="Appearance" visible={visible} onClose={onClose}>
+      {THEME_OPTIONS.map((opt) => {
+        const active = themePref === opt.key;
+        return (
+          <Pressable
+            key={opt.key}
+            accessibilityLabel={`theme-${opt.key}`}
+            style={[styles.statusOption, active && styles.statusOptionActive]}
+            onPress={() => setThemePref(opt.key)}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.statusOptionLabel}>{opt.label}</Text>
+              <Text style={styles.muted}>{opt.description}</Text>
+            </View>
+            {active && <Check size={18} color={theme.primary} />}
+          </Pressable>
+        );
+      })}
+    </ModalShell>
   );
 }
 
