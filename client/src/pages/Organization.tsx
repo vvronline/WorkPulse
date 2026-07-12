@@ -71,7 +71,7 @@ export default function Organization() {
     <div className={s.adminPage}>
       <h1>{org?.name || "Organization"}</h1>
 
-      <div className={s.tabs}>
+      <div className={`${s.tabs} ${s.orgTabs}`}>
         <button
           className={`${s.tab} ${tab === "salary-slips" ? s.active : ""}`}
           onClick={() => setTab("salary-slips")}

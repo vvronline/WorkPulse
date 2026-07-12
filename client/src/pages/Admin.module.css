@@ -461,6 +461,32 @@
     .toolbar input {
         min-width: 100%;
     }
+
+    /* Organization page: wrap the tab bar into a 2-per-row grid on phones so
+       all tabs stay visible instead of scrolling off-screen. Scoped to
+       .orgTabs so other admin pages using .tabs are unaffected. */
+    .orgTabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.4rem;
+        border-bottom: none;
+        overflow-x: visible;
+    }
+
+    .orgTabs .tab {
+        justify-content: center;
+        text-align: center;
+        white-space: normal;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        margin-bottom: 0;
+    }
+
+    .orgTabs .tab.active {
+        color: var(--accent);
+        border-color: var(--accent);
+        background: var(--surface-hover);
+    }
 }
 
 /* ============= UTILITY BUTTON VARIANTS ============= */
