@@ -21,6 +21,7 @@ export const makeStyles = (theme: Theme) =>
     /* Tabs — square segmented control (matches Attendance) */
     tabRow: {
       flexDirection: "row",
+      flexWrap: "wrap",
       backgroundColor: theme.surface,
       borderRadius: theme.radiusSm,
       padding: 3,
@@ -29,7 +30,8 @@ export const makeStyles = (theme: Theme) =>
       marginBottom: 0,
     },
     tab: {
-      flex: 1,
+      flexGrow: 1,
+      flexBasis: "47%",
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "center",

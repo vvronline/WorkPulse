@@ -50,40 +50,26 @@ export default function Organization() {
         />
       );
     }
-    // Platform admins (and other admins) aren't scoped to a single org, but
-    // they can still view their own salary slips.
-    if (isAdmin) {
+    // Non-admins without an org get the "not assigned" message. Admins
+    // (platform_admin / hr_admin) aren't scoped to a single org but fall
+    // through to the full tab UI below — the org-scoped tabs simply show
+    // empty states when they have no org.
+    if (!isAdmin) {
       return (
         <div className={s.adminPage}>
           <h1>Organization</h1>
-          <div className={s.tabs}>
-            <button className={`${s.tab} ${s.active}`}>
-              <span>
-                <CreditCard size={14} />
-              </span>{" "}
-              Salary Slips
-            </button>
-          </div>
-          <Suspense fallback={<PageSkeleton />}>
-            <MySalarySlips />
-          </Suspense>
+          <p style={{ color: "var(--text-secondary)", marginTop: "1rem" }}>
+            You are not assigned to any organization yet. Please contact your
+            administrator.
+          </p>
         </div>
       );
     }
-    return (
-      <div className={s.adminPage}>
-        <h1>Organization</h1>
-        <p style={{ color: "var(--text-secondary)", marginTop: "1rem" }}>
-          You are not assigned to any organization yet. Please contact your
-          administrator.
-        </p>
-      </div>
-    );
   }
 
   return (
     <div className={s.adminPage}>
-      <h1>{org.name}</h1>
+      <h1>{org?.name || "Organization"}</h1>
 
       <div className={s.tabs}>
         <button
@@ -95,39 +81,33 @@ export default function Organization() {
           </span>{" "}
           Salary Slips
         </button>
-        {!isAdmin && (
-          <button
-            className={`${s.tab} ${tab === "departments" ? s.active : ""}`}
-            onClick={() => setTab("departments")}
-          >
-            <span>
-              <Building2 size={14} />
-            </span>{" "}
-            My Department
-          </button>
-        )}
-        {!isAdmin && (
-          <button
-            className={`${s.tab} ${tab === "teams" ? s.active : ""}`}
-            onClick={() => setTab("teams")}
-          >
-            <span>
-              <Users size={14} />
-            </span>{" "}
-            My Team
-          </button>
-        )}
-        {!isAdmin && (
-          <button
-            className={`${s.tab} ${tab === "chart" ? s.active : ""}`}
-            onClick={() => setTab("chart")}
-          >
-            <span>
-              <GitBranch size={14} />
-            </span>{" "}
-            Org Chart
-          </button>
-        )}
+        <button
+          className={`${s.tab} ${tab === "departments" ? s.active : ""}`}
+          onClick={() => setTab("departments")}
+        >
+          <span>
+            <Building2 size={14} />
+          </span>{" "}
+          My Department
+        </button>
+        <button
+          className={`${s.tab} ${tab === "teams" ? s.active : ""}`}
+          onClick={() => setTab("teams")}
+        >
+          <span>
+            <Users size={14} />
+          </span>{" "}
+          My Team
+        </button>
+        <button
+          className={`${s.tab} ${tab === "chart" ? s.active : ""}`}
+          onClick={() => setTab("chart")}
+        >
+          <span>
+            <GitBranch size={14} />
+          </span>{" "}
+          Org Chart
+        </button>
         {canManageLabels && (
           <button
             className={`${s.tab} ${tab === "labels" ? s.active : ""}`}
@@ -146,13 +126,11 @@ export default function Organization() {
           <MySalarySlips />
         </Suspense>
       )}
-      {tab === "departments" && !isAdmin && (
-        <Departments orgId={org.id} userRole={user.role} />
+      {tab === "departments" && (
+        <Departments orgId={org?.id} userRole={user.role} />
       )}
-      {tab === "teams" && !isAdmin && (
-        <Teams orgId={org.id} userRole={user.role} />
-      )}
-      {tab === "chart" && !isAdmin && <OrgChartView />}
+      {tab === "teams" && <Teams orgId={org?.id} userRole={user.role} />}
+      {tab === "chart" && <OrgChartView />}
       {tab === "labels" && canManageLabels && <TaskLabelsTab />}
     </div>
   );

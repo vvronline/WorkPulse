@@ -69,7 +69,54 @@ export function createAdminUser(data: {
   team_id?: number | null;
   manager_id?: number | null;
 }) {
-  return api.post<{ id: number; message: string }>("/admin/users", data);
+  return api.post<{ id: number; message: string; initial_password?: string }>(
+    "/admin/users",
+    data,
+  );
+}
+
+/* ─────────────────────── Admin: Bulk User Import ─────────────────────── */
+
+// A single row for the bulk import endpoint (POST /admin/users/import).
+// username/full_name/email are required; the rest are optional and resolved
+// server-side (department_name / team_name are matched by name within the org).
+export type ImportUserRow = {
+  username: string;
+  full_name: string;
+  email: string;
+  password?: string;
+  role?: string;
+  department_name?: string;
+  team_name?: string;
+  manager_username?: string;
+};
+
+export type ImportUsersResult = {
+  imported: number;
+  failed: { row: number; error: string }[];
+  details: {
+    row: number;
+    username: string;
+    full_name: string;
+    email: string;
+    role: string;
+    id: number;
+    initial_password?: string;
+    auto_generated?: boolean;
+  }[];
+};
+
+/**
+ * Bulk-create users from a parsed list (paste) or an uploaded CSV/JSON file.
+ * The mobile client sends a JSON body { users: [...] } — the same endpoint the
+ * web wizard hits via multipart file upload. Platform admins may pass an
+ * explicit `org_id` to target a specific organization (mirrors createAdminUser).
+ */
+export function importAdminUsers(
+  users: ImportUserRow[],
+  org_id?: number | null,
+) {
+  return api.post<ImportUsersResult>("/admin/users/import", { users, org_id });
 }
 
 export function updateUserRole(

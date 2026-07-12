@@ -1137,7 +1137,13 @@ router.post('/users/import', requireRole('hr_admin'), importUpload.single('file'
 
         const imported: any[] = [];
         const failed: { row: number; error: string }[] = [];
-        const assignOrgId = req.userOrgId;
+        // Platform admins have no user-level org, so they may target a specific
+        // organization by passing org_id (mirrors POST /users). Everyone else is
+        // scoped to their own org.
+        let assignOrgId = req.userOrgId;
+        if (req.userRole === 'platform_admin' && req.body?.org_id !== undefined) {
+            assignOrgId = req.body.org_id ? Number(req.body.org_id) : null;
+        }
 
         // Pre-fetch org leave policies to initialize balances (avoids N+1 in loop)
         let orgPolicies: any[] = [];

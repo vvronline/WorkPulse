@@ -32,6 +32,7 @@ export {
   ArchiveBoxArrowDownIcon as ArchiveRestore,
   ArchiveBoxIcon as Archive,
   ArrowDownTrayIcon as Download,
+  ArrowUpTrayIcon as Upload,
   ArrowLeftIcon as ArrowLeft,
   ArrowPathIcon as Loader2,
   ArrowPathIcon as RefreshCw,

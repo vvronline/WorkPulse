@@ -120,17 +120,17 @@ export default function OrganizationScreen() {
   });
   const [tab, setTab] = useState<TabKey>("salary-slips");
 
-  // Admins (incl. platform admin) aren't scoped to a single org and only see
-  // Salary Slips. Regular members get the full set of tabs; managers also get
-  // the Task Labels tab.
+  // Every role sees the full set of tabs (Salary Slips, My Department, My Team,
+  // Org Chart). Admins (incl. platform admin) aren't scoped to a single org, so
+  // the org-scoped tabs simply show empty states when they have no org.
+  // Managers additionally get the Task Labels tab.
   const tabs = useMemo(() => {
-    if (isAdmin) return ALL_TABS.filter((t) => t.key === "salary-slips");
     const base = [...ALL_TABS];
     if (canManageLabels) {
       base.push({ key: "labels", label: "Task Labels", icon: Tag });
     }
     return base;
-  }, [isAdmin, canManageLabels]);
+  }, [canManageLabels]);
 
   if (loading) {
     return (

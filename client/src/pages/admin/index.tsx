@@ -8,7 +8,7 @@ import {
 import { useAuth } from "../../AuthContext";
 import { useFeatures } from "../../FeaturesContext";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { getRoleChangeRequests, getCurrentOrg } from "../../api";
+import { getRoleChangeRequests, getCurrentOrg, getAdminOrganizations } from "../../api";
 import UserManagement from "./UserManagement";
 import AddPeopleWizard from "./AddPeopleWizard";
 import MyOrganization from "./MyOrganization";
@@ -51,6 +51,12 @@ interface Section {
     feature?: string;
     badgeKey?: string;
     hidden?: boolean;
+    // When true, a platform_admin (who has no user-level org) can still access
+    // this section by selecting a target organization from the panel's org
+    // picker. Only sections whose components accept an explicit `orgId` prop
+    // and forward it to the API should set this — otherwise the page would
+    // render empty for platform admins (their server-side org context is null).
+    platformOrg?: boolean;
 }
 
 const SECTIONS: Section[] = [
@@ -60,9 +66,9 @@ const SECTIONS: Section[] = [
     { key: "add",            label: "Add People",        icon: UserPlus,     group: "People" },
     { key: "role-requests",  label: "Role Requests",     icon: RefreshCw,    group: "People", badgeKey: "roleRequests" },
 
-    { key: "departments",    label: "Departments",       icon: Building,     group: "Structure", requires: "orgId" },
-    { key: "teams",          label: "Teams",             icon: UsersRound,   group: "Structure", requires: "orgId" },
-    { key: "org-chart",      label: "Org Chart",         icon: GitBranch,    group: "Structure", requires: "orgId" },
+    { key: "departments",    label: "Departments",       icon: Building,     group: "Structure", requires: "orgId", platformOrg: true },
+    { key: "teams",          label: "Teams",             icon: UsersRound,   group: "Structure", requires: "orgId", platformOrg: true },
+    { key: "org-chart",      label: "Org Chart",         icon: GitBranch,    group: "Structure", requires: "orgId", platformOrg: true },
     { key: "agile",          label: "Agile Config",      icon: WorkflowIcon, group: "Structure", requires: "orgId", feature: "agile" },
     { key: "projects",       label: "Projects",          icon: Folder,       group: "Structure", requires: "orgId", feature: "agile" },
 
@@ -103,7 +109,13 @@ const GROUP_ORDER = ["Overview", "People", "Structure", "Operations", "Complianc
 function isAllowed(section: Section, user: any, hasFeature: (f: string) => boolean): boolean {
     if (section.feature && !hasFeature(section.feature)) return false;
     if (!section.requires) return true;
-    if (section.requires === "orgId") return !!user?.org_id;
+    if (section.requires === "orgId") {
+        if (user?.org_id) return true;
+        // Platform admins have no user-level org, but can still manage the
+        // org structure of a specific organization they select — but only for
+        // sections whose components support an explicit org_id.
+        return user?.role === "platform_admin" && !!section.platformOrg;
+    }
     if (section.requires === "super") {
         return user?.role === "super_admin" || user?.role === "platform_admin";
     }
@@ -153,12 +165,32 @@ export default function AdminPanel() {
     }, []);
     useEffect(() => { refreshBadges(); }, [refreshBadges]);
 
-    // Org-id for structure sub-pages
+    // Org-id for structure sub-pages.
+    //  • Regular admins: resolved from their own org (getCurrentOrg).
+    //  • Platform admins: chosen from the org picker below (they have no
+    //    user-level org, so structure pages need an explicit target org).
     const [orgId, setOrgId] = useState<number | string | null>(null);
+    const [platformOrgId, setPlatformOrgId] = useState<number | string | null>(null);
+    const [orgOptions, setOrgOptions] = useState<{ id: number | string; name: string }[]>([]);
     useEffect(() => {
+        if (isPlatform) {
+            // Load the org list once so a platform admin can target one.
+            getAdminOrganizations()
+                .then(r => {
+                    const list = ((r.data as any)?.data || r.data || []) as any[];
+                    setOrgOptions(Array.isArray(list) ? list : []);
+                })
+                .catch(() => setOrgOptions([]));
+            setOrgId(null);
+            return;
+        }
         if (!user?.org_id) { setOrgId(null); return; }
         getCurrentOrg().then(r => setOrgId((r.data as any)?.id || user.org_id)).catch(() => setOrgId(user.org_id));
-    }, [user?.org_id]);
+    }, [user?.org_id, isPlatform]);
+
+    // The effective org for structure sub-pages: platform admins use their
+    // picked org, everyone else uses their resolved own-org id.
+    const effectiveOrgId = isPlatform ? platformOrgId : orgId;
 
     // Sync with URL changes from outside (GlobalSearch etc.)
     useEffect(() => {
@@ -239,15 +271,17 @@ export default function AdminPanel() {
             case "platform-access":
                 return <PlatformAccessInbox />;
             case "departments":
-                return user.org_id && orgId
-                    ? <Departments orgId={orgId} userRole={user.role} />
-                    : <p>You are not assigned to an organization.</p>;
+                return effectiveOrgId
+                    ? <Departments orgId={effectiveOrgId} userRole={user.role} />
+                    : <p>{isPlatform ? "Select an organization above to manage its departments." : "You are not assigned to an organization."}</p>;
             case "teams":
-                return user.org_id && orgId
-                    ? <Teams orgId={orgId} userRole={user.role} />
-                    : <p>You are not assigned to an organization.</p>;
+                return effectiveOrgId
+                    ? <Teams orgId={effectiveOrgId} userRole={user.role} />
+                    : <p>{isPlatform ? "Select an organization above to manage its teams." : "You are not assigned to an organization."}</p>;
             case "org-chart":
-                return user.org_id ? <OrgChartView /> : <p>You are not assigned to an organization.</p>;
+                return effectiveOrgId
+                    ? <OrgChartView orgId={effectiveOrgId} />
+                    : <p>{isPlatform ? "Select an organization above to view its org chart." : "You are not assigned to an organization."}</p>;
             case "agile":
                 return user.org_id ? <AgileSettings /> : <p>You are not assigned to an organization.</p>;
             case "projects":
@@ -394,6 +428,23 @@ export default function AdminPanel() {
                             </p>
                         )}
                     </div>
+                    {/* Platform admins have no fixed org, so org-scoped structure
+                        sections need an explicit target org. Show a picker for
+                        those sections. */}
+                    {isPlatform && !!currentSection.platformOrg && (
+                        <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: 13 }}>
+                            <span>Organization:</span>
+                            <select
+                                value={platformOrgId ?? ""}
+                                onChange={(e) => setPlatformOrgId(e.target.value ? e.target.value : null)}
+                            >
+                                <option value="">— Select organization —</option>
+                                {orgOptions.map(o => (
+                                    <option key={o.id} value={o.id}>{o.name}</option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
                 </div>
                 {renderSection()}
             </main>
