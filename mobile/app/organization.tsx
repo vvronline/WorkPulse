@@ -181,8 +181,10 @@ export default function OrganizationScreen() {
       </View>
 
       {tab === "salary-slips" && <SalarySlipsTab theme={theme} />}
-      {tab === "departments" && <DepartmentsTab theme={theme} />}
-      {tab === "teams" && <TeamsTab theme={theme} />}
+      {tab === "departments" && (
+        <DepartmentsTab theme={theme} orgId={org?.id} />
+      )}
+      {tab === "teams" && <TeamsTab theme={theme} orgId={org?.id} />}
       {tab === "chart" && <OrgChartTab theme={theme} />}
       {tab === "labels" && canManageLabels && <TaskLabelsTab theme={theme} />}
     </View>
@@ -590,15 +592,26 @@ function Field({
 
 /* ───────────────────────── Departments Tab ───────────────────────── */
 
-function DepartmentsTab({ theme }: { theme: Theme }) {
+function DepartmentsTab({
+  theme,
+  orgId,
+}: {
+  theme: Theme;
+  orgId?: number | string | null;
+}) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
   const { data: depts = EMPTY_DEPARTMENTS, isLoading: loading } = useQuery({
-    queryKey: ["org", "departments"],
+    queryKey: ["org", "departments", orgId ?? null],
     queryFn: async () => {
-      const r = await getOrgDepartments();
+      // Mirror the web client: pass the resolved org id so platform/super
+      // admins (whose scoped org_id may not resolve server-side without it)
+      // get their organization's departments instead of an empty list.
+      const r = await getOrgDepartments(
+        orgId != null ? { org_id: String(orgId) } : undefined,
+      );
       return Array.isArray(r.data) ? r.data : EMPTY_DEPARTMENTS;
     },
   });
@@ -622,7 +635,7 @@ function DepartmentsTab({ theme }: { theme: Theme }) {
           onRefresh={async () => {
             setRefreshing(true);
             await queryClient.invalidateQueries({
-              queryKey: ["org", "departments"],
+              queryKey: ["org", "departments", orgId ?? null],
             });
             setRefreshing(false);
           }}
@@ -652,15 +665,23 @@ function DepartmentsTab({ theme }: { theme: Theme }) {
 
 /* ───────────────────────── Teams Tab ───────────────────────── */
 
-function TeamsTab({ theme }: { theme: Theme }) {
+function TeamsTab({
+  theme,
+  orgId,
+}: {
+  theme: Theme;
+  orgId?: number | string | null;
+}) {
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
   const { data: teams = EMPTY_TEAMS, isLoading: loading } = useQuery({
-    queryKey: ["org", "teams"],
+    queryKey: ["org", "teams", orgId ?? null],
     queryFn: async () => {
-      const r = await getOrgTeams();
+      const r = await getOrgTeams(
+        orgId != null ? { org_id: String(orgId) } : undefined,
+      );
       return Array.isArray(r.data) ? r.data : EMPTY_TEAMS;
     },
   });
@@ -683,7 +704,9 @@ function TeamsTab({ theme }: { theme: Theme }) {
           refreshing={refreshing}
           onRefresh={async () => {
             setRefreshing(true);
-            await queryClient.invalidateQueries({ queryKey: ["org", "teams"] });
+            await queryClient.invalidateQueries({
+              queryKey: ["org", "teams", orgId ?? null],
+            });
             setRefreshing(false);
           }}
           tintColor={theme.primary}

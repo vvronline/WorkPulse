@@ -1,3 +1,4 @@
+import * as ImageManipulator from "expo-image-manipulator";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -138,10 +139,29 @@ export default function CameraCapture({
         skipProcessing: false,
       });
       if (photo?.uri) {
+        // Front-camera selfies: expo-camera shows a MIRRORED live preview but
+        // saves the un-mirrored ("true") image, so the captured photo looks
+        // flipped vs. what the user saw. Flip it horizontally so the saved
+        // still matches the preview (Signal/WhatsApp selfie behaviour). Rear
+        // photos are already correct and pass through unchanged.
+        let result: { uri: string; width?: number; height?: number } = photo;
+        if (facing === "front") {
+          try {
+            result = await ImageManipulator.manipulateAsync(
+              photo.uri,
+              [{ flip: ImageManipulator.FlipType.Horizontal }],
+              { compress: 1, format: ImageManipulator.SaveFormat.JPEG },
+            );
+          } catch {
+            // Manipulation failed — fall back to the original still rather
+            // than blocking the capture.
+            result = photo;
+          }
+        }
         onCapturedPhoto({
-          uri: photo.uri,
-          width: photo.width,
-          height: photo.height,
+          uri: result.uri,
+          width: result.width,
+          height: result.height,
         });
       }
     } catch {
@@ -149,7 +169,7 @@ export default function CameraCapture({
     } finally {
       setBusy(false);
     }
-  }, [busy, isRecording, onCapturedPhoto]);
+  }, [busy, facing, isRecording, onCapturedPhoto]);
 
   // LONG-PRESS shutter → start recording video.
   const startRecording = useCallback(async () => {
@@ -264,6 +284,12 @@ export default function CameraCapture({
         style={StyleSheet.absoluteFill}
         facing={facing}
         flash={flash}
+        // Mirror the front-camera output so RECORDED videos match the mirrored
+        // live preview (selfie behaviour). Scoped to "video" mode ONLY so it
+        // never affects `takePictureAsync` — still photos are mirrored
+        // deterministically in takePhoto() via ImageManipulator, avoiding a
+        // double-flip if a platform also mirrors the captured still.
+        mirror={facing === "front" && cameraMode === "video"}
         // Driven by its OWN state (NOT `isRecording`) so it can switch to
         // "video" BEFORE recordAsync() runs — see startRecording().
         mode={cameraMode}
