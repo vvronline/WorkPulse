@@ -99,12 +99,43 @@ with a pass-through so the shared process-wide `authLimiter` bucket can't leak
 
 - **Dependency**: `expo-local-authentication` (+ Face ID usage string in
   `app.config.ts`).
-- **`mobile/src/auth/biometricStore.ts`**: wraps `expo-secure-store`. The
-  device secret is stored with `requireAuthentication: true` so the OS
-  biometric prompt fires on every read; the `credentialId` is stored normally.
-  Exposes `isBiometricAvailable`, `hasBiometricCredential`,
-  `saveBiometricCredential`, `getBiometricCredentialId`,
-  `unlockBiometricCredential`, `clearBiometricCredential`, `biometricPlatform`.
+- **`mobile/src/auth/biometricStore.ts`**: wraps `expo-secure-store`. On
+  **STRONG**-biometric devices (Android Class 3 / iOS) the device secret is
+  stored with `requireAuthentication: true` so the OS gates every read behind a
+  hardware-backed KeyStore key; the `credentialId` is stored normally. Exposes
+  `isBiometricAvailable`, `hasBiometricCredential`, `saveBiometricCredential`,
+  `getBiometricCredentialId`, `unlockBiometricCredential`,
+  `clearBiometricCredential`, `biometricPlatform`, and `getBiometricCapability`
+  (which now also returns a `strong: boolean`).
+
+  #### WEAK-biometric fallback (Android Class 2 Face Unlock)
+
+  Android splits biometrics into **STRONG (Class 3)** — fingerprints and a few
+  secure face sensors — and **WEAK (Class 2)** — the camera-based Face Unlock
+  found on most phones and tablets (e.g. **OnePlus Pad Go**, which has *only*
+  weak face and no fingerprint). A `requireAuthentication: true` SecureStore
+  item is backed by a KeyStore key with `setUserAuthenticationRequired(true)`,
+  and **such keys can only be released by a STRONG biometric.** That means:
+
+  - On the **OnePlus Pad Go** (weak-face-only) the feature used to be hidden
+    entirely, and even if shown it could never unlock the secret.
+  - On phones with **STRONG fingerprint + WEAK face** (Pixel, Nothing, Samsung
+    S23) only the fingerprint can unlock the secret, so only "Fingerprint"
+    surfaces — the face unlock is Class 2 and can't gate the KeyStore key.
+
+  To make face-only devices work, `getBiometricCapability()` now reports
+  `available: true` for an enrolled **WEAK** biometric and sets `strong: false`.
+  For those devices `saveBiometricCredential()` stores the secret **without**
+  `requireAuthentication` (still encrypted at rest by SecureStore) and records a
+  `wp_biometric_weak` flag; `unlockBiometricCredential()` then gates the read
+  with an explicit `LocalAuthentication.authenticateAsync()` prompt (allowing
+  weak biometrics + device PIN fallback) instead of relying on the KeyStore
+  prompt. STRONG devices are unchanged and keep the hardware-backed path.
+
+  **Security trade-off**: on WEAK-only devices the secret is gated by an
+  app-level `authenticateAsync()` check rather than a hardware KeyStore key —
+  slightly weaker, but acceptable because the server already treats the secret
+  like a password (bcrypt hash, revocable on password reset, rate-limited).
 - **`mobile/src/auth/AuthContext.tsx`**: adds
   `biometricAvailable`, `biometricEnrolled`, `enableBiometric()`,
   `disableBiometric()`, `biometricLogin()`. Password and biometric login share
