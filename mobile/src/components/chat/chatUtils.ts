@@ -173,6 +173,15 @@ export const STATUS_LABEL: Record<string, string> = {
   in_meeting: "In a Meeting",
 };
 
+// Human label for whether the peer is currently logged in from the office or
+// working remotely (from today's attendance clock-in). Mirrors the web
+// ChatHeader WORK_MODE_LABEL.
+export const WORK_MODE_LABEL: Record<string, string> = {
+  office: "In office",
+  remote: "Remote",
+  hybrid: "Hybrid",
+};
+
 // Header 3-dot menu sheet contents. A single modal switches between the menu
 // and each panel — presenting separate modals back-to-back races on Android
 // (see the forwardMode comment in the screen for the same pattern).

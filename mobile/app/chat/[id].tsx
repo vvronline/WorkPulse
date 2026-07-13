@@ -57,7 +57,16 @@ import {
 import {
   fmtDaySeparator,
   isSameDay,
+  WORK_MODE_LABEL,
 } from "../../src/components/chat/chatUtils";
+
+// Coloured dot next to the office/remote header badge (green = office,
+// blue = remote, amber = hybrid). Mirrors the web ChatHeader.
+const WORK_MODE_COLOR: Record<string, string> = {
+  office: "#16a34a",
+  remote: "#2563eb",
+  hybrid: "#d97706",
+};
 
 /**
  * Chat thread screen — a thin presentational orchestrator. All state, socket
@@ -245,11 +254,38 @@ export default function ChatThread() {
                         <Text style={styles.headerTitleText} numberOfLines={1}>
                           {c.name || "Chat"}
                         </Text>
-                        {c.headerSubtitle ? (
-                          <Text style={styles.headerSubtitle} numberOfLines={1}>
-                            {c.headerSubtitle}
-                          </Text>
-                        ) : null}
+                        <View style={styles.headerSubtitleRow}>
+                          {c.headerSubtitle ? (
+                            <Text
+                              style={styles.headerSubtitle}
+                              numberOfLines={1}
+                            >
+                              {c.headerSubtitle}
+                            </Text>
+                          ) : null}
+                          {!c.isGroupConv &&
+                          c.peerWorkMode &&
+                          WORK_MODE_LABEL[c.peerWorkMode] ? (
+                            <View style={styles.workModeBadge}>
+                              <View
+                                style={[
+                                  styles.workModeDot,
+                                  {
+                                    backgroundColor:
+                                      WORK_MODE_COLOR[c.peerWorkMode] ||
+                                      "#16a34a",
+                                  },
+                                ]}
+                              />
+                              <Text
+                                style={styles.workModeText}
+                                numberOfLines={1}
+                              >
+                                {WORK_MODE_LABEL[c.peerWorkMode]}
+                              </Text>
+                            </View>
+                          ) : null}
+                        </View>
                       </View>
                     </Pressable>
                   ),
@@ -892,6 +928,35 @@ const makeStyles = (theme: Theme) =>
       color: theme.textSecondary,
       maxWidth: 180,
       fontFamily: theme.fontRegular,
+    },
+    // Office/remote header badge (whether the peer is currently logged in from
+    // the office or working remotely, from today's attendance clock-in).
+    headerSubtitleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      maxWidth: 220,
+    },
+    workModeBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      paddingVertical: 1,
+      paddingHorizontal: 6,
+      borderRadius: 999,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    workModeDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+    },
+    workModeText: {
+      fontSize: 10,
+      color: theme.textSecondary,
+      fontFamily: theme.fontMedium,
     },
     // Wraps the FlatList so the floating scroll-to-bottom pill can be absolutely
     // positioned over the visual bottom of the (inverted) list.

@@ -657,9 +657,18 @@ export function toggleReaction(messageId: number, emoji: string) {
 /**
  * Bulk presence + resolved effective status for a set of users. Mirrors the
  * web `getPresence` (GET /api/chat/presence?userIds=1,2,3). Response shape:
- *   { [userId]: { presence: 'online'|'offline', userStatus: '<effective>' } }
+ *   { [userId]: { presence: 'online'|'offline', userStatus: '<effective>',
+ *                 workMode: 'office'|'remote'|'hybrid'|null } }
  */
-export type PresenceEntry = { presence: string; userStatus: string };
+export type WorkMode = "office" | "remote" | "hybrid";
+export type PresenceEntry = {
+  presence: string;
+  userStatus: string;
+  // Whether the user is currently logged in from the office or working
+  // remotely (from today's attendance clock-in). null = logged out / no
+  // attendance data. Absent on older servers.
+  workMode?: WorkMode | null;
+};
 
 export function getChatPresence(userIds: number[]) {
   return api.get<Record<string, PresenceEntry>>("/chat/presence", {

@@ -27,3 +27,12 @@ export function isUserOnline(c: Conversation, onlineUsers: Set<unknown>): boolea
     if (c.is_group) return false;
     return onlineUsers.has(c.other_user_id);
 }
+
+// Human label for whether the peer is currently logged in from the office or
+// working remotely (from today's attendance clock-in). Shared with the mobile
+// app's chatUtils WORK_MODE_LABEL.
+export const WORK_MODE_LABEL: Record<string, string> = {
+    office: "In office",
+    remote: "Remote",
+    hybrid: "Hybrid",
+};

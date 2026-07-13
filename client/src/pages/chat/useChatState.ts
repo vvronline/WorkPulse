@@ -71,6 +71,12 @@ export default function useChatState() {
     const [userStatusMap, setUserStatusMap] = useState<Record<string, string>>(
         {},
     );
+    // Per-user current work mode (office/remote/hybrid) from today's attendance
+    // clock-in, shown as a badge in the chat header. null = logged out / no data.
+    // Updated on each presence fetch (no live WS event in v1).
+    const [userWorkModeMap, setUserWorkModeMap] = useState<
+        Record<string, string | null>
+    >({});
     const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
     const [editingMsg, setEditingMsg] = useState<ChatMessage | null>(null);
     const [showSearch, setShowSearch] = useState(false);
@@ -747,15 +753,17 @@ export default function useChatState() {
                     const { data: pres } = await getPresence([...uids]);
                     const onlineSet = new Set<number | string>();
                     const statusMap: Record<string, string> = {};
+                    const workModeMap: Record<string, string | null> = {};
                     for (const [k, v] of Object.entries(
                         pres as Record<string, unknown>,
                     )) {
                         const uid = Number(k);
                         if (typeof v === "object" && v !== null) {
-                            // New format: { presence, userStatus }
+                            // New format: { presence, userStatus, workMode }
                             const obj = v as {
                                 presence?: string;
                                 userStatus?: string;
+                                workMode?: string | null;
                             };
                             const isOnline = obj.presence === "online";
                             if (isOnline) onlineSet.add(uid);
@@ -767,15 +775,18 @@ export default function useChatState() {
                             statusMap[uid] = isOnline
                                 ? obj.userStatus || "available"
                                 : "offline";
+                            workModeMap[uid] = obj.workMode ?? null;
                         } else {
                             // Legacy format: 'online' | 'offline'
                             if (v === "online") onlineSet.add(uid);
                             statusMap[uid] =
                                 v === "online" ? "available" : "offline";
+                            workModeMap[uid] = null;
                         }
                     }
                     setOnlineUsers(onlineSet);
                     setUserStatusMap((prev) => ({ ...prev, ...statusMap }));
+                    setUserWorkModeMap((prev) => ({ ...prev, ...workModeMap }));
                 } catch (e) {
                     console.error("Failed to load presence", e);
                 }
@@ -966,6 +977,7 @@ export default function useChatState() {
         setMobileView,
         onlineUsers,
         userStatusMap,
+        userWorkModeMap,
         replyTo,
         setReplyTo,
         editingMsg,

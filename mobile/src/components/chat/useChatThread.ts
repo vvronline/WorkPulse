@@ -404,6 +404,10 @@ export function useChatThread() {
     params.peerId ? Number(params.peerId) : null,
   );
   const [peerStatus, setPeerStatus] = useState<string | null>(null);
+  // Whether the peer is currently logged in from the office or working remotely
+  // (from today's attendance clock-in). null = logged out / no data. Shown as a
+  // badge in the header. Updated on presence fetch only (no live WS event).
+  const [peerWorkMode, setPeerWorkMode] = useState<string | null>(null);
   // Delivery / read receipts (userId → ISO last_read_at) + participant count.
   // Seed from the on-device cache SYNCHRONOUSLY (same pattern as `messages`)
   // so the read-receipt tick colour is correct on the FIRST frame. Without
@@ -826,7 +830,10 @@ export function useChatThread() {
         setPeerUserId(uid);
         getChatPresence([uid])
           .then((r) => {
-            if (active) setPeerStatus(r.data?.[uid]?.userStatus ?? null);
+            if (active) {
+              setPeerStatus(r.data?.[uid]?.userStatus ?? null);
+              setPeerWorkMode(r.data?.[uid]?.workMode ?? null);
+            }
           })
           .catch(() => {});
       }
@@ -858,8 +865,10 @@ export function useChatThread() {
         setPeerUserId(peerFromParam);
         getChatPresence([peerFromParam])
           .then((r) => {
-            if (active)
+            if (active) {
               setPeerStatus(r.data?.[peerFromParam]?.userStatus ?? null);
+              setPeerWorkMode(r.data?.[peerFromParam]?.workMode ?? null);
+            }
           })
           .catch(() => {});
         // The header name/avatar were supplied alongside the peer id — nothing
@@ -2431,6 +2440,7 @@ export function useChatThread() {
     isGroup: isGroupConv ? "1" : "0",
     groupMemberAvatars: JSON.stringify(groupMemberAvatars),
     peerStatus: peerStatus || "",
+    peerWorkMode: peerWorkMode || "",
     memberCount: String(participantCount),
     myRole: myGroupRole,
     description: groupDescription,
@@ -3234,6 +3244,7 @@ export function useChatThread() {
     isGroupConv,
     peerUserId,
     peerStatus,
+    peerWorkMode,
     headerSubtitle,
     startCall,
     goBackToChatList,

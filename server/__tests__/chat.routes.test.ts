@@ -220,6 +220,59 @@ describe("GET /api/chat/presence", () => {
         expect(res.body[3].presence).toBe("offline");
         expect(res.body[3].userStatus).toBe("offline");
     });
+
+    test("returns work mode from today's clock-in (office/remote)", async () => {
+        // Mirrors the presence fixture chain, then adds the 5th query the route
+        // now makes for the office/remote badge: today's time_entries per user.
+        //   1) getUserOrg  2) org members  3) getUserPrefsBulk
+        //   4) getOpenSessionsBulk  5) time_entries (work-mode lookup)
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({ rows: [{ org_id: 1 }], rowCount: 1 }); // getUserOrg
+        mockQuery.mockResolvedValueOnce({
+            rows: [{ id: 2 }, { id: 3 }],
+            rowCount: 2,
+        }); // org members filter
+        mockQuery.mockResolvedValueOnce({
+            rows: [
+                {
+                    id: 2,
+                    manual_status: null,
+                    presence_preference: "auto",
+                    status_message: null,
+                    status_message_expires_at: null,
+                    last_activity_at: new Date(),
+                },
+                {
+                    id: 3,
+                    manual_status: null,
+                    presence_preference: "auto",
+                    status_message: null,
+                    status_message_expires_at: null,
+                    last_activity_at: new Date(),
+                },
+            ],
+            rowCount: 2,
+        }); // getUserPrefsBulk
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // getOpenSessionsBulk
+        // time_entries: user 2 clocked in (office, still on floor); user 3 clocked
+        // out → logged out → no work mode.
+        mockQuery.mockResolvedValueOnce({
+            rows: [
+                { user_id: 2, entry_type: "clock_in", work_mode: "office" },
+                { user_id: 3, entry_type: "clock_in", work_mode: "remote" },
+                { user_id: 3, entry_type: "clock_out", work_mode: null },
+            ],
+            rowCount: 3,
+        }); // time_entries work-mode lookup
+
+        const res = await request(app).get("/api/chat/presence?userIds=2,3").set("Cookie", authCookie());
+
+        expect(res.status).toBe(200);
+        // User 2 is still clocked in from the office → "office".
+        expect(res.body[2].workMode).toBe("office");
+        // User 3 clocked out → logged out → no work mode surfaced.
+        expect(res.body[3].workMode).toBeNull();
+    });
 });
 
 // ─── GET /api/chat/conversations ───────────────────────────────────────────

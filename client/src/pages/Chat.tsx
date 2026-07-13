@@ -29,6 +29,7 @@ export default function Chat() {
         search, setSearch, searchResults, searching,
         typingUsers, mobileView, setMobileView, onlineUsers,
         userStatusMap: rawStatusMap,
+        userWorkModeMap,
         replyTo, setReplyTo, editingMsg, setEditingMsg, showSearch, setShowSearch,
         showPinned, setShowPinned, showGroupModal, setShowGroupModal,
         groupEditData, setGroupEditData, forwardMsg, setForwardMsg,
@@ -185,6 +186,7 @@ export default function Chat() {
                             activeConv={activeConvFull || activeConv}
                             onlineUsers={onlineUsers}
                             userStatusMap={userStatusMap}
+                            userWorkModeMap={userWorkModeMap}
                             onBack={() => setMobileView("list")}
                             onGroupEdit={openGroupEdit}
                             onToggleSearch={() => setShowSearch(true)}

@@ -9,6 +9,7 @@ const { sendToUser, emitCallHistoryMessage } = require("../utils/ws");
 const redis = require("../redis");
 const { requireTenant, requireFeature } = require("../middleware/tenant");
 const { getUploadDir, getUploadUrl } = require("../utils/uploadPath");
+const { getLocalToday, getTzModifier } = require("../utils/timezone");
 import { enqueueChatMediaPipelineJob } from "../jobs";
 import {
   broadcastMediaJobUpdate,
@@ -257,8 +258,13 @@ router.get("/search", auth, async (req: Request, res: Response) => {
  * conversation-list query has a single bulk endpoint; the underlying data
  * is identical to GET /api/me/status (same resolver output).
  *
- * Response shape (preserved for backwards compatibility):
- *   { [userId]: { presence: 'online'|'offline', userStatus: '<effective>' } }
+ * Response shape (backwards compatible — `workMode` is an additive field):
+ *   { [userId]: { presence: 'online'|'offline', userStatus: '<effective>',
+ *                 workMode: 'office'|'remote'|'hybrid'|null } }
+ *
+ * `workMode` reflects whether the user is currently logged in from the office
+ * or working remotely — sourced from today's attendance clock-in, and only
+ * surfaced while they are still clocked in (a logged-out user reports null).
  */
 router.get("/presence", auth, async (req: Request, res: Response) => {
   try {
@@ -289,12 +295,67 @@ router.get("/presence", auth, async (req: Request, res: Response) => {
       allowedIds,
     );
 
-    const result: Record<number, { presence: string; userStatus: string }> = {};
+    // Current work mode (office/remote/hybrid) per user, derived from today's
+    // attendance clock-in. Only surfaced while the user is still "logged in"
+    // (has an open work session — the last entry today is not a clock_out); a
+    // logged-out user reports null. Tenants without the attendance feature
+    // simply have no time_entries, so every user resolves to null. This is a
+    // single indexed lookup and must never fail the presence response.
+    const workModeByUser: Record<number, string | null> = {};
+    try {
+      const tzMod = getTzModifier(req);
+      const today = getLocalToday(req);
+      const entryRows = (
+        await req.db!.query(
+          `SELECT user_id, entry_type, work_mode
+             FROM time_entries
+            WHERE user_id = ANY($1)
+              AND (timestamp + $2::interval)::date = $3::date
+              AND (approval_status IS NULL OR approval_status != 'rejected')
+            ORDER BY user_id ASC, timestamp ASC, id ASC`,
+          [allowedIds, tzMod, today],
+        )
+      ).rows as Array<{
+        user_id: number;
+        entry_type: string;
+        work_mode: string | null;
+      }>;
+      const entriesByUser: Record<
+        number,
+        Array<{ entry_type: string; work_mode: string | null }>
+      > = {};
+      for (const r of entryRows) {
+        (entriesByUser[r.user_id] ||= []).push(r);
+      }
+      for (const id of allowedIds) {
+        const ue = entriesByUser[id];
+        if (!ue || ue.length === 0) {
+          workModeByUser[id] = null;
+          continue;
+        }
+        // "Logged in" = clocked in and not yet clocked out (on floor or on break).
+        const loggedIn = ue[ue.length - 1].entry_type !== "clock_out";
+        const clockIn = ue.find((e) => e.entry_type === "clock_in");
+        workModeByUser[id] =
+          loggedIn && clockIn?.work_mode ? clockIn.work_mode : null;
+      }
+    } catch (err) {
+      req.log.warn(
+        { err: (err as Error).message },
+        "presence: work-mode lookup failed",
+      );
+    }
+
+    const result: Record<
+      number,
+      { presence: string; userStatus: string; workMode: string | null }
+    > = {};
     for (const id of allowedIds) {
       const p = payloads[id];
       result[id] = {
         presence: p?.presence || "offline",
         userStatus: p?.effective || "offline",
+        workMode: workModeByUser[id] ?? null,
       };
     }
     res.json(result);

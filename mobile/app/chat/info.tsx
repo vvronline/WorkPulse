@@ -21,7 +21,15 @@ import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import GroupCompositeAvatar from "../../src/components/GroupCompositeAvatar";
-import { STATUS_LABEL } from "../../src/components/chat/chatUtils";
+import { STATUS_LABEL, WORK_MODE_LABEL } from "../../src/components/chat/chatUtils";
+
+// Coloured dot next to the office/remote badge (green = office, blue = remote,
+// amber = hybrid). Mirrors the web ChatHeader.
+const WORK_MODE_COLOR: Record<string, string> = {
+  office: "#16a34a",
+  remote: "#2563eb",
+  hybrid: "#d97706",
+};
 
 /**
  * Conversation profile / settings screen (mirrors Signal-Android's
@@ -41,6 +49,7 @@ export default function ChatInfo() {
     isGroup?: string;
     groupMemberAvatars?: string;
     peerStatus?: string;
+    peerWorkMode?: string;
     memberCount?: string;
     myRole?: string;
     description?: string;
@@ -62,6 +71,7 @@ export default function ChatInfo() {
     }
   }, [params.groupMemberAvatars]);
   const peerStatus = params.peerStatus || null;
+  const peerWorkMode = params.peerWorkMode || null;
   const memberCount = params.memberCount ? Number(params.memberCount) : 0;
   const myRole = params.myRole || "member";
   const description = params.description || "";
@@ -142,6 +152,22 @@ export default function ChatInfo() {
           {name}
         </Text>
         {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        {!isGroup && peerWorkMode && WORK_MODE_LABEL[peerWorkMode] ? (
+          <View style={styles.workModeBadge}>
+            <View
+              style={[
+                styles.workModeDot,
+                {
+                  backgroundColor:
+                    WORK_MODE_COLOR[peerWorkMode] || "#16a34a",
+                },
+              ]}
+            />
+            <Text style={styles.workModeText}>
+              {WORK_MODE_LABEL[peerWorkMode]}
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Quick actions. Call/Video are available for 1:1 AND group chats —
@@ -277,6 +303,30 @@ const makeStyles = (theme: Theme) =>
       fontSize: 14,
       color: theme.textSecondary,
       marginTop: 4,
+    },
+    // Office/remote badge under the name (whether the peer is currently logged
+    // in from the office or working remotely, from today's attendance clock-in).
+    workModeBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      marginTop: 8,
+      paddingVertical: 3,
+      paddingHorizontal: 10,
+      borderRadius: 999,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+    },
+    workModeDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 3.5,
+    },
+    workModeText: {
+      fontSize: 12,
+      color: theme.textSecondary,
+      fontFamily: theme.fontMedium,
     },
     quickRow: {
       flexDirection: "row",

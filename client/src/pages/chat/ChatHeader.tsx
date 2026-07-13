@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { ChatAvatar } from "../../components/chat";
 import { useClickOutside } from "../../hooks/useClickOutside";
-import { getConvName, getConvAvatar, isUserOnline } from "./chatUtils";
+import { getConvName, getConvAvatar, isUserOnline, WORK_MODE_LABEL } from "./chatUtils";
 import s from "./ChatHeader.module.css";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -26,6 +26,14 @@ const STATUS_LABEL: Record<string, string> = {
     offline: "Offline",
     in_call: "In a Call",
     in_meeting: "In a Meeting",
+};
+
+// Coloured dot next to the office/remote badge (green = office, blue = remote,
+// amber = hybrid).
+const WORK_MODE_COLOR: Record<string, string> = {
+    office: "#16a34a",
+    remote: "#2563eb",
+    hybrid: "#d97706",
 };
 
 interface OverflowItem {
@@ -41,6 +49,7 @@ interface ChatHeaderProps {
     activeConv: any;
     onlineUsers: any;
     userStatusMap?: Record<string, string>;
+    userWorkModeMap?: Record<string, string | null>;
     onBack: () => void;
     onGroupEdit: () => void;
     onToggleSearch: () => void;
@@ -60,6 +69,7 @@ export default function ChatHeader({
     activeConv,
     onlineUsers,
     userStatusMap = {},
+    userWorkModeMap = {},
     onBack,
     onGroupEdit,
     onToggleSearch,
@@ -108,6 +118,12 @@ export default function ChatHeader({
 
     const otherStatus =
         !activeConv.is_group && activeConv.other_user_id ? userStatusMap[activeConv.other_user_id] : undefined;
+    // Whether the peer is currently logged in from the office or remotely
+    // (direct chats only — a group has no single "other" user).
+    const otherWorkMode =
+        !activeConv.is_group && activeConv.other_user_id
+            ? userWorkModeMap[activeConv.other_user_id]
+            : undefined;
     const online = isUserOnline(activeConv, onlineUsers);
 
     return (
@@ -137,15 +153,26 @@ export default function ChatHeader({
                     {getConvName(activeConv)}
                 </div>
                 <div className={s.chatHeaderMeta}>
-                    {activeConv.is_group
-                        ? `${activeConv.member_count || ""} members`
-                        : otherStatus && otherStatus !== "available"
-                          ? STATUS_LABEL[otherStatus] || otherStatus
-                          : online
-                            ? "Online"
-                            : activeConv.other_username
-                              ? `@${activeConv.other_username}`
-                              : ""}
+                    <span>
+                        {activeConv.is_group
+                            ? `${activeConv.member_count || ""} members`
+                            : otherStatus && otherStatus !== "available"
+                              ? STATUS_LABEL[otherStatus] || otherStatus
+                              : online
+                                ? "Online"
+                                : activeConv.other_username
+                                  ? `@${activeConv.other_username}`
+                                  : ""}
+                    </span>
+                    {otherWorkMode && WORK_MODE_LABEL[otherWorkMode] ? (
+                        <span className={s.workModeBadge} title={WORK_MODE_LABEL[otherWorkMode]}>
+                            <span
+                                className={s.workModeDot}
+                                style={{ background: WORK_MODE_COLOR[otherWorkMode] || "#16a34a" }}
+                            />
+                            {WORK_MODE_LABEL[otherWorkMode]}
+                        </span>
+                    ) : null}
                 </div>
             </div>
             <div className={s.headerActions}>
