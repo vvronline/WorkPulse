@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import { useRef } from "react";
 import {
   useWindowDimensions,
   Modal,
@@ -165,6 +166,7 @@ export default function CallScreenOverlay({
   // video row can show up to six 58px circles, so shrink them a touch when the
   // screen is small.
   const { width: screenWidth } = useWindowDimensions();
+  const chatScrollRef = useRef<ScrollView>(null);
   const compactControls = screenWidth < 380;
   const ctrlDim = compactControls ? 50 : 58;
   const ctrlIcon = compactControls ? 22 : 24;
@@ -538,7 +540,13 @@ export default function CallScreenOverlay({
               <Text style={styles.chatClose}>Close</Text>
             </Pressable>
           </View>
-          <ScrollView style={styles.chatBody}>
+          <ScrollView
+            ref={chatScrollRef}
+            style={styles.chatBody}
+            onContentSizeChange={() =>
+              chatScrollRef.current?.scrollToEnd({ animated: false })
+            }
+          >
             {callMessages.map((m) => {
               const mine = Number(m.senderId) !== Number(peerId);
               return (

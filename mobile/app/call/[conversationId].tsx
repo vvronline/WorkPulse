@@ -46,6 +46,7 @@ import {
   rejectCallHttp,
   endCallHttp,
   searchChatUsers,
+  getMessages,
 } from "../../src/features";
 import { SERVER_ORIGIN } from "../../src/config";
 import { getNotificationPreviewDataUri } from "../../src/utils/notificationSoundPreview";
@@ -218,6 +219,49 @@ export default function CallScreen() {
       createdAt?: string;
     }>
   >([]);
+  // Seed the in-call chat panel with the conversation's existing history so
+  // opening chat mid-call shows prior messages — web parity: the web
+  // CallOverlay is handed the live conversation `messages`, whereas here the
+  // panel previously only held messages that arrived DURING the call (via the
+  // `chat_message` realtime handler below). Live messages keep flowing through
+  // that handler; we dedupe by id and prepend history (the REST endpoint
+  // returns oldest→newest, same order the chat thread uses).
+  const chatHistoryLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!conversationId || Number.isNaN(conversationId)) return;
+    if (chatHistoryLoadedRef.current) return;
+    chatHistoryLoadedRef.current = true;
+    let cancelled = false;
+    getMessages(conversationId)
+      .then(({ data }) => {
+        if (cancelled || !Array.isArray(data)) return;
+        const seeded = data
+          .filter((m) => m.format_type !== "system" && !m.deleted_at)
+          .map((m) => ({
+            id: m.id,
+            senderId: m.sender_id,
+            senderName: m.sender_name,
+            content: m.content,
+            createdAt: m.created_at,
+          }));
+        if (seeded.length === 0) return;
+        setCallMessages((prev) => {
+          const seen = new Set(prev.map((m) => String(m.id)));
+          return [...seeded.filter((m) => !seen.has(String(m.id))), ...prev];
+        });
+      })
+      .catch((err) => {
+        // Allow a later retry (e.g. reconnect) if the initial hydrate failed.
+        chatHistoryLoadedRef.current = false;
+        console.warn(
+          "[call] chat history load failed:",
+          err?.message || err,
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId]);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   const [floatingReactions, setFloatingReactions] = useState<
     Array<{ id: number; emoji: string; fromSelf: boolean }>
