@@ -47,7 +47,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     package: "app.workpulse.mobile",
     googleServicesFile: ANDROID_GOOGLE_SERVICES_FILE,
     adaptiveIcon: {
-      backgroundColor: "#E6F4FE",
+      backgroundColor: "#4e5257",
       foregroundImage: "./assets/android-icon-foreground.png",
       backgroundImage: "./assets/android-icon-background.png",
       monochromeImage: "./assets/android-icon-monochrome.png",
@@ -104,8 +104,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // Signal-style launch splash: the brand mark centered (small) on a solid
     // brand-navy background, matching Signal-Android's Android-12 SplashScreen
     // (windowSplashScreenBackground = brand color, windowSplashScreenAnimatedIcon
-    // = centered logo). backgroundColor #0a0e1c == ADAPTIVE_BG in
-    // scripts/generate-icons.cjs so the splash, adaptive-icon bg and brand all match.
+    // = centered logo). The splash keeps the brand-navy #0a0e1c; the adaptive
+    // launcher-icon background is a separate colour (ADAPTIVE_BG in
+    // scripts/generate-icons.cjs).
     [
       "expo-splash-screen",
       {

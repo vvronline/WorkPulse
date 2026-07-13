@@ -35,7 +35,7 @@ const SOURCE_PATH = path.join(REPO_ROOT, "desktop", "icons", "icon-source.png");
 const ASSETS_DIR = path.join(__dirname, "..", "assets");
 
 // Background colour for the Android adaptive icon (matches app.config.ts).
-const ADAPTIVE_BG = "#0a0e1c";
+const ADAPTIVE_BG = "#4e5257";
 
 async function generate() {
   if (!fs.existsSync(SOURCE_PATH)) {
