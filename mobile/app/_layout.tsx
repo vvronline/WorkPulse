@@ -1,5 +1,5 @@
 import "react-native-gesture-handler";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   InteractionManager,
   Platform,
@@ -284,11 +284,45 @@ export default function RootLayout() {
   // system font).
   const [fontsLoaded, fontError] = useFonts(interFontMap);
 
+  // COLD-START PERF (Signal-Android `AppStartup.addPostRender` parity): the
+  // app-wide realtime listeners/banners are NOT needed to paint the first
+  // frame — killed-state call/chat routing is decided directly in
+  // app/index.tsx, and the socket they subscribe to isn't even connected at
+  // t=0. Mounting all twelve synchronously added their module-eval + mount
+  // cost to the critical path before the splash could hide. We defer them
+  // until AFTER the first frame: `deferredReady` flips once the root route is
+  // decided (onAppReady) AND the current interactions/animations settle
+  // (InteractionManager), which is ~1 frame after first paint.
+  const [deferredReady, setDeferredReady] = useState(false);
+
   // Apply the default font immediately when embedded (Android), otherwise as
   // soon as the runtime loader finishes.
   useEffect(() => {
     if (FONTS_EMBEDDED || fontsLoaded) applyDefaultFont();
   }, [fontsLoaded]);
+
+  // Flip `deferredReady` once the app has signalled readiness (root route
+  // decided — see app/index.tsx) and the first-frame interactions have
+  // settled. This mounts the non-critical realtime subtree off the cold-start
+  // critical path without ever holding it back more than a frame.
+  useEffect(() => {
+    let task: ReturnType<typeof InteractionManager.runAfterInteractions> | null =
+      null;
+    const unsubscribe = onAppReady(() => {
+      task = InteractionManager.runAfterInteractions(() =>
+        setDeferredReady(true),
+      );
+    });
+    // Hard safety cap (mirrors SPLASH_MAX_MS): if the ready signal is ever lost
+    // the listeners must still mount, or the app would silently lose incoming
+    // calls / push handling / outbox delivery. Guarantees they come up.
+    const capTimer = setTimeout(() => setDeferredReady(true), SPLASH_MAX_MS);
+    return () => {
+      unsubscribe();
+      task?.cancel();
+      clearTimeout(capTimer);
+    };
+  }, []);
 
   // Hide the NATIVE splash the moment the app signals readiness (root route
   // decided — see app/index.tsx). A hard timeout guarantees the splash can
@@ -389,18 +423,29 @@ export default function RootLayout() {
           <ThemeProvider>
             <SafeAreaProvider>
               <ThemedStatusBar />
-              <PushNotificationInitializer />
-              <IncomingCallListener />
-              <MeetingStartedListener />
-              <RealtimeSoundListener />
-              <PushNotificationListener />
-              <PendingCallNavigator />
-              <PendingChatNavigator />
-              <ChatCacheSync />
-              <ChatOutboxSync />
-              <OngoingCallBanner />
-              <ImpersonationBanner />
-              <UpdateChecker />
+              {/* COLD-START PERF: these listeners/banners mount one frame
+                  AFTER the first paint (deferredReady) so their eval/mount
+                  cost stays off the critical path. Order preserved so overlay
+                  z-index is unchanged. All are safe to defer: they gate work
+                  behind socket events (socket not connected at t=0) or render
+                  null until an active call/impersonation exists, and cold-start
+                  call/chat routing is handled directly in app/index.tsx. */}
+              {deferredReady && (
+                <>
+                  <PushNotificationInitializer />
+                  <IncomingCallListener />
+                  <MeetingStartedListener />
+                  <RealtimeSoundListener />
+                  <PushNotificationListener />
+                  <PendingCallNavigator />
+                  <PendingChatNavigator />
+                  <ChatCacheSync />
+                  <ChatOutboxSync />
+                  <OngoingCallBanner />
+                  <ImpersonationBanner />
+                  <UpdateChecker />
+                </>
+              )}
               <ThemedStack />
               <ThemedAlertHost />
             </SafeAreaProvider>
