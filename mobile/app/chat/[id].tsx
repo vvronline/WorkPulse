@@ -11,10 +11,12 @@ import { Modal } from "react-native";
 import { Stack } from "expo-router";
 import {
   ArrowLeft,
+  Building2,
   ChevronDown,
   ChevronUp,
   Copy,
   Forward,
+  House,
   MoreVertical,
   Phone,
   Pin,
@@ -66,6 +68,19 @@ const WORK_MODE_COLOR: Record<string, string> = {
   office: "#16a34a",
   remote: "#2563eb",
   hybrid: "#d97706",
+};
+
+// Status-dot colour for the left (presence) zone of the unified pill. Mirrors
+// the web ChatHeader STATUS_DOT_COLOR.
+const STATUS_DOT_COLOR: Record<string, string> = {
+  available: "#22c55e",
+  busy: "#ef4444",
+  dnd: "#ef4444",
+  brb: "#f59e0b",
+  away: "#f59e0b",
+  offline: "#94a3b8",
+  in_call: "#ef4444",
+  in_meeting: "#f59e0b",
 };
 
 /**
@@ -254,38 +269,85 @@ export default function ChatThread() {
                         <Text style={styles.headerTitleText} numberOfLines={1}>
                           {c.name || "Chat"}
                         </Text>
-                        <View style={styles.headerSubtitleRow}>
-                          {c.headerSubtitle ? (
-                            <Text
-                              style={styles.headerSubtitle}
-                              numberOfLines={1}
-                            >
-                              {c.headerSubtitle}
-                            </Text>
-                          ) : null}
-                          {!c.isGroupConv &&
-                          c.peerWorkMode &&
-                          WORK_MODE_LABEL[c.peerWorkMode] ? (
-                            <View style={styles.workModeBadge}>
-                              <View
-                                style={[
-                                  styles.workModeDot,
-                                  {
-                                    backgroundColor:
-                                      WORK_MODE_COLOR[c.peerWorkMode] ||
-                                      "#16a34a",
-                                  },
-                                ]}
-                              />
-                              <Text
-                                style={styles.workModeText}
-                                numberOfLines={1}
-                              >
-                                {WORK_MODE_LABEL[c.peerWorkMode]}
-                              </Text>
+                        {(() => {
+                          // Unified presence pill: left zone = live status,
+                          // right zone = work mode, separated by a thin
+                          // divider (mirrors the web ChatHeader).
+                          const hasWorkMode = Boolean(
+                            !c.isGroupConv &&
+                              c.peerWorkMode &&
+                              WORK_MODE_LABEL[c.peerWorkMode],
+                          );
+                          const statusText = c.headerSubtitle;
+                          const dotColor = c.isGroupConv
+                            ? null
+                            : c.peerStatus
+                              ? STATUS_DOT_COLOR[c.peerStatus] ||
+                                STATUS_DOT_COLOR.available
+                              : null;
+                          if (!statusText && !hasWorkMode) return null;
+                          return (
+                            <View style={styles.presencePill}>
+                              {statusText ? (
+                                <View style={styles.presenceStatus}>
+                                  {dotColor ? (
+                                    <View
+                                      style={[
+                                        styles.statusDot,
+                                        { backgroundColor: dotColor },
+                                      ]}
+                                    />
+                                  ) : null}
+                                  <Text
+                                    style={styles.presenceStatusText}
+                                    numberOfLines={1}
+                                  >
+                                    {statusText}
+                                  </Text>
+                                </View>
+                              ) : null}
+                              {statusText && hasWorkMode ? (
+                                <View style={styles.presenceDivider} />
+                              ) : null}
+                              {hasWorkMode ? (
+                                <View style={styles.presenceWorkMode}>
+                                  {c.peerWorkMode === "remote" ? (
+                                    <House
+                                      size={11}
+                                      color={
+                                        WORK_MODE_COLOR[c.peerWorkMode] ||
+                                        "#16a34a"
+                                      }
+                                    />
+                                  ) : (
+                                    <Building2
+                                      size={11}
+                                      color={
+                                        WORK_MODE_COLOR[
+                                          c.peerWorkMode as string
+                                        ] || "#16a34a"
+                                      }
+                                    />
+                                  )}
+                                  <Text
+                                    style={[
+                                      styles.presenceWorkModeText,
+                                      {
+                                        color:
+                                          WORK_MODE_COLOR[
+                                            c.peerWorkMode as string
+                                          ] || "#16a34a",
+                                      },
+                                    ]}
+                                    numberOfLines={1}
+                                  >
+                                    {WORK_MODE_LABEL[c.peerWorkMode as string]}
+                                  </Text>
+                                </View>
+                              ) : null}
                             </View>
-                          ) : null}
-                        </View>
+                          );
+                        })()}
                       </View>
                     </Pressable>
                   ),
@@ -923,39 +985,53 @@ const makeStyles = (theme: Theme) =>
       color: theme.text,
       maxWidth: 180,
     },
-    headerSubtitle: {
-      fontSize: 11,
-      color: theme.textSecondary,
-      maxWidth: 180,
-      fontFamily: theme.fontRegular,
-    },
-    // Office/remote header badge (whether the peer is currently logged in from
-    // the office or working remotely, from today's attendance clock-in).
-    headerSubtitleRow: {
+    // ─── Unified presence pill ───
+    // A single cohesive pill combining the peer's live status (left zone) and
+    // work mode (right zone), separated by a thin divider. Replaces the old
+    // decoupled headerSubtitle text + separate work-mode badge.
+    presencePill: {
       flexDirection: "row",
       alignItems: "center",
-      gap: 6,
-      maxWidth: 220,
-    },
-    workModeBadge: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 4,
-      paddingVertical: 1,
-      paddingHorizontal: 6,
+      alignSelf: "flex-start",
+      marginTop: 3,
+      height: 20,
+      paddingHorizontal: 8,
       borderRadius: 999,
       backgroundColor: theme.surface,
       borderWidth: 1,
       borderColor: theme.border,
+      maxWidth: 220,
     },
-    workModeDot: {
-      width: 6,
-      height: 6,
-      borderRadius: 3,
+    presenceStatus: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      flexShrink: 1,
     },
-    workModeText: {
+    statusDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 3.5,
+    },
+    presenceStatusText: {
       fontSize: 10,
-      color: theme.textSecondary,
+      color: theme.text,
+      fontFamily: theme.fontMedium,
+      flexShrink: 1,
+    },
+    presenceDivider: {
+      width: 1,
+      height: 12,
+      marginHorizontal: 8,
+      backgroundColor: theme.border,
+    },
+    presenceWorkMode: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+    },
+    presenceWorkModeText: {
+      fontSize: 10,
       fontFamily: theme.fontMedium,
     },
     // Wraps the FlatList so the floating scroll-to-bottom pill can be absolutely

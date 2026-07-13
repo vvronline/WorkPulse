@@ -13,6 +13,8 @@ import {
     Trash2,
     Ban,
     Info,
+    Building2,
+    House,
 } from "lucide-react";
 import { ChatAvatar } from "../../components/chat";
 import { useClickOutside } from "../../hooks/useClickOutside";
@@ -35,6 +37,17 @@ const WORK_MODE_COLOR: Record<string, string> = {
     office: "#16a34a",
     remote: "#2563eb",
     hybrid: "#d97706",
+};
+
+// Status-dot colour for the left (presence) zone of the unified pill.
+const STATUS_DOT_COLOR: Record<string, string> = {
+    available: "#22c55e",
+    busy: "#ef4444",
+    dnd: "#ef4444",
+    away: "#f59e0b",
+    offline: "#94a3b8",
+    in_call: "#ef4444",
+    in_meeting: "#f59e0b",
 };
 
 interface OverflowItem {
@@ -130,6 +143,27 @@ export default function ChatHeader({
             : undefined;
     const online = isUserOnline(activeConv, onlineUsers);
 
+    // Unified presence pill data: left zone = live status, right zone = work
+    // mode. The two were previously decoupled (plain text + a separate badge);
+    // they're now a single cohesive pill.
+    const statusText = activeConv.is_group
+        ? `${activeConv.member_count || ""} members`
+        : otherStatus && otherStatus !== "available"
+          ? STATUS_LABEL[otherStatus] || otherStatus
+          : online
+            ? "Online"
+            : activeConv.other_username
+              ? `@${activeConv.other_username}`
+              : "";
+    const statusDotColor = activeConv.is_group
+        ? null
+        : online
+          ? STATUS_DOT_COLOR[otherStatus || "available"] || STATUS_DOT_COLOR.available
+          : STATUS_DOT_COLOR.offline;
+    const hasWorkMode = Boolean(
+        !activeConv.is_group && otherWorkMode && WORK_MODE_LABEL[otherWorkMode as string]
+    );
+
     return (
         <div className={s.chatHeader}>
             <button className={s.backBtn} onClick={onBack} aria-label="Back">
@@ -157,24 +191,38 @@ export default function ChatHeader({
                     {getConvName(activeConv)}
                 </div>
                 <div className={s.chatHeaderMeta}>
-                    <span>
-                        {activeConv.is_group
-                            ? `${activeConv.member_count || ""} members`
-                            : otherStatus && otherStatus !== "available"
-                              ? STATUS_LABEL[otherStatus] || otherStatus
-                              : online
-                                ? "Online"
-                                : activeConv.other_username
-                                  ? `@${activeConv.other_username}`
-                                  : ""}
-                    </span>
-                    {otherWorkMode && WORK_MODE_LABEL[otherWorkMode] ? (
-                        <span className={s.workModeBadge} title={WORK_MODE_LABEL[otherWorkMode]}>
-                            <span
-                                className={s.workModeDot}
-                                style={{ background: WORK_MODE_COLOR[otherWorkMode] || "#16a34a" }}
-                            />
-                            {WORK_MODE_LABEL[otherWorkMode]}
+                    {statusText || hasWorkMode ? (
+                        <span className={s.presencePill}>
+                            {statusText ? (
+                                <span className={s.presenceStatus}>
+                                    {statusDotColor ? (
+                                        <span
+                                            className={s.statusDot}
+                                            style={{ background: statusDotColor }}
+                                        />
+                                    ) : null}
+                                    {statusText}
+                                </span>
+                            ) : null}
+                            {statusText && hasWorkMode ? (
+                                <span className={s.presenceDivider} />
+                            ) : null}
+                            {hasWorkMode ? (
+                                <span
+                                    className={s.presenceWorkMode}
+                                    style={{
+                                        color: WORK_MODE_COLOR[otherWorkMode as string] || "#16a34a",
+                                    }}
+                                    title={WORK_MODE_LABEL[otherWorkMode as string]}
+                                >
+                                    {otherWorkMode === "remote" ? (
+                                        <House size={12} />
+                                    ) : (
+                                        <Building2 size={12} />
+                                    )}
+                                    {WORK_MODE_LABEL[otherWorkMode as string]}
+                                </span>
+                            ) : null}
                         </span>
                     ) : null}
                 </div>

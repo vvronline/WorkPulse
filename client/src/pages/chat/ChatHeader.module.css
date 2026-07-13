@@ -35,30 +35,62 @@
 .chatHeaderMeta {
     font-size: 0.75rem;
     color: var(--text-muted);
-    margin-top: 2px;
+    margin-top: 3px;
     display: inline-flex;
     align-items: center;
     gap: 6px;
 }
-/* Office/remote badge — whether the peer is currently logged in from the
-   office or working remotely (from today's attendance clock-in). */
-.workModeBadge {
+/* ─── Unified presence pill ───
+   A single cohesive pill combining the peer's live status (left zone) and
+   their work mode (right zone), separated by a thin divider. Replaces the old
+   decoupled status text + separate work-mode badge. */
+.presencePill {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 1px 8px 1px 6px;
+    height: 22px;
+    padding: 0 9px;
     border-radius: 999px;
     background: var(--surface-hover);
+    border: 1px solid var(--glass-border);
+    line-height: 1;
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+}
+.presenceStatus {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     color: var(--text);
     font-size: 0.6875rem;
     font-weight: 600;
-    line-height: 1.4;
-    white-space: nowrap;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-.workModeDot {
-    width: 6px;
-    height: 6px;
+.statusDot {
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 2px var(--bg-secondary);
+}
+.presenceDivider {
+    width: 1px;
+    align-self: stretch;
+    margin: 4px 9px;
+    background: var(--glass-border);
+    flex-shrink: 0;
+}
+.presenceWorkMode {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+.presenceWorkMode svg {
     flex-shrink: 0;
 }
 .headerActions {
