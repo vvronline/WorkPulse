@@ -78,7 +78,7 @@ import {
   getLocalDeletedIds,
   addLocalDeletedIds,
   setClearedAt,
-  isBeforeClearedAt,
+  getClearedAt,
 } from "../../storage/chatLocalDeletes";
 import {
   enqueueOutboxMessage,
@@ -3191,20 +3191,35 @@ export function useChatThread() {
   // logic; the list renders this reversed view so index 0 is the newest message
   // pinned to the visual bottom — the keyboard or a new message can never push
   // it under the composer, and no scroll math is needed to "stick to bottom".
-  const messagesReversed = useMemo(
-    () =>
-      [...messages]
-        .reverse()
-        .filter(
-          (m) =>
-            // "Delete for me" — hidden message ids on this device.
-            !locallyDeleted.has(Number(m.id)) &&
-            // "Clear chat for me" — everything up to the local cutoff is hidden
-            // on this device while newer messages still show (Signal model).
-            !isBeforeClearedAt(convId, m.created_at),
-        ),
-    [messages, locallyDeleted, convId],
-  );
+  const messagesReversed = useMemo(() => {
+    // PERF: resolve the "clear chat" cutoff ONCE per recompute instead of
+    // calling isBeforeClearedAt() per message. isBeforeClearedAt() does a
+    // synchronous MMKV read + a Date parse of the cutoff EVERY call, so on a
+    // long thread (hundreds of messages after paging) the old per-message call
+    // fired hundreds of native storage reads on the JS thread on every
+    // recompute — the visible freeze when opening a conversation with lots of
+    // history. We read the cutoff string once, parse it once, then compare each
+    // message's timestamp inline. Reactivity is unchanged: this memo already
+    // only recomputes when [messages, locallyDeleted, convId] change (the exact
+    // same inputs the per-message call depended on).
+    const cutoffIso = getClearedAt(convId);
+    const cutoffMs = cutoffIso ? new Date(cutoffIso).getTime() : NaN;
+    const hasCutoff = !Number.isNaN(cutoffMs);
+    const out: ChatMessage[] = [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      // "Delete for me" — hidden message ids on this device.
+      if (locallyDeleted.has(Number(m.id))) continue;
+      // "Clear chat for me" — everything up to the local cutoff is hidden on
+      // this device while newer messages still show (Signal model).
+      if (hasCutoff && m.created_at) {
+        const c = new Date(m.created_at).getTime();
+        if (!Number.isNaN(c) && c <= cutoffMs) continue;
+      }
+      out.push(m);
+    }
+    return out;
+  }, [messages, locallyDeleted, convId]);
 
   const latestPin = pinnedMsgs[0];
 

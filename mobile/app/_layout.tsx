@@ -119,13 +119,18 @@ function ThemedStack() {
         options={{
           ...headerScreen,
           // Signal-style smooth open: iOS-style push everywhere with a short,
-          // tuned duration + full-screen swipe-back. `freezeOnBlur` stops the
-          // (heavy) chat list re-rendering underneath while the thread is on
-          // top, which is what used to make the slide-in stutter.
+          // tuned duration + full-screen swipe-back.
           animation: "slide_from_right",
           animationDuration: 220,
           fullScreenGestureEnabled: true,
-          freezeOnBlur: true,
+          // Explicit opaque background on the thread surface so the swipe-back
+          // gesture always drags a fully-painted screen. (Previously
+          // `freezeOnBlur: true` was set here under the mistaken belief it
+          // stopped the chat LIST re-rendering underneath — but it actually
+          // froze the THREAD itself the instant the back gesture started,
+          // blanking its FlatList mid-slide and exposing the gray "empty
+          // frozen screen" the user saw while exiting to the chat list.)
+          contentStyle: { backgroundColor: theme.bg },
         }}
       />
       <Stack.Screen
