@@ -10,6 +10,7 @@ import ChatSidebar from "./chat/ChatSidebar";
 import ChatHeader from "./chat/ChatHeader";
 import ChatMessages from "./chat/ChatMessages";
 import ChatInputBar from "./chat/ChatInputBar";
+import ConversationInfoPanel from "./chat/ConversationInfoPanel";
 import useChatState from "./chat/useChatState";
 import useChatActions from "./chat/useChatActions";
 import { useStatus } from "../status/useStatus";
@@ -36,6 +37,7 @@ export default function Chat() {
         recording, setRecording, dragOver, setDragOver, readReceipts,
         showEmojiPicker, setShowEmojiPicker,
         showSharedFiles, setShowSharedFiles, showStarred, setShowStarred,
+        showInfo, setShowInfo,
         showPollCreator, setShowPollCreator, convMembers,
         deleteConfirm, setDeleteConfirm, convMenu, setConvMenu,
         callState, wsSend, callReactionRef,
@@ -200,6 +202,7 @@ export default function Chat() {
                             onVideoCall={handleVideoCall}
                             onClearChat={(convId: any) => setClearConfirm(convId)}
                             onToggleBlock={handleToggleBlock}
+                            onOpenInfo={() => setShowInfo(true)}
                         />
 
                         <ChatMessages
@@ -292,6 +295,25 @@ export default function Chat() {
                             onClearEdit={() => { setEditingMsg(null); setInput(""); }}
                             onTyping={handleTyping}
                         />
+                        )}
+
+                        {showInfo && (
+                            <ConversationInfoPanel
+                                activeConv={activeConvFull || activeConv}
+                                onlineUsers={onlineUsers}
+                                userStatusMap={userStatusMap}
+                                userWorkModeMap={userWorkModeMap}
+                                onClose={() => setShowInfo(false)}
+                                onSearch={() => setShowSearch(true)}
+                                onPinned={() => setShowPinned(true)}
+                                onSharedFiles={() => setShowSharedFiles(true)}
+                                onStarred={() => setShowStarred(true)}
+                                onGroupEdit={openGroupEdit}
+                                onVoiceCall={handleVoiceCall}
+                                onVideoCall={handleVideoCall}
+                                onClearChat={(convId: any) => setClearConfirm(convId)}
+                                onToggleBlock={handleToggleBlock}
+                            />
                         )}
                     </>
                 )}

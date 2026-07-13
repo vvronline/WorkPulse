@@ -12,6 +12,7 @@ import {
     Search,
     Trash2,
     Ban,
+    Info,
 } from "lucide-react";
 import { ChatAvatar } from "../../components/chat";
 import { useClickOutside } from "../../hooks/useClickOutside";
@@ -63,6 +64,7 @@ interface ChatHeaderProps {
     onVideoCall: () => void;
     onClearChat?: (id: number | string) => void;
     onToggleBlock?: (conv: any) => void;
+    onOpenInfo?: () => void;
 }
 
 export default function ChatHeader({
@@ -83,6 +85,7 @@ export default function ChatHeader({
     onVideoCall,
     onClearChat,
     onToggleBlock,
+    onOpenInfo,
 }: ChatHeaderProps) {
     const [moreOpen, setMoreOpen] = useState(false);
     const moreRef = useRef<HTMLDivElement | null>(null);
@@ -96,6 +99,7 @@ export default function ChatHeader({
     const overflowItems: OverflowItem[] = [
         // Search lives ONLY here (all screen sizes) — the duplicate inline
         // header search icon was removed to keep a single entry point.
+        ...(onOpenInfo ? [{ label: "Conversation info", icon: Info, action: onOpenInfo }] : []),
         { label: "Search messages", icon: Search, action: onToggleSearch },
         { label: "Pinned messages", icon: Pin, action: onTogglePinned },
         { label: "Shared files", icon: FolderOpen, action: onToggleSharedFiles },
@@ -140,8 +144,8 @@ export default function ChatHeader({
             />
             <div
                 className={s.chatHeaderInfo}
-                onClick={activeConv.is_group ? onGroupEdit : undefined}
-                style={activeConv.is_group ? { cursor: "pointer" } : undefined}
+                onClick={onOpenInfo}
+                style={onOpenInfo ? { cursor: "pointer" } : undefined}
             >
                 <div className={s.chatHeaderName}>
                     {activeConv.is_group && (

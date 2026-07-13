@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { File, X, Search, Image, FileText, Film, Music } from "lucide-react";
 import s from "./SharedFilesPanel.module.css";
 import { getSharedFiles } from "../../api";
+import { isBeforeClearedAt } from "../../pages/chat/chatLocalDeletes";
 import FilePreview from "./FilePreview";
 
 interface SharedFile {
@@ -71,7 +72,16 @@ export default function SharedFilesPanel({ convId, onClose }: SharedFilesPanelPr
         if (!convId) return;
         setLoading(true);
         getSharedFiles(convId)
-            .then(({ data }) => setFiles(data as SharedFile[]))
+            .then(({ data }) =>
+                // Signal-parity: hide files sent before this device's local
+                // "clear chat" cutoff (device-only; the source rows still exist
+                // on the server and for the other participant).
+                setFiles(
+                    (data as SharedFile[]).filter(
+                        (f) => !isBeforeClearedAt(convId, f.created_at),
+                    ),
+                ),
+            )
             .catch(() => setFiles([]))
             .finally(() => setLoading(false));
     }, [convId]);

@@ -10,6 +10,7 @@ import {
 import SystemMessage from "../../components/chat/SystemMessage";
 import MeetingCard from "../../components/chat/MeetingCard";
 import { buildTimelineRows } from "./timelineRows";
+import { isBeforeClearedAt } from "./chatLocalDeletes";
 import s from "./ChatMessages.module.css";
 
 interface ChatMessagesProps {
@@ -83,24 +84,36 @@ export default function ChatMessages({
   onCloseStarred,
   onJumpToStarred,
 }: ChatMessagesProps) {
+  // Signal-style local "clear chat": hide every message created at/before the
+  // per-conversation cutoff stored on THIS device. The raw `messages` array is
+  // kept intact (used for pagination/reconciliation) — we only filter what is
+  // rendered, so newer messages that arrive after the clear still appear.
+  const visibleMessages = useMemo(
+    () =>
+      messages.filter(
+        (m) => !isBeforeClearedAt(activeConv?.id, m.created_at),
+      ),
+    [messages, activeConv?.id],
+  );
+
   // Pinned messages currently loaded in the thread, newest pin first. Drives
   // the banner shown at the very top of the chat window so pinned messages
   // are actually surfaced "at the top of the chat" (not only in the side panel).
   const pinnedInView = useMemo(
     () =>
-      messages
+      visibleMessages
         .filter((m) => m.pinned_at && !m.deleted_at)
         .sort(
           (a, b) =>
             new Date(b.pinned_at).getTime() - new Date(a.pinned_at).getTime(),
         ),
-    [messages],
+    [visibleMessages],
   );
   const latestPin = pinnedInView[0];
   // buildTimelineRows walks the full message array (grouping + date dividers);
   // memoize it so it only recomputes when the messages actually change, not on
   // every typing/scroll-button state update.
-  const rows = useMemo(() => buildTimelineRows(messages), [messages]);
+  const rows = useMemo(() => buildTimelineRows(visibleMessages), [visibleMessages]);
 
   // Signal-style "scroll to bottom" affordance. Tracks how far the user has
   // scrolled up from the bottom of the messages container; once they're more
@@ -185,7 +198,7 @@ export default function ChatMessages({
             ))}
           </div>
         )}
-        {!loadingMsgs && messages.length === 0 && (
+        {!loadingMsgs && visibleMessages.length === 0 && (
           <div
             className={s.hint}
             style={{ padding: "2rem", textAlign: "center" }}

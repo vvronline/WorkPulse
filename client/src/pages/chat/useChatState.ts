@@ -92,6 +92,9 @@ export default function useChatState() {
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [showSharedFiles, setShowSharedFiles] = useState(false);
     const [showStarred, setShowStarred] = useState(false);
+    // Conversation info drawer (mirrors the mobile /chat/info screen). Opened
+    // by clicking the chat header profile.
+    const [showInfo, setShowInfo] = useState(false);
     const [showPollCreator, setShowPollCreator] = useState(false);
     const [convMembers, setConvMembers] = useState<AnyRecord[]>([]);
     const [deleteConfirm, setDeleteConfirm] = useState<AnyRecord | null>(null);
@@ -830,6 +833,7 @@ export default function useChatState() {
         setShowPinned(false);
         setShowSearch(false);
         setShowSharedFiles(false);
+        setShowInfo(false);
         try {
             const { data } = await getMessages(convId);
             setMessages(data as ChatMessage[]);
@@ -972,6 +976,7 @@ export default function useChatState() {
         loadingMsgs,
         loadingConvs,
         hasMore,
+        setHasMore,
         typingUsers,
         mobileView,
         setMobileView,
@@ -1003,6 +1008,8 @@ export default function useChatState() {
         setShowSharedFiles,
         showStarred,
         setShowStarred,
+        showInfo,
+        setShowInfo,
         showPollCreator,
         setShowPollCreator,
         convMembers,
