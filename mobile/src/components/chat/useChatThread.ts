@@ -260,6 +260,89 @@ function mergeOutboxIntoMessages(
 }
 
 /**
+ * Signal-Android-style lightweight diffing helpers.
+ *
+ * Signal's conversation adapter updates/invalidates specific paged rows instead
+ * of replacing and rebinding the whole thread. In React Native we approximate
+ * that by merging the refreshed newest page into already-loaded older history
+ * and skipping setMessages entirely when the refreshed page is equivalent.
+ */
+function reactionsSigForDiff(m: ChatMessage): string {
+  const rs = m.reactions || [];
+  if (rs.length === 0) return "";
+  let s = "";
+  for (const r of rs) s += `${r.userId}:${r.emoji},`;
+  return s;
+}
+
+function messagesEquivalentForThread(a: ChatMessage, b: ChatMessage): boolean {
+  return (
+    a.id === b.id &&
+    a.clientMsgId === b.clientMsgId &&
+    a.content === b.content &&
+    a.created_at === b.created_at &&
+    a.edited_at === b.edited_at &&
+    a.deleted_at === b.deleted_at &&
+    a.pinned_at === b.pinned_at &&
+    a.file_url === b.file_url &&
+    a.file_type === b.file_type &&
+    a.file_name === b.file_name &&
+    a.file_size === b.file_size &&
+    a.media_state === b.media_state &&
+    a.media_stage === b.media_stage &&
+    a.media_progress === b.media_progress &&
+    a._pending === b._pending &&
+    a._failed === b._failed &&
+    a._mediaState === b._mediaState &&
+    a._mediaProgress === b._mediaProgress &&
+    reactionsSigForDiff(a) === reactionsSigForDiff(b)
+  );
+}
+
+function messageArraysEquivalentForThread(
+  a: ChatMessage[],
+  b: ChatMessage[],
+): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (!messagesEquivalentForThread(a[i], b[i])) return false;
+  }
+  return true;
+}
+
+function mergeNewestPageIntoLoadedThread(
+  current: ChatMessage[],
+  newestPage: ChatMessage[],
+): ChatMessage[] {
+  if (current.length === 0 || newestPage.length === 0) return newestPage;
+  if (current.length <= newestPage.length) return newestPage;
+
+  const firstNewest = newestPage[0];
+  const firstIdx = current.findIndex((m) => {
+    if (firstNewest.clientMsgId && m.clientMsgId === firstNewest.clientMsgId) {
+      return true;
+    }
+    return m.id === firstNewest.id;
+  });
+
+  if (firstIdx <= 0) return newestPage;
+
+  const olderHistory = current.slice(0, firstIdx);
+  const seen = new Set<string>();
+  for (const m of newestPage) {
+    seen.add(m.clientMsgId ? `c:${m.clientMsgId}` : `i:${m.id}`);
+  }
+
+  const localOnlyTail = current.slice(firstIdx).filter((m) => {
+    const key = m.clientMsgId ? `c:${m.clientMsgId}` : `i:${m.id}`;
+    return (m.id < 0 || m._pending || m._failed) && !seen.has(key);
+  });
+
+  return [...olderHistory, ...newestPage, ...localOnlyTail];
+}
+
+/**
  * All state, side-effects and handlers for the chat thread screen. Extracted
  * from `app/chat/[id].tsx` so the screen is a thin presentational orchestrator
  * (mirrors the web ChatMessages container/hook split). Behavior-preserving.
@@ -696,9 +779,16 @@ export function useChatThread() {
       // Re-append any still-pending outbox messages — the server obviously
       // doesn't have them yet, and wholesale-replacing the list without them
       // would make an unsent (offline) message vanish mid-session.
-      setMessages(
-        mergeOutboxIntoMessages(normalized, convId, user?.id, user?.full_name),
+      const refreshed = mergeOutboxIntoMessages(
+        normalized,
+        convId,
+        user?.id,
+        user?.full_name,
       );
+      setMessages((prev) => {
+        const merged = mergeNewestPageIntoLoadedThread(prev, refreshed);
+        return messageArraysEquivalentForThread(prev, merged) ? prev : merged;
+      });
       // Persist the freshest page so the next open paints instantly from disk.
       setCachedMessages(convId, normalized);
       setHasMore(normalized.length >= 50);
@@ -3223,23 +3313,32 @@ export function useChatThread() {
 
   const latestPin = pinnedMsgs[0];
 
-  // FlatList re-render key. With `maintainVisibleContentPosition` enabled,
-  // RN's VirtualizedList skips re-rendering already-mounted rows unless
-  // `extraData` changes. Optimistic reaction add/remove mutates a message's
-  // `reactions` in place (same array length/order), so without this the chip
-  // only appeared after an unrelated re-render or the WS echo — making
-  // react/unreact feel laggy. Deriving a signature from reactions + starred
-  // ids forces the toggled row to re-render instantly (matches the web).
-  const listSignature = useMemo(() => {
-    let sig = "";
-    for (const m of messages) {
-      sig += `${m.id}:${(m.reactions || [])
-        .map((r) => `${r.userId}${r.emoji}`)
-        .join(",")}:${m.pinned_at ? 1 : 0}:${m.deleted_at ? 1 : 0};`;
-    }
-    sig += `|starred:${Array.from(starredIds).join(",")}`;
-    return sig;
-  }, [messages, starredIds]);
+  // FlatList extraData. Keep this Signal-style targeted and O(1): message
+  // content/reaction/pin/delete changes already arrive through immutable
+  // `messages` updates (the FlatList `data` prop). extraData is only for
+  // row-affecting state that lives outside the message object. The old
+  // implementation built a giant string by scanning every message/reaction on
+  // every recompute; opening a long chat could freeze the JS thread.
+  const listExtraData = useMemo(
+    () => ({
+      starredIds,
+      selectedIds,
+      highlightedId,
+      readReceipts,
+      participantCount,
+      selectionMode,
+      userId: user?.id,
+    }),
+    [
+      starredIds,
+      selectedIds,
+      highlightedId,
+      readReceipts,
+      participantCount,
+      selectionMode,
+      user?.id,
+    ],
+  );
 
   // Status line under the chat name (mirrors the web ChatHeader meta line):
   // member count for groups, live effective status for 1:1 chats.
@@ -3292,7 +3391,7 @@ export function useChatThread() {
     messages,
     messagesReversed,
     listRef,
-    listSignature,
+    listExtraData,
     scrollToEnd,
     onListScroll,
     prependingRef,

@@ -733,7 +733,7 @@ function ChatList({
         // scroll down to see my sent message").
         inverted
         data={c.messagesReversed}
-        extraData={c.listSignature}
+        extraData={c.listExtraData}
         // Stable row identity across the optimistic→confirmed swap. An optimistic
         // message starts with a temporary NEGATIVE id; when the server confirms it
         // over the socket the row is replaced with the positive server id. Keying
@@ -787,10 +787,10 @@ function ChatList({
         // on open). A smaller initial batch + tighter window mounts far fewer
         // rows during the transition while still keeping ~5 screens of history
         // mounted each way so fast flings don't reveal blank gaps.
-        initialNumToRender={8}
-        maxToRenderPerBatch={8}
-        windowSize={11}
-        updateCellsBatchingPeriod={30}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        windowSize={9}
+        updateCellsBatchingPeriod={50}
         // In an inverted list the FOOTER renders at the visual TOP, so the
         // "load earlier" spinner/button belongs here (not the header).
         ListFooterComponent={
@@ -948,7 +948,12 @@ function ChatList({
 
 const makeStyles = (theme: Theme) =>
   StyleSheet.create({
-    screen: { flex: 1, backgroundColor: theme.bg },
+    screen: {
+      flex: 1,
+      width: "100%",
+      backgroundColor: theme.bg,
+      overflow: "hidden",
+    },
     center: { flex: 1, alignItems: "center", justifyContent: "center" },
     headerActions: { flexDirection: "row", gap: 14, alignItems: "center" },
     headerBackButton: {
@@ -1049,8 +1054,14 @@ const makeStyles = (theme: Theme) =>
     },
     // Wraps the FlatList so the floating scroll-to-bottom pill can be absolutely
     // positioned over the visual bottom of the (inverted) list.
-    listWrap: { flex: 1, position: "relative" },
-    listFlex: { flex: 1 },
+    listWrap: {
+      flex: 1,
+      width: "100%",
+      position: "relative",
+      backgroundColor: theme.bg,
+      overflow: "hidden",
+    },
+    listFlex: { flex: 1, width: "100%", backgroundColor: theme.bg },
     // Floating "scroll to latest" pill anchored to the bottom-right, above the
     // composer.
     scrollBtnWrap: {

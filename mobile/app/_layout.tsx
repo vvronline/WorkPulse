@@ -93,6 +93,10 @@ function ThemedStack() {
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: theme.bg },
+        // Keep the native-stack container opaque during interactive gestures.
+        // Without this, Android can expose its default gray container while a
+        // full-screen chat card is being swiped back.
+        navigationBarColor: theme.bg,
       }}
     >
       <Stack.Screen name="index" />
@@ -131,6 +135,8 @@ function ThemedStack() {
           // blanking its FlatList mid-slide and exposing the gray "empty
           // frozen screen" the user saw while exiting to the chat list.)
           contentStyle: { backgroundColor: theme.bg },
+          animationMatchesGesture: true,
+          fullScreenGestureShadowEnabled: false,
         }}
       />
       <Stack.Screen
@@ -419,7 +425,7 @@ export default function RootLayout() {
   if (!FONTS_EMBEDDED && !fontsLoaded && !fontError) return null;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#000" }}>
       <PersistQueryClientProvider
         client={queryClient}
         persistOptions={{ persister: mmkvQueryPersister, maxAge: ONE_DAY }}
