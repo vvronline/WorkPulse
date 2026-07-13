@@ -6,7 +6,11 @@ import {
   type StyleProp,
 } from "react-native";
 import { getToken } from "../auth/tokenStore";
-import { ensureCachedMedia, getCachedMedia } from "./chat/mediaCache";
+import {
+  ensureCachedMedia,
+  getCachedMedia,
+  getCachedMediaSync,
+} from "./chat/mediaCache";
 
 interface AuthedImageProps extends Omit<ImageProps, "source" | "style"> {
   /** Absolute URL to a protected upload (served behind Bearer auth). */
@@ -29,8 +33,13 @@ interface AuthedImageProps extends Omit<ImageProps, "source" | "style"> {
 export function AuthedImage({ uri, style, ...rest }: AuthedImageProps) {
   const [token, setToken] = useState<string | null>(null);
   // Local cached file uri — when set, it is used directly (works offline) and
-  // needs no auth header.
-  const [localUri, setLocalUri] = useState<string | null>(null);
+  // needs no auth header. Seed SYNCHRONOUSLY from the in-memory cache so an
+  // image already resolved this session paints on the first frame instead of
+  // flashing blank while the async disk lookup re-resolves it (see mediaCache
+  // getCachedMediaSync — the chat-open smoothness fix for media threads).
+  const [localUri, setLocalUri] = useState<string | null>(() =>
+    getCachedMediaSync(uri),
+  );
 
   useEffect(() => {
     let active = true;
@@ -39,7 +48,11 @@ export function AuthedImage({ uri, style, ...rest }: AuthedImageProps) {
       setLocalUri(null);
       return;
     }
-    setLocalUri(null);
+    // Re-seed synchronously on uri change: if the file is already known this
+    // session, paint it immediately and skip the disk/network round-trip.
+    const sync = getCachedMediaSync(uri);
+    setLocalUri(sync);
+    if (sync) return;
     (async () => {
       // 1) Already on disk → use it immediately (no network, works offline).
       const cached = await getCachedMedia(uri);

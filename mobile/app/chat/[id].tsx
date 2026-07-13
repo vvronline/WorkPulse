@@ -54,6 +54,7 @@ import {
   HeaderMenuPopup,
   CameraCapture,
   VideoPreview,
+  VoiceRecorderController,
   useChatThread,
 } from "../../src/components/chat";
 import {
@@ -450,11 +451,11 @@ export default function ChatThread() {
             text={c.text}
             editing={c.editingId != null}
             uploading={c.uploading}
-            // OR the explicit synchronous flag with the polled state so the
-            // recording bar appears INSTANTLY on mic-tap (the poll lags on
-            // Android and previously left the tap with no visible feedback).
-            isRecording={c.isRecordingActive || c.recorderState.isRecording}
-            recordingMillis={c.recorderState.durationMillis}
+            // Driven purely by the recording flag now that the native recorder
+            // lives in <VoiceRecorderController> (mounted only while recording),
+            // instead of an always-mounted recorder-state poll.
+            isRecording={c.isRecordingActive}
+            recordingMillis={c.recordingMillis}
             bottomInset={c.emojiKeyboardOpen ? 8 : c.composerBottomInset}
             emojiKeyboardOpen={c.emojiKeyboardOpen}
             onChangeText={c.onChangeText}
@@ -481,6 +482,18 @@ export default function ChatThread() {
             onSearchFocus={c.onEmojiSearchFocus}
             onSearchBlur={c.onEmojiSearchBlur}
           />
+          {/* Voice recorder (headless): mounted ONLY while recording so opening
+              a conversation never initializes the native audio recorder. Owns
+              the recorder + auto-starts on mount; the composer's stop/cancel
+              buttons drive it through the imperative handle. */}
+          {c.isRecordingActive ? (
+            <VoiceRecorderController
+              handleRef={c.voiceHandleRef}
+              onDuration={c.onRecorderDuration}
+              onError={c.onRecorderError}
+              onStartFailed={c.onRecorderStartFailed}
+            />
+          ) : null}
         </View>
       )}
 

@@ -18,12 +18,11 @@ import * as Clipboard from "expo-clipboard";
 import * as SecureStore from "expo-secure-store";
 import {
   AudioModule,
-  RecordingPresets,
+  createAudioPlayer,
   setAudioModeAsync,
-  useAudioPlayer,
-  useAudioRecorder,
-  useAudioRecorderState,
+  type AudioPlayer,
 } from "expo-audio";
+import type { VoiceRecorderControllerHandle } from "./VoiceRecorderController";
 import { getNotificationPreviewDataUri } from "../../utils/notificationSoundPreview";
 import { useAuth } from "../../auth/AuthContext";
 import { useDialog } from "../../hooks/useDialog";
@@ -460,28 +459,41 @@ export function useChatThread() {
   const [sharedFiles, setSharedFiles] = useState<SharedFile[]>([]);
   const [savedMsgs, setSavedMsgs] = useState<StarredMessage[]>([]);
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Explicit recording flag set SYNCHRONOUSLY the instant record() succeeds
-  // (declared before the recorder-state poll so it can GATE the poll rate).
+  // Explicit recording flag: true WHILE the user is recording a voice message.
+  // It also GATES the mount of <VoiceRecorderController> (which owns the native
+  // recorder) — see the recording handlers below.
   const [isRecordingActive, setIsRecordingActive] = useState(false);
+  // Live recording duration (ms), pushed up from VoiceRecorderController so the
+  // composer's recording bar shows the counter.
+  const [recordingMillis, setRecordingMillis] = useState(0);
   // Voice recording (expo-audio).
   //
-  // PERF (chat-open jank root cause): a fixed 100ms poll re-rendered this whole
-  // hook + the entire chat screen 10× / second CONTINUOUSLY — even when nobody
-  // was recording. That constant JS-thread churn fought the navigation slide-in
-  // and made opening a conversation freeze/jitter for a couple of seconds.
-  // Signal only tracks recorder state WHILE actively recording, so we gate the
-  // poll: a fast 100ms cadence (smooth live duration counter + instant bar)
-  // ONLY while recording, and an effectively-idle cadence otherwise so the
-  // screen doesn't re-render at all when the mic isn't in use.
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recorderState = useAudioRecorderState(
-    recorder,
-    isRecordingActive ? 100 : 3_600_000,
+  // PERF (chat-open jank root cause): `useAudioRecorder` / `useAudioRecorderState`
+  // and `useAudioPlayer` each construct a NATIVE shared object on mount. Creating
+  // them here meant every chat OPEN allocated a native recorder + player (and a
+  // status poll) on the critical first-render path, competing with the
+  // navigation slide-in. Signal only touches the audio session WHILE recording /
+  // when a sound actually plays, so both are now created lazily:
+  //   • the recorder lives in <VoiceRecorderController>, mounted ONLY while
+  //     recording (gated by isRecordingActive);
+  //   • the reaction-sound player is created on first react (see playReactionSound).
+  // Imperative handle into the mounted recorder controller (stop / cancel).
+  const voiceHandleRef = useRef<VoiceRecorderControllerHandle | null>(null);
+  // Dedicated player for the short "reaction added" feedback tone, created
+  // lazily on first use and released on unmount.
+  const reactionSoundPlayerRef = useRef<AudioPlayer | null>(null);
+  // Release the lazily-created reaction-sound player when the thread unmounts.
+  useEffect(
+    () => () => {
+      try {
+        reactionSoundPlayerRef.current?.release();
+      } catch {
+        /* ignore */
+      }
+      reactionSoundPlayerRef.current = null;
+    },
+    [],
   );
-  // Dedicated player for the short "reaction added" feedback tone (Signal-style
-  // haptic + subtle sound when you react). Separate from the recorder so it
-  // never fights the record audio session.
-  const reactionSoundPlayer = useAudioPlayer();
   // Ref mirror of isRecordingActive — guards against double-start re-entrancy
   // in the recording handlers without depending on the stale polled value.
   const recordingRef = useRef(false);
@@ -1465,87 +1477,70 @@ export function useChatThread() {
   );
 
   async function startRecording() {
-    // Guard against a double-tap while a recording is already underway. Use the
-    // synchronous ref (NOT the polled recorderState) so the guard reflects the
-    // true state the instant record() succeeds — the poll lags up to ~100ms and
-    // let a quick second tap through, which threw "already recording".
+    // Guard against a double-tap while a recording is already underway.
     if (recordingRef.current) return;
+    let granted = false;
     try {
       const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm.granted) {
-        alert(
-          "Microphone needed",
-          "Allow microphone access to record a voice message.",
-        );
-        return;
-      }
-      // Expo Audio v56 still requires an explicit prepare step before record().
-      // If prepare fails on Android we must NOT swallow it, otherwise the
-      // mic-tap appears to do nothing and the real failure is hidden.
-      await setAudioModeAsync({
-        allowsRecording: true,
-        playsInSilentMode: true,
-      });
-      await recorder.prepareToRecordAsync();
-      const prepared = await recorder.getStatus();
-      if (!prepared.canRecord) {
-        throw new Error("Recorder could not be prepared.");
-      }
-      recorder.record();
-      // Flip the recording UI ON synchronously — don't wait for the polled
-      // `recorderState.isRecording` (which can miss the transition on Android,
-      // leaving the mic tap with no visible recording bar). The composer's
-      // recording bar is driven by this flag OR'd with the poll.
-      recordingRef.current = true;
-      setIsRecordingActive(true);
-    } catch (e: any) {
-      recordingRef.current = false;
-      setIsRecordingActive(false);
-      // Restore the playback session so a failed start doesn't leave the audio
-      // route stuck in record mode.
-      setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => {});
-      alert(
-        "Recording failed",
-        e?.message || "Could not start the voice recording.",
-      );
+      granted = perm.granted;
+    } catch {
+      granted = false;
     }
+    if (!granted) {
+      alert(
+        "Microphone needed",
+        "Allow microphone access to record a voice message.",
+      );
+      return;
+    }
+    // Flip the recording UI ON synchronously and MOUNT the recorder controller
+    // (gated by isRecordingActive). The controller owns the native recorder and
+    // auto-prepares + starts recording on mount — keeping all audio init OFF the
+    // chat-open path (see VoiceRecorderController).
+    recordingRef.current = true;
+    setRecordingMillis(0);
+    setIsRecordingActive(true);
   }
 
-  async function stopRecordingAndSend() {
-    if (!recordingRef.current && !recorderState.isRecording) return;
-    // Clear the recording UI immediately so the bar collapses on tap.
+  // Push the live recording duration up from the mounted controller.
+  const onRecorderDuration = useCallback((millis: number) => {
+    setRecordingMillis(millis);
+  }, []);
+
+  // Surface a recorder error via the shared dialog.
+  const onRecorderError = useCallback(
+    (title: string, message: string) => {
+      alert(title, message);
+    },
+    [alert],
+  );
+
+  // The controller failed to START (permission/prepare) — collapse the UI and
+  // unmount it so the mic can be tapped again cleanly.
+  const onRecorderStartFailed = useCallback(() => {
     recordingRef.current = false;
     setIsRecordingActive(false);
+    setRecordingMillis(0);
+  }, []);
 
-    let uri: string | null = null;
-    let durationMillis = recorderState.durationMillis || 0;
+  async function stopRecordingAndSend() {
+    if (!recordingRef.current) return;
+    recordingRef.current = false;
+    const handle = voiceHandleRef.current;
+
+    let result: { uri: string; durationMillis: number } | null = null;
     try {
-      await recorder.stop();
-      const status = recorder.getStatus();
-      uri = status?.url || recorder.uri;
-      durationMillis = Math.max(durationMillis, status?.durationMillis || 0);
-    } catch (e: any) {
-      alert(
-        "Recording failed",
-        e?.message || "Could not finish the voice recording.",
-      );
-      return;
+      result = handle ? await handle.stopAndSend() : null;
     } finally {
-      // Restore the playback audio session — leaving allowsRecording=true
-      // routes/silences subsequent voice-note playback on iOS.
-      setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => {});
+      // Unmount the recorder controller (releases the native recorder) and
+      // collapse the recording bar.
+      setIsRecordingActive(false);
+      setRecordingMillis(0);
     }
 
-    if (!uri) {
-      alert("Recording failed", "No recording file was created.");
-      return;
-    }
+    if (!result) return; // controller already surfaced any error
+    const { uri, durationMillis } = result;
+
     if (durationMillis < 350) {
       alert(
         "Recording too short",
@@ -1572,20 +1567,15 @@ export function useChatThread() {
   }
 
   async function cancelRecording() {
-    if (!recordingRef.current && !recorderState.isRecording) return;
-    // Clear the recording UI immediately so the bar collapses on tap.
+    if (!recordingRef.current) return;
     recordingRef.current = false;
-    setIsRecordingActive(false);
+    const handle = voiceHandleRef.current;
     try {
-      await recorder.stop();
-    } catch {
-      /* ignore */
+      await handle?.cancel();
     } finally {
-      // Same audio-session restore as stopRecordingAndSend.
-      setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => {});
+      // Unmount the recorder controller + collapse the recording bar.
+      setIsRecordingActive(false);
+      setRecordingMillis(0);
     }
   }
 
@@ -2681,8 +2671,14 @@ export function useChatThread() {
         allowsRecording: false,
         playsInSilentMode: true,
       }).catch(() => {});
-      reactionSoundPlayer.replace({ uri });
-      reactionSoundPlayer.play();
+      // Create the native player on first use (kept off the chat-open path).
+      let player = reactionSoundPlayerRef.current;
+      if (!player) {
+        player = createAudioPlayer();
+        reactionSoundPlayerRef.current = player;
+      }
+      player.replace({ uri });
+      player.play();
     } catch {
       /* no-op */
     }
@@ -3331,7 +3327,7 @@ export function useChatThread() {
     text,
     editingId,
     uploading,
-    recorderState,
+    recordingMillis,
     composerBottomInset,
     onChangeText,
     send,
@@ -3342,6 +3338,11 @@ export function useChatThread() {
     cancelRecording,
     stopRecordingAndSend,
     isRecordingActive,
+    // voice recorder controller wiring (mounted only while recording)
+    voiceHandleRef,
+    onRecorderDuration,
+    onRecorderError,
+    onRecorderStartFailed,
     // inline emoji keyboard (Signal-style)
     inputRef,
     emojiKeyboardOpen,

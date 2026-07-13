@@ -86,6 +86,25 @@ export async function getCachedMedia(
 }
 
 /**
+ * SYNCHRONOUS variant of {@link getCachedMedia}: returns the local uri ONLY if
+ * it's already known this session (in the in-memory `memo`, warmed by a prior
+ * getCachedMedia/ensureCachedMedia), or the input is already a local uri.
+ * Returns null otherwise — it never touches the filesystem or network, so it's
+ * safe to call in a `useState` initializer.
+ *
+ * PERF (chat-open jank): AuthedImage seeds its `localUri` from this so an image
+ * that resolved earlier in the session (e.g. a row recycled while scrolling, or
+ * re-rendered on open) paints on the FIRST frame instead of flashing blank while
+ * the async `getInfoAsync` re-resolves the same file.
+ */
+export function getCachedMediaSync(pathOrUrl?: string | null): string | null {
+  const remote = uploadUrl(pathOrUrl || "");
+  if (!remote) return null;
+  if (/^(file|content|data):/i.test(remote)) return remote;
+  return memo.get(remote) ?? null;
+}
+
+/**
  * Ensure `pathOrUrl` is cached locally, downloading it (with the Bearer token)
  * if needed, and return the local uri. Returns null on failure (e.g. offline
  * and not yet cached). Concurrent calls for the same url share one download.
