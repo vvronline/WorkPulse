@@ -169,7 +169,7 @@ export default function OrganizationScreen() {
               onPress={() => setTab(t.key)}
             >
               <t.icon
-                size={14}
+                size={18}
                 color={active ? theme.onAccent : theme.textSecondary}
               />
               <Text style={[styles.tabText, active && styles.tabTextActive]}>
