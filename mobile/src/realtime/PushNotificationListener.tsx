@@ -13,14 +13,7 @@ import { socket } from "./socket";
 import { emitChatUnreadChanged, chatUnreadManager } from "./chatUnreadEvents";
 import { backgroundPushService } from "../services/backgroundPushService";
 import { notifeeService } from "../services/notifeeService";
-import {
-  beginCallNavigation,
-  endCallNavigation,
-  isCallActive,
-} from "./callRouting";
-import { emitAnswerIntent } from "./callAnswerIntent";
-import { claim } from "../calls/shared/claims";
-import { meetingHrefForGroupCall } from "../calls/group/navigation";
+import { beginCallNavigation, endCallNavigation } from "./callRouting";
 import {
   persistPendingChat,
   setPendingChat,
@@ -227,26 +220,20 @@ function handleCallNotification(
   }
 
   // Group CALL (huddle): a `meetingCode` means the callee joins the n-way
-  // meeting mesh, not the 1:1 p2p call screen. Claim the dedicated
-  // "groupRing" surface (so the WS path doesn't double-push) — NEVER the
-  // "p2p" slot, which belongs to the 1:1 call screen and must not be
-  // blocked/clobbered by group events. An Answer tap still proceeds when the
-  // claim exists (the target is a meeting room, not a fullScreenModal, so a
-  // replace-style navigation is safe).
+  // meeting mesh, not the 1:1 p2p call screen. Claim navigation (so the WS path
+  // doesn't double-push) and route straight to the meeting room.
   if (callData.meetingCode) {
     const isAcceptHuddle = callData.notificationAction === "accept_call";
     if (
-      !claim("groupRing", callData.callId, callData.conversationId) &&
+      !beginCallNavigation(callData.callId, callData.conversationId) &&
       !isAcceptHuddle
     ) {
       return;
     }
     // Huddle auto-join (no meeting lobby) + audio-only for a voice call.
+    const ct = callData.callType === "video" ? "video" : "voice";
     router.push(
-      meetingHrefForGroupCall({
-        meetingCode: callData.meetingCode,
-        callType: callData.callType === "video" ? "video" : "voice",
-      }) as never,
+      `/meeting/${callData.meetingCode}?huddle=1&callType=${ct}` as never,
     );
     return;
   }
@@ -254,19 +241,10 @@ function handleCallNotification(
   // Cross-path guard: IncomingCallListener (websocket) may also navigate for
   // this same call. Claim navigation so only ONE path pushes the /call screen —
   // a double push crashes React Native Fabric ("child already has a parent").
-  //
-  // When the user tapped "Answer" but the claim FAILS, the call screen for this
-  // call is ALREADY mounted (the websocket path pushed it while ringing). We
-  // must NOT push again — the old `!isAccept` bypass double-mounted the /call
-  // fullScreenModal, which is a fatal Fabric crash: the JS thread dies while
-  // native WebRTC audio keeps flowing ("no call UI but I can still talk").
-  // Instead, deliver the answer to the mounted screen via the answer-intent
-  // bus (built exactly for this): it runs acceptIncoming() on the live screen.
+  // Exception: when the user tapped "Answer" we still want to ensure the screen
+  // is shown, so only skip if it's already active for THIS call.
   const isAccept = callData.notificationAction === "accept_call";
-  if (!beginCallNavigation(callData.callId, callData.conversationId)) {
-    if (isAccept && isCallActive(callData.callId, callData.conversationId)) {
-      emitAnswerIntent(callData.callId, callData.conversationId);
-    }
+  if (!beginCallNavigation(callData.callId, callData.conversationId) && !isAccept) {
     return;
   }
 

@@ -460,22 +460,30 @@ export function useChatThread() {
   const [sharedFiles, setSharedFiles] = useState<SharedFile[]>([]);
   const [savedMsgs, setSavedMsgs] = useState<StarredMessage[]>([]);
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Voice recording (expo-audio). Poll the recorder state every 100ms (vs the
-  // 500ms default) so the in-composer recording bar appears immediately on
-  // record() and the live duration counter ticks smoothly.
+  // Explicit recording flag set SYNCHRONOUSLY the instant record() succeeds
+  // (declared before the recorder-state poll so it can GATE the poll rate).
+  const [isRecordingActive, setIsRecordingActive] = useState(false);
+  // Voice recording (expo-audio).
+  //
+  // PERF (chat-open jank root cause): a fixed 100ms poll re-rendered this whole
+  // hook + the entire chat screen 10× / second CONTINUOUSLY — even when nobody
+  // was recording. That constant JS-thread churn fought the navigation slide-in
+  // and made opening a conversation freeze/jitter for a couple of seconds.
+  // Signal only tracks recorder state WHILE actively recording, so we gate the
+  // poll: a fast 100ms cadence (smooth live duration counter + instant bar)
+  // ONLY while recording, and an effectively-idle cadence otherwise so the
+  // screen doesn't re-render at all when the mic isn't in use.
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recorderState = useAudioRecorderState(recorder, 100);
+  const recorderState = useAudioRecorderState(
+    recorder,
+    isRecordingActive ? 100 : 3_600_000,
+  );
   // Dedicated player for the short "reaction added" feedback tone (Signal-style
   // haptic + subtle sound when you react). Separate from the recorder so it
   // never fights the record audio session.
   const reactionSoundPlayer = useAudioPlayer();
-  // Explicit recording flag set SYNCHRONOUSLY the instant record() succeeds.
-  // The polled `recorderState.isRecording` lags on Android (the 100ms poll can
-  // miss the transition), so the recording bar "didn't appear" when the mic was
-  // tapped. Driving the UI from this state (OR'd with the poll) makes the bar
-  // show immediately. A ref mirror guards against double-start re-entrancy
-  // without depending on the stale polled value.
-  const [isRecordingActive, setIsRecordingActive] = useState(false);
+  // Ref mirror of isRecordingActive — guards against double-start re-entrancy
+  // in the recording handlers without depending on the stale polled value.
   const recordingRef = useRef(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   // Whether the (inverted) list is currently near the visual bottom (newest
