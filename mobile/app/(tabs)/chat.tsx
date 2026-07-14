@@ -298,6 +298,11 @@ export default function ChatScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      // Clear the "opening" row highlight when the list regains focus. The
+      // pressed style is applied to the tapped row (openingConversationId) for
+      // instant open feedback; without this reset the row stayed highlighted
+      // after returning to the list via the back gesture.
+      setOpeningConversationId(null);
       load();
       const off = socket.subscribe((msg) => {
         // Debounced refresh instead of a full fetch per message.
