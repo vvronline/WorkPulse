@@ -1335,6 +1335,16 @@ export function useChatThread() {
       }
       if (msg.type !== "chat_message") return;
       if (Number(d.conversationId) !== convId) return;
+      // Unfocused thread: skip the heavy live-append work. The global
+      // ChatCacheSync (mounted in app/_layout) already appends every incoming
+      // message to the on-device cache regardless of which screen is mounted,
+      // and this thread re-seeds from that cache + runs a fresh load() reconcile
+      // when it regains focus — so the message is never lost. Running the full
+      // setMessages/markRead/ack/scroll reconcile on EVERY backgrounded thread
+      // per incoming message is exactly the work that compounds per open (the
+      // "fine for 5–6 opens, then lags" curve). Signal only updates the active
+      // conversation's data source live.
+      if (!isFocusedRef.current) return;
       setPeerTyping(false);
       // Server has persisted this message — clear it from the durable outbox
       // (idempotent; ChatOutboxSync also does this globally).
