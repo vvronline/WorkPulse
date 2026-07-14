@@ -122,12 +122,17 @@ function ThemedStack() {
         name="chat/[id]"
         options={{
           ...headerScreen,
-          // Signal-style smooth open: iOS-style push everywhere with a short,
-          // tuned duration. Keep the normal edge-swipe gesture instead of
-          // full-screen pop on Android: full-screen pop exposes the native
-          // stack/root background as an empty strip during the gesture.
-          animation: "slide_from_right",
-          animationDuration: 220,
+          // Android fix: do NOT use a horizontal card slide for the chat thread.
+          // During Android/system back, native-stack's slide_from_right pop can
+          // expose its gray scene/container as a right-edge blank strip. A short
+          // fade is non-revealing and matches Signal-Android's full-screen feel.
+          // Keep the iOS-style slide only on iOS.
+          animation: Platform.OS === "android" ? "fade" : "slide_from_right",
+          animationDuration: Platform.OS === "android" ? 120 : 220,
+          // Disable native-stack's interactive card drag on Android. Android's
+          // system back gesture/hardware back still works through BackHandler +
+          // router.back(), but no card is dragged sideways to expose gray space.
+          gestureEnabled: Platform.OS !== "android",
           fullScreenGestureEnabled: false,
           // Explicit opaque background on the thread surface so the swipe-back
           // gesture always drags a fully-painted screen. (Previously
