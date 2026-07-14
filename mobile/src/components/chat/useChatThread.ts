@@ -117,6 +117,28 @@ type ConversationDraft = {
 // loads a page first and pages older history on demand, so we mirror that here.
 const INITIAL_THREAD_PAGE_SIZE = 50;
 
+// Hard upper bound on how many messages stay MOUNTED in React state for a
+// single thread. A long-lived thread (left open while messages keep arriving,
+// or after paging up a lot) otherwise grows this array without limit — every
+// `messagesReversed` recompute, grouping pass and FlatList extraData diff then
+// scales with total history, and the heap climbs for as long as the thread is
+// alive. Signal keeps a bounded sliding window of rows in memory and pages the
+// rest from disk. We cap the NEWEST-message (append) growth here; older history
+// is still reachable via `loadOlder` (cursor pagination) / the on-disk cache,
+// which re-fetches when the user scrolls back up. Chosen comfortably above a
+// full screen of bubbles so trimming is never visible at the bottom.
+const MAX_MOUNTED_MESSAGES = 200;
+
+// Trim a message array (oldest-first) to the newest MAX_MOUNTED_MESSAGES when
+// it grows past the bound. Only ever DROPS from the head (oldest), so the
+// visible bottom of the (inverted) list is untouched and `loadOlder`'s
+// oldest-real-id cursor still resolves. Returns the same reference when no trim
+// is needed so it never forces an extra re-render.
+function capNewestWindow(msgs: ChatMessage[]): ChatMessage[] {
+  if (msgs.length <= MAX_MOUNTED_MESSAGES) return msgs;
+  return msgs.slice(msgs.length - MAX_MOUNTED_MESSAGES);
+}
+
 /**
  * Normalize the server's file-upload response into a snake_case ChatMessage.
  *
@@ -373,6 +395,13 @@ function mergeNewestPageIntoLoadedThread(
  * from `app/chat/[id].tsx` so the screen is a thin presentational orchestrator
  * (mirrors the web ChatMessages container/hook split). Behavior-preserving.
  */
+// ── DEV INSTRUMENTATION (TEMPORARY — remove before finishing) ──
+// Tracks how many `useChatThread` instances are simultaneously MOUNTED. On a
+// native stack a plain list→chat→back→chat cycle should keep this at 1. If it
+// climbs with each open, blurred threads are staying mounted/live underneath
+// the current one (the real root cause of the compounding open slowdown).
+let __LIVE_THREAD_COUNT = 0;
+
 export function useChatThread() {
   const params = useLocalSearchParams<{
     id: string;
@@ -612,6 +641,28 @@ export function useChatThread() {
     },
     [],
   );
+
+  // ── DEV INSTRUMENTATION (TEMPORARY — remove before finishing) ──
+  // Prove/disprove the "blurred chat threads stay mounted and accumulate"
+  // hypothesis. Each mount bumps the module-level live count; each unmount
+  // drops it. On a native stack, list→chat→back→chat should hold this at 1. If
+  // it climbs per open, the blurred threads are NOT being torn down (the real
+  // root cause of the compounding open slowdown).
+  useEffect(() => {
+    __LIVE_THREAD_COUNT += 1;
+    // NOTE: use console.warn (not console.log) — babel-preset-expo strips
+    // console.log from production/release builds but KEEPS warn/error, so this
+    // instrumentation is visible in logcat regardless of the build variant.
+    console.warn(
+      `[useChatThread] MOUNT convId=${convId} | live threads=${__LIVE_THREAD_COUNT}`,
+    );
+    return () => {
+      __LIVE_THREAD_COUNT -= 1;
+      console.warn(
+        `[useChatThread] UNMOUNT convId=${convId} | live threads=${__LIVE_THREAD_COUNT}`,
+      );
+    };
+  }, [convId]);
   // Ref mirror of isRecordingActive — guards against double-start re-entrancy
   // in the recording handlers without depending on the stale polled value.
   const recordingRef = useRef(false);
@@ -1342,17 +1393,10 @@ export function useChatThread() {
       // when it regains focus — so the message is never lost. Running the full
       // setMessages/markRead/ack/scroll reconcile on EVERY backgrounded thread
       // per incoming message is exactly the work that compounds per open (the
-      // "fine for 5–6 opens, then lags" curve). Signal only updates the active
-      // conversation's data source live.
+      // "fine for 5–6 opens, then lags/freezes" symptom). The focused thread
+      // still does the full live append + read/ack/scroll below.
       if (!isFocusedRef.current) return;
-      setPeerTyping(false);
-      // Server has persisted this message — clear it from the durable outbox
-      // (idempotent; ChatOutboxSync also does this globally).
-      if (typeof d.clientMsgId === "string" && d.clientMsgId) {
-        removeOutboxMessage(d.clientMsgId);
-      }
       setMessages((prev) => {
-        // Replace optimistic message if clientMsgId matches, else append.
         if (d.clientMsgId) {
           const idx = prev.findIndex((m) => m.clientMsgId === d.clientMsgId);
           if (idx >= 0) {
@@ -1387,7 +1431,12 @@ export function useChatThread() {
           }
         }
         if (prev.some((m) => m.id === d.id)) return prev;
-        return [
+        // Append the new message, then TRIM the oldest so a long-lived focused
+        // thread's in-memory array can't grow without bound (see
+        // capNewestWindow / MAX_MOUNTED_MESSAGES). Dropping only from the head
+        // keeps the newest bottom of the inverted list intact; older history
+        // remains reachable via loadOlder / the on-disk cache.
+        return capNewestWindow([
           ...prev,
           {
             id: d.id,
@@ -1413,7 +1462,7 @@ export function useChatThread() {
             _failureReason: d.failureReason ?? null,
             media_job_id: d.mediaJobId ?? null,
           },
-        ];
+        ]);
       });
       markReadAndSync();
       // Acknowledge delivery so the sender sees "✓✓ delivered" (mirrors the

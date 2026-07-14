@@ -134,13 +134,24 @@ function ThemedStack() {
           gestureEnabled: Platform.OS !== "android",
           fullScreenGestureEnabled: false,
           // Explicit opaque background on the thread surface so the swipe-back
-          // gesture always drags a fully-painted screen. (Previously
-          // `freezeOnBlur: true` was set here under the mistaken belief it
-          // stopped the chat LIST re-rendering underneath — but it actually
-          // froze the THREAD itself the instant the back gesture started,
-          // blanking its FlatList mid-slide and exposing the gray "empty
-          // frozen screen" the user saw while exiting to the chat list.)
+          // gesture always drags a fully-painted screen.
           contentStyle: { backgroundColor: theme.bg },
+          // Freeze BLURRED thread screens (react-freeze). Expo Router keeps
+          // every visited `chat/[id]` mounted in the native stack; without this
+          // each one keeps its `useChatThread` re-rendering + fanning out every
+          // global socket/context event underneath the active thread, so the JS
+          // thread + heap climb with each chat opened this session (the "fast at
+          // first, then 3–6s opens" degradation). freezeOnBlur suspends the
+          // blurred tree entirely so N stacked threads cost ~1 active tree's
+          // worth of work — Signal's single-active-conversation model.
+          //
+          // The old objection (it blanked the thread mid swipe-back) no longer
+          // applies on Android: the thread uses `animation: "none"` +
+          // `gestureEnabled: false` above, so there is no interactive card drag
+          // to expose a frozen/gray frame. On iOS the slide still paints because
+          // the ABOUT-TO-FOCUS screen thaws before the transition begins; only
+          // fully-backgrounded (non-top) screens stay frozen.
+          freezeOnBlur: true,
           animationMatchesGesture: true,
           fullScreenGestureShadowEnabled: false,
         }}
