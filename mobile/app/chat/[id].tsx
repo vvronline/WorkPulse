@@ -94,6 +94,22 @@ export default function ChatThread() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const c = useChatThread();
+  const [threadBodyReady, setThreadBodyReady] = useState(false);
+
+  useEffect(() => {
+    setThreadBodyReady(false);
+    let raf = 0;
+    const task = InteractionManager.runAfterInteractions(() => {
+      // Let navigation/header paint first, then mount the heavy inverted
+      // message FlatList on the next frame. This prevents the chat-list tap from
+      // feeling frozen while MessageBubble rows/gestures are constructed.
+      raf = requestAnimationFrame(() => setThreadBodyReady(true));
+    });
+    return () => {
+      task.cancel();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [c.convId]);
 
   return (
     <View style={styles.screen}>
@@ -383,7 +399,7 @@ export default function ChatThread() {
                 }
         }
       />
-      {c.loading ? (
+      {c.loading || !threadBodyReady ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.primary} />
         </View>

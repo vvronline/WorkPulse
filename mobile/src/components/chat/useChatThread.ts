@@ -111,6 +111,12 @@ type ConversationDraft = {
   mediaDrafts: PendingMediaSource[];
 };
 
+// Keep the first synchronous thread paint bounded. A cached thread can contain
+// hundreds of messages after paging; processing all of them on route mount is
+// what makes tapping a busy chat freeze on the chat list for 2–3 seconds. Signal
+// loads a page first and pages older history on demand, so we mirror that here.
+const INITIAL_THREAD_PAGE_SIZE = 50;
+
 /**
  * Normalize the server's file-upload response into a snake_case ChatMessage.
  *
@@ -402,19 +408,26 @@ export function useChatThread() {
   // refresh in `load()` reconciles in the background. `loading` only stays true
   // on a true cold cache (first-ever open of this conversation).
   const cachedMessages = useMemo(() => getCachedMessages(convId), [convId]);
+  const initialCachedMessages = useMemo(() => {
+    if (!cachedMessages || cachedMessages.length <= INITIAL_THREAD_PAGE_SIZE) {
+      return cachedMessages;
+    }
+    // Messages are oldest-first; keep the newest page for the initial paint.
+    return cachedMessages.slice(-INITIAL_THREAD_PAGE_SIZE);
+  }, [cachedMessages]);
   // Merge pending OUTBOX messages (sent while offline, awaiting delivery)
   // into the seed so they reappear as pending bubbles after exiting and
   // reopening the chat — see mergeOutboxIntoMessages.
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     mergeOutboxIntoMessages(
-      cachedMessages || [],
+      initialCachedMessages || [],
       convId,
       user?.id,
       user?.full_name,
     ),
   );
   const [loading, setLoading] = useState(
-    () => !cachedMessages || cachedMessages.length === 0,
+    () => !initialCachedMessages || initialCachedMessages.length === 0,
   );
   // "Delete for me" hidden ids (local-only, persisted per conversation). The
   // source `messages` array stays intact for server reconciliation; the
@@ -423,7 +436,9 @@ export function useChatThread() {
     () => new Set(getLocalDeletedIds(convId)),
   );
   // Cursor pagination for older history (mirrors web loadMore).
-  const [hasMore, setHasMore] = useState(false);
+  const [hasMore, setHasMore] = useState(
+    () => (cachedMessages?.length || 0) > (initialCachedMessages?.length || 0),
+  );
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [text, setText] = useState("");
   const [peerTyping, setPeerTyping] = useState(false);

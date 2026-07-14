@@ -122,13 +122,12 @@ function ThemedStack() {
         name="chat/[id]"
         options={{
           ...headerScreen,
-          // Android fix: do NOT use a horizontal card slide for the chat thread.
-          // During Android/system back, native-stack's slide_from_right pop can
-          // expose its gray scene/container as a right-edge blank strip. A short
-          // fade is non-revealing and matches Signal-Android's full-screen feel.
+          // Android fix: do NOT animate the native-stack card for the chat
+          // thread. Even fade/slide can briefly expose the stack's gray scene
+          // during Android system-back; "none" removes that transition frame.
           // Keep the iOS-style slide only on iOS.
-          animation: Platform.OS === "android" ? "fade" : "slide_from_right",
-          animationDuration: Platform.OS === "android" ? 120 : 220,
+          animation: Platform.OS === "android" ? "none" : "slide_from_right",
+          animationDuration: Platform.OS === "android" ? 0 : 220,
           // Disable native-stack's interactive card drag on Android. Android's
           // system back gesture/hardware back still works through BackHandler +
           // router.back(), but no card is dragged sideways to expose gray space.
