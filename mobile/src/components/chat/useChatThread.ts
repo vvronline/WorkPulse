@@ -317,6 +317,26 @@ function messageArraysEquivalentForThread(
   return true;
 }
 
+// Shallow-equal two read-receipt maps ({ userId → ISO last_read_at }). Live
+// `chat_read_receipt` pulses and each `load()` reconcile otherwise replace the
+// `readReceipts` object wholesale — a new identity that (because MessageBubble
+// reference-compares `readReceipts`) forces EVERY mounted bubble to re-render.
+// Skipping the state update when the map is unchanged keeps that churn off the
+// JS thread (Signal only rebinds rows whose receipt state actually changed).
+function readMapsEqual(
+  a: Record<number, string>,
+  b: Record<number, string>,
+): boolean {
+  if (a === b) return true;
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) {
+    if (a[k as unknown as number] !== b[k as unknown as number]) return false;
+  }
+  return true;
+}
+
 function mergeNewestPageIntoLoadedThread(
   current: ChatMessage[],
   newestPage: ChatMessage[],
@@ -608,6 +628,19 @@ export function useChatThread() {
   // bottom-pinned, so re-scrolling on every background `load()` reconcile just
   // caused a visible "settle"/jump on open.
   const didInitialScrollRef = useRef(false);
+  // Whether THIS thread screen is the one currently focused. Expo Router keeps
+  // previously-visited `chat/[id]` screens mounted in the stack, so without this
+  // gate every backgrounded thread's socket handler would still run the full
+  // heavy per-event work (setMessages reconciles, receipt maps, pin refreshes)
+  // for EVERY live event — cost that scales with how many chats you opened this
+  // session and is the root cause of the "fast at first, then lags/freezes"
+  // degradation. Signal keeps a single active conversation data source; we
+  // mirror that by making backgrounded threads inert for non-critical events.
+  const isFocusedRef = useRef(true);
+  // Timestamp (ms) of the last completed network reconcile. Used to skip a
+  // redundant `load()` when the same thread is re-focused within a short window
+  // (quickly bouncing in/out of a chat shouldn't repay the full reconcile).
+  const lastLoadedAtRef = useRef(0);
   // Bubble host-node refs so we can reliably measure each bubble's window rect
   // for the reaction-bar anchor (Pressable forwards its ref to the host View,
   // which exposes measureInWindow — currentTarget often does not).
@@ -778,8 +811,12 @@ export function useChatThread() {
   // and re-set when it regains focus, so banners resume the moment you leave.
   useFocusEffect(
     useCallback(() => {
+      isFocusedRef.current = true;
       setActiveConversation(convId);
-      return () => setActiveConversation(null);
+      return () => {
+        isFocusedRef.current = false;
+        setActiveConversation(null);
+      };
     }, [convId]),
   );
 
@@ -819,10 +856,18 @@ export function useChatThread() {
               map[row.user_id] = row.last_read_at;
             }
           }
-          setReadReceipts(map);
+          // Skip the state update when the map is unchanged. Every `load()`
+          // otherwise replaced `readReceipts` with a NEW object identity even
+          // when the receipts were identical — and since MessageBubble
+          // reference-compares `readReceipts`, that rebound EVERY mounted row on
+          // each refocus/reconcile. Only commit a genuine change.
+          setReadReceipts((prev) => (readMapsEqual(prev, map) ? prev : map));
           setCachedReadStatus(convId, map);
         })
         .catch(() => {});
+      // Record the reconcile time so a quick re-focus of the same thread can
+      // skip repaying this whole `load()` (see the focus-gated effect below).
+      lastLoadedAtRef.current = Date.now();
       // Only force a jump-to-bottom on the very FIRST cold paint. The list is
       // INVERTED (structurally bottom-pinned), so re-scrolling on every
       // background reconcile just caused a visible "settle"/jump on open and
@@ -1062,6 +1107,18 @@ export function useChatThread() {
   useEffect(() => {
     const off = socket.subscribe((msg) => {
       const d = msg.data || {};
+      // Signal-Android single-active-thread model: backgrounded thread screens
+      // (kept mounted in the Expo Router stack) do NOT reprocess the high-
+      // frequency live stream. Typing pulses and read-receipt fan-out for a
+      // thread the user isn't looking at would otherwise run setState on EVERY
+      // mounted thread per event — cost that compounds with how many chats were
+      // opened this session (the "fast at first, then lags/freezes" symptom).
+      // Terminal lifecycle events (message/clear/delete/removed) still process
+      // so the cache + unread stay correct; only the cosmetic, high-rate
+      // typing/receipt updates are skipped while unfocused.
+      const nonCritical =
+        msg.type === "chat_typing" || msg.type === "chat_read_receipt";
+      if (nonCritical && !isFocusedRef.current) return;
       if (msg.type === "chat_typing") {
         if (Number(d.conversationId) !== convId) return;
         if (d.userId === user?.id) return;
