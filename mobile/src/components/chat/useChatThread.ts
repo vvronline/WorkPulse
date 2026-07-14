@@ -832,11 +832,22 @@ export function useChatThread() {
   // InteractionManager runs it on the first idle frame after the transition,
   // keeping the animation smooth (Signal-Android feel).
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const task = InteractionManager.runAfterInteractions(() => {
-      load();
-      loadPinned();
+      // Give the native push animation a short quiet window after interactions
+      // settle before doing the first network reconcile. This avoids a large
+      // setMessages/read-receipts/pinned commit landing in the same frame range
+      // as the screen slide-in, which was the remaining "fast but not smooth"
+      // open stutter on long conversations.
+      timer = setTimeout(() => {
+        load();
+        loadPinned();
+      }, 250);
     });
-    return () => task.cancel();
+    return () => {
+      task.cancel();
+      if (timer) clearTimeout(timer);
+    };
   }, [load, loadPinned]);
 
   // Cross-screen "jump to message": the in-conversation search / saved / pinned

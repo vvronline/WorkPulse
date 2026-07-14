@@ -123,10 +123,12 @@ function ThemedStack() {
         options={{
           ...headerScreen,
           // Signal-style smooth open: iOS-style push everywhere with a short,
-          // tuned duration + full-screen swipe-back.
+          // tuned duration. Keep the normal edge-swipe gesture instead of
+          // full-screen pop on Android: full-screen pop exposes the native
+          // stack/root background as an empty strip during the gesture.
           animation: "slide_from_right",
           animationDuration: 220,
-          fullScreenGestureEnabled: true,
+          fullScreenGestureEnabled: false,
           // Explicit opaque background on the thread surface so the swipe-back
           // gesture always drags a fully-painted screen. (Previously
           // `freezeOnBlur: true` was set here under the mistaken belief it
@@ -425,7 +427,7 @@ export default function RootLayout() {
   if (!FONTS_EMBEDDED && !fontsLoaded && !fontError) return null;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#000" }}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <PersistQueryClientProvider
         client={queryClient}
         persistOptions={{ persister: mmkvQueryPersister, maxAge: ONE_DAY }}
