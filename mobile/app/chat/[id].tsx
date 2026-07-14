@@ -27,7 +27,7 @@ import {
 } from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import Animated, {
   FadeIn,
   FadeInRight,
@@ -36,32 +36,45 @@ import Animated, {
 } from "react-native-reanimated";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import GroupCompositeAvatar from "../../src/components/GroupCompositeAvatar";
-import {
-  ReplyPreview,
-  EditPreview,
-  MessageBubble,
-  TypingIndicator,
-  Composer,
-  PinnedBanner,
-  ReactionOverlay,
-  EmojiPicker,
-  EmojiKeyboard,
-  TenorMediaPicker,
-  AttachmentPicker,
-  MediaEditor,
-  DeleteOptionsSheet,
-  MessageActionsSheet,
-  HeaderMenuPopup,
-  CameraCapture,
-  VideoPreview,
-  VoiceRecorderController,
-  useChatThread,
-} from "../../src/components/chat";
+import ReplyPreview from "../../src/components/chat/ReplyPreview";
+import EditPreview from "../../src/components/chat/EditPreview";
+import MessageBubble from "../../src/components/chat/MessageBubble";
+import TypingIndicator from "../../src/components/chat/TypingIndicator";
+import Composer from "../../src/components/chat/Composer";
+import PinnedBanner from "../../src/components/chat/PinnedBanner";
+import EmojiKeyboard from "../../src/components/chat/EmojiKeyboard";
+import VoiceRecorderController from "../../src/components/chat/VoiceRecorderController";
+import { useChatThread } from "../../src/components/chat/useChatThread";
 import {
   fmtDaySeparator,
   isSameDay,
   WORK_MODE_LABEL,
 } from "../../src/components/chat/chatUtils";
+
+const ReactionOverlay = lazy(
+  () => import("../../src/components/chat/ReactionOverlay"),
+);
+const EmojiPicker = lazy(() => import("../../src/components/chat/EmojiPicker"));
+const TenorMediaPicker = lazy(
+  () => import("../../src/components/chat/TenorMediaPicker"),
+);
+const AttachmentPicker = lazy(
+  () => import("../../src/components/chat/AttachmentPicker"),
+);
+const MediaEditor = lazy(() => import("../../src/components/chat/MediaEditor"));
+const DeleteOptionsSheet = lazy(
+  () => import("../../src/components/chat/DeleteOptionsSheet"),
+);
+const MessageActionsSheet = lazy(
+  () => import("../../src/components/chat/MessageActionsSheet"),
+);
+const HeaderMenuPopup = lazy(
+  () => import("../../src/components/chat/HeaderMenuPopup"),
+);
+const CameraCapture = lazy(
+  () => import("../../src/components/chat/CameraCapture"),
+);
+const VideoPreview = lazy(() => import("../../src/components/chat/VideoPreview"));
 
 // Coloured dot next to the office/remote header badge (green = office,
 // blue = remote, amber = hybrid). Mirrors the web ChatHeader.
@@ -517,54 +530,66 @@ export default function ChatThread() {
           (Signal-style AttachmentKeyboard). Voice + Emoji are NOT here: they
           live in the composer itself (the Mic send-button and the inline emoji
           toggle), so duplicating them in this sheet was redundant. */}
-      <AttachmentPicker
-        visible={c.plusOpen}
-        onClose={() => c.setPlusOpen(false)}
-        onPhoto={c.attachFile}
-        onDocument={c.attachDocument}
-        onPickRecent={c.handlePickRecentMedia}
-        onOpenCamera={c.attachCamera}
-      />
+      {c.plusOpen ? (
+        <Suspense fallback={null}>
+          <AttachmentPicker
+            visible={c.plusOpen}
+            onClose={() => c.setPlusOpen(false)}
+            onPhoto={c.attachFile}
+            onDocument={c.attachDocument}
+            onPickRecent={c.handlePickRecentMedia}
+            onOpenCamera={c.attachCamera}
+          />
+        </Suspense>
+      ) : null}
 
       {/* Signal-style full-screen in-app camera (tap=photo, hold=video, flip,
           flash, recent-gallery strip). Rendered as a full-screen Modal so it
           covers the chat while open. Captures route back through the hook:
           photos → MediaEditor, videos/recent-gallery → upload. */}
-      <Modal
-        visible={c.cameraOpen}
-        animationType="slide"
-        onRequestClose={() => c.setCameraOpen(false)}
-        statusBarTranslucent
-      >
-        <CameraCapture
-          active={c.cameraOpen}
-          onClose={() => c.setCameraOpen(false)}
-          onCapturedPhoto={c.handleCameraPhoto}
-          onCapturedVideo={c.handleCameraVideo}
-          onPickRecent={c.handlePickRecentMedia}
-          onOpenGallery={c.attachFile}
-        />
-      </Modal>
+      {c.cameraOpen ? (
+        <Modal
+          visible={c.cameraOpen}
+          animationType="slide"
+          onRequestClose={() => c.setCameraOpen(false)}
+          statusBarTranslucent
+        >
+          <Suspense fallback={null}>
+            <CameraCapture
+              active={c.cameraOpen}
+              onClose={() => c.setCameraOpen(false)}
+              onCapturedPhoto={c.handleCameraPhoto}
+              onCapturedVideo={c.handleCameraVideo}
+              onPickRecent={c.handlePickRecentMedia}
+              onOpenGallery={c.attachFile}
+            />
+          </Suspense>
+        </Modal>
+      ) : null}
 
       {/* Signal-style media editor — opened after capturing/picking an image.
           Provides pen/crop/rotate/quality/view-once + caption before send. */}
       {c.editorItems ? (
-        <MediaEditor
-          initialItems={c.editorItems}
-          onSend={c.handleMediaEditorSend}
-          onClose={() => c.setEditorItems(null)}
-        />
+        <Suspense fallback={null}>
+          <MediaEditor
+            initialItems={c.editorItems}
+            onSend={c.handleMediaEditorSend}
+            onClose={() => c.setEditorItems(null)}
+          />
+        </Suspense>
       ) : null}
 
       {/* Video review screen — opened after recording/picking a video. Lets the
           user watch, caption, set view-once, and Send or discard (instead of
           firing the upload the instant the shutter is released). */}
       {c.videoPreview ? (
-        <VideoPreview
-          uri={c.videoPreview.uri}
-          onSend={c.sendVideoPreview}
-          onClose={() => c.setVideoPreview(null)}
-        />
+        <Suspense fallback={null}>
+          <VideoPreview
+            uri={c.videoPreview.uri}
+            onSend={c.sendVideoPreview}
+            onClose={() => c.setVideoPreview(null)}
+          />
+        </Suspense>
       ) : null}
 
       {/* Long-press message context menu (Signal / WhatsApp / Telegram style):
@@ -574,105 +599,129 @@ export default function ChatThread() {
           Hidden while the full emoji picker is open so the picker isn't stuck
           BEHIND this Modal — but `reactTarget` stays alive so the chosen emoji
           is still applied to the right message. */}
-      <ReactionOverlay
-        visible={!!c.reactTarget && !c.showAllEmoji}
-        anchor={c.reactAnchor}
-        message={c.reactTarget}
-        isOwn={Number(c.reactTarget?.sender_id) === Number(c.user?.id)}
-        isStarred={!!c.reactTarget && c.starredIds.has(c.reactTarget.id)}
-        isPinned={!!c.reactTarget?.pinned_at}
-        userId={c.user?.id}
-        onReact={(emoji) => c.reactTarget && c.react(c.reactTarget, emoji)}
-        onOpenAllEmoji={() => {
-          c.setEmojiMode("react");
-          c.setShowAllEmoji(true);
-        }}
-        onReply={() => c.reactTarget && c.startReply(c.reactTarget)}
-        onForward={() => c.reactTarget && c.openForwardFor(c.reactTarget)}
-        onCopy={() => c.reactTarget && c.copyMessage(c.reactTarget)}
-        onSave={() => {
-          const m = c.reactTarget;
-          c.setReactTarget(null);
-          c.setReactAnchor(null);
-          if (m) c.doStar(m);
-        }}
-        onPin={() => {
-          const m = c.reactTarget;
-          c.setReactTarget(null);
-          c.setReactAnchor(null);
-          if (m) c.doPin(m);
-        }}
-        onEdit={() => c.reactTarget && c.startEdit(c.reactTarget)}
-        onSelect={() => c.reactTarget && c.enterSelectionWith(c.reactTarget)}
-        onDelete={() => c.reactTarget && c.doDelete(c.reactTarget)}
-        onClose={() => {
-          c.setReactTarget(null);
-          c.setReactAnchor(null);
-        }}
-      />
+      {!!c.reactTarget && !c.showAllEmoji ? (
+        <Suspense fallback={null}>
+          <ReactionOverlay
+            visible={!!c.reactTarget && !c.showAllEmoji}
+            anchor={c.reactAnchor}
+            message={c.reactTarget}
+            isOwn={Number(c.reactTarget?.sender_id) === Number(c.user?.id)}
+            isStarred={!!c.reactTarget && c.starredIds.has(c.reactTarget.id)}
+            isPinned={!!c.reactTarget?.pinned_at}
+            userId={c.user?.id}
+            onReact={(emoji) => c.reactTarget && c.react(c.reactTarget, emoji)}
+            onOpenAllEmoji={() => {
+              c.setEmojiMode("react");
+              c.setShowAllEmoji(true);
+            }}
+            onReply={() => c.reactTarget && c.startReply(c.reactTarget)}
+            onForward={() => c.reactTarget && c.openForwardFor(c.reactTarget)}
+            onCopy={() => c.reactTarget && c.copyMessage(c.reactTarget)}
+            onSave={() => {
+              const m = c.reactTarget;
+              c.setReactTarget(null);
+              c.setReactAnchor(null);
+              if (m) c.doStar(m);
+            }}
+            onPin={() => {
+              const m = c.reactTarget;
+              c.setReactTarget(null);
+              c.setReactAnchor(null);
+              if (m) c.doPin(m);
+            }}
+            onEdit={() => c.reactTarget && c.startEdit(c.reactTarget)}
+            onSelect={() => c.reactTarget && c.enterSelectionWith(c.reactTarget)}
+            onDelete={() => c.reactTarget && c.doDelete(c.reactTarget)}
+            onClose={() => {
+              c.setReactTarget(null);
+              c.setReactAnchor(null);
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       {/* Full emoji grid (opened from "All Emoji" or the composer "+").
           Closing in "react" mode also clears the long-pressed target so the
           reaction overlay (hidden only while this picker is open) doesn't pop
           back up. */}
-      <EmojiPicker
-        visible={c.showAllEmoji}
-        mode={c.emojiMode}
-        onPick={c.pickEmoji}
-        onClose={c.closeEmojiPicker}
-      />
+      {c.showAllEmoji ? (
+        <Suspense fallback={null}>
+          <EmojiPicker
+            visible={c.showAllEmoji}
+            mode={c.emojiMode}
+            onPick={c.pickEmoji}
+            onClose={c.closeEmojiPicker}
+          />
+        </Suspense>
+      ) : null}
 
-      <TenorMediaPicker
-        visible={c.tenorOpen}
-        kind={c.tenorKind}
-        onClose={() => c.setTenorOpen(false)}
-        onPick={(item) => c.pickTenorMedia(item, c.tenorKind)}
-      />
+      {c.tenorOpen ? (
+        <Suspense fallback={null}>
+          <TenorMediaPicker
+            visible={c.tenorOpen}
+            kind={c.tenorKind}
+            onClose={() => c.setTenorOpen(false)}
+            onPick={(item) => c.pickTenorMedia(item, c.tenorKind)}
+          />
+        </Suspense>
+      ) : null}
 
       {/* Message action sheet (forward / save / pin / edit / delete). */}
-      <MessageActionsSheet
-        target={c.actionTarget}
-        forwardMode={c.forwardMode}
-        conversations={c.conversations}
-        convId={c.convId}
-        isOwn={Number(c.actionTarget?.sender_id) === Number(c.user?.id)}
-        isStarred={!!c.actionTarget && c.starredIds.has(c.actionTarget.id)}
-        onClose={c.closeActionSheet}
-        onForwardOpen={c.openForward}
-        onForwardTo={c.doForward}
-        onStar={() => c.actionTarget && c.doStar(c.actionTarget)}
-        onPin={() => c.actionTarget && c.doPin(c.actionTarget)}
-        onEdit={() => c.actionTarget && c.startEdit(c.actionTarget)}
-        onDelete={() => c.actionTarget && c.doDelete(c.actionTarget)}
-      />
+      {c.actionTarget || c.forwardMode ? (
+        <Suspense fallback={null}>
+          <MessageActionsSheet
+            target={c.actionTarget}
+            forwardMode={c.forwardMode}
+            conversations={c.conversations}
+            convId={c.convId}
+            isOwn={Number(c.actionTarget?.sender_id) === Number(c.user?.id)}
+            isStarred={!!c.actionTarget && c.starredIds.has(c.actionTarget.id)}
+            onClose={c.closeActionSheet}
+            onForwardOpen={c.openForward}
+            onForwardTo={c.doForward}
+            onStar={() => c.actionTarget && c.doStar(c.actionTarget)}
+            onPin={() => c.actionTarget && c.doPin(c.actionTarget)}
+            onEdit={() => c.actionTarget && c.startEdit(c.actionTarget)}
+            onDelete={() => c.actionTarget && c.doDelete(c.actionTarget)}
+          />
+        </Suspense>
+      ) : null}
 
       {/* Delete chooser — "Delete for everyone" (own messages) / "Delete for
           me" (local hide). Drives both single-message and multi-select deletes. */}
-      <DeleteOptionsSheet
-        visible={!!c.deleteTargets}
-        count={c.deleteTargets?.length ?? 0}
-        canDeleteForEveryone={c.deleteCanForEveryone}
-        onDeleteForEveryone={c.deleteForEveryone}
-        onDeleteForMe={c.deleteForMe}
-        onClose={c.closeDeleteSheet}
-      />
+      {c.deleteTargets ? (
+        <Suspense fallback={null}>
+          <DeleteOptionsSheet
+            visible={!!c.deleteTargets}
+            count={c.deleteTargets?.length ?? 0}
+            canDeleteForEveryone={c.deleteCanForEveryone}
+            onDeleteForEveryone={c.deleteForEveryone}
+            onDeleteForMe={c.deleteForMe}
+            onClose={c.closeDeleteSheet}
+          />
+        </Suspense>
+      ) : null}
 
       {/* Header 3-dot overflow menu (Signal-style, top-anchored popup). Items
           navigate to the dedicated profile sub-screens (search / shared media /
           pinned / saved) instead of opening cramped bottom-sheet panels. */}
-      <HeaderMenuPopup
-        visible={c.menuOpen}
-        onClose={() => c.setMenuOpen(false)}
-        onSearch={c.openSearch}
-        onPinned={c.openPinnedScreen}
-        onSharedMedia={() => c.openSharedMedia("media")}
-        onSaved={c.openSavedScreen}
-        onClearChat={c.doClearChat}
-        onToggleBlock={
-          !c.isGroupConv && c.peerUserId ? c.doToggleBlock : undefined
-        }
-        isBlocked={c.isBlocked}
-      />
+      {c.menuOpen ? (
+        <Suspense fallback={null}>
+          <HeaderMenuPopup
+            visible={c.menuOpen}
+            onClose={() => c.setMenuOpen(false)}
+            onSearch={c.openSearch}
+            onPinned={c.openPinnedScreen}
+            onSharedMedia={() => c.openSharedMedia("media")}
+            onSaved={c.openSavedScreen}
+            onClearChat={c.doClearChat}
+            onToggleBlock={
+              !c.isGroupConv && c.peerUserId ? c.doToggleBlock : undefined
+            }
+            isBlocked={c.isBlocked}
+          />
+        </Suspense>
+      ) : null}
 
       {c.dialog}
     </View>

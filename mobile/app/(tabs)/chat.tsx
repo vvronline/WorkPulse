@@ -185,6 +185,9 @@ export default function ChatScreen() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [openingConversationId, setOpeningConversationId] = useState<number | null>(
+    null,
+  );
 
   // Live presence map for 1:1 conversation peers (userId → effective status).
   // Mirrors the web `userStatusMap` so chat avatars show a status badge.
@@ -370,7 +373,10 @@ export default function ChatScreen() {
         params.groupMemberAvatars = JSON.stringify(c.group_member_avatars);
       }
     }
-    router.push({ pathname: "/chat/[id]", params });
+    setOpeningConversationId(c.id);
+    requestAnimationFrame(() => {
+      router.push({ pathname: "/chat/[id]", params });
+    });
   }
 
   useEffect(() => {
@@ -883,6 +889,7 @@ export default function ChatScreen() {
   function renderConv(item: Conversation) {
     const name = convName(item);
     const selected = selectedIds.has(item.id);
+    const opening = openingConversationId === item.id;
     // Signal-style attachment preview: a type-specific icon + label instead of a
     // generic "Attachment". Falls back to the text message / "No messages yet".
     const attachment = item.last_file_url
@@ -900,10 +907,10 @@ export default function ChatScreen() {
     const listTick = callPreview ? null : renderListTick(item);
     return (
       <Pressable
-        key={item.id}
         style={({ pressed }) => [
           styles.row,
           selected && styles.rowSelected,
+          opening && styles.rowPressed,
           pressed && styles.rowPressed,
         ]}
         // In selection mode a tap toggles the row; otherwise it opens the chat.
