@@ -1,14 +1,16 @@
 import { memo, useEffect, useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   withTiming,
   withSequence,
+  runOnJS,
   interpolateColor,
 } from "react-native-reanimated";
-import { Check, Pin, Star } from "../../icons";
+import { Check, CornerUpLeft, Pin, Star } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
@@ -18,6 +20,12 @@ import FilePreview from "./FilePreview";
 import MessageContent from "./MessageContent";
 import ReactionChips from "./ReactionChips";
 import { fmtTime, isEmojiOnlyMessage } from "./chatUtils";
+
+// Horizontal drag distance (px) past which releasing triggers a reply, and the
+// max the bubble is allowed to travel (Signal-style swipe-to-reply). Activation
+// is intentionally conservative so vertical list scrolling wins quickly.
+const SWIPE_TRIGGER = 56;
+const SWIPE_MAX = 76;
 
 /**
  * A single chat message row (Signal-Android style). Own messages render as a
@@ -99,6 +107,7 @@ function MessageBubbleImpl({
   onPressSelect,
   onReact,
   onAddReaction,
+  onReply,
   onRetry,
   onCancelUpload,
   onRetryUpload,
@@ -108,11 +117,56 @@ function MessageBubbleImpl({
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
-  // Keep mounted rows lightweight. Signal binds swipe/drag affordances through
-  // RecyclerView touch helpers rather than giving every recycled row its own
-  // permanent gesture object. Creating a Pan gesture + shared values for every
-  // FlatList cell made scrolling progressively heavier on long/reopened chats, so
-  // mobile keeps long-press/reply actions but disables per-row swipe-to-reply.
+  // Swipe-to-reply gesture. Keep it guarded so normal vertical scrolling remains
+  // cheap/reliable: disabled for deleted rows, selection mode and media upload
+  // progress rows. This restores Signal-style swipe without bringing back row
+  // layout animations.
+  const translateX = useSharedValue(0);
+  const iconProgress = useSharedValue(0);
+
+  const mediaUploadInProgress =
+    !!message.file_url &&
+    !deleted &&
+    (message._pending ||
+      message._failed ||
+      message._mediaState === "queued" ||
+      message._mediaState === "uploading" ||
+      message._mediaState === "failed");
+
+  const swipeEnabled = !!onReply && !deleted && !selectionActive && !mediaUploadInProgress;
+
+  const fireReply = () => {
+    if (swipeEnabled) onReply?.(message);
+  };
+
+  const panGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetX(mine ? [-18, 9999] : [-9999, 18])
+        .failOffsetY([-10, 10])
+        .enabled(swipeEnabled)
+        .onUpdate((e) => {
+          let tx = e.translationX;
+          if (mine) tx = Math.min(0, Math.max(-SWIPE_MAX, tx));
+          else tx = Math.max(0, Math.min(SWIPE_MAX, tx));
+          translateX.value = tx;
+          iconProgress.value = Math.min(1, Math.abs(tx) / SWIPE_TRIGGER);
+        })
+        .onEnd(() => {
+          if (Math.abs(translateX.value) >= SWIPE_TRIGGER) {
+            runOnJS(fireReply)();
+          }
+          translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
+          iconProgress.value = withTiming(0, { duration: 140 });
+        })
+        .onFinalize(() => {
+          translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
+          iconProgress.value = withTiming(0, { duration: 140 });
+        }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mine, swipeEnabled, onReply, message],
+  );
+
   // Signal-style press feedback: while the finger is down the bubble eases to a
   // slightly smaller scale, then springs back on release. Combined with the
   // reaction overlay's scale-in this reads as one continuous "lift" gesture.
@@ -125,7 +179,11 @@ function MessageBubbleImpl({
   };
 
   const bubbleAnim = useAnimatedStyle(() => ({
-    transform: [{ scale: pressScale.value }],
+    transform: [{ translateX: translateX.value }, { scale: pressScale.value }],
+  }));
+  const iconAnim = useAnimatedStyle(() => ({
+    opacity: iconProgress.value,
+    transform: [{ scale: 0.6 + iconProgress.value * 0.4 }],
   }));
 
   // Signal search-match highlight: a brief background tint flash that fades back
@@ -169,19 +227,6 @@ function MessageBubbleImpl({
     !deleted &&
     !message.file_url &&
     isEmojiOnlyMessage(message.content);
-
-  // While a media attachment is still uploading (or failed mid-upload) the
-  // FilePreview shows a single progress/retry overlay on the card. Suppress the
-  // delivery-status ticks (and their "sending" spinner) in that window so the
-  // bubble shows exactly ONE indicator, matching WhatsApp/Signal.
-  const mediaUploadInProgress =
-    !!message.file_url &&
-    !deleted &&
-    (message._pending ||
-      message._failed ||
-      message._mediaState === "queued" ||
-      message._mediaState === "uploading" ||
-      message._mediaState === "failed");
 
   // Signal corner-radius grouping. Base radius is 18; the sender-side corner is
   // tightened to 4 on edges that connect to an adjacent message in the group.
@@ -240,8 +285,22 @@ function MessageBubbleImpl({
           {selected ? <Check size={14} color="#fff" /> : null}
         </View>
       ) : null}
+      {/* Reply affordance revealed behind the bubble while swiping. */}
+      <Animated.View
+        style={[
+          styles.replyHint,
+          mine ? styles.replyHintMine : styles.replyHintTheirs,
+          iconAnim,
+        ]}
+        pointerEvents="none"
+      >
+        <View style={styles.replyHintCircle}>
+          <CornerUpLeft size={16} color={theme.text} />
+        </View>
+      </Animated.View>
       <View style={styles.bubbleCol}>
-        <Animated.View style={bubbleAnim}>
+        <GestureDetector gesture={panGesture}>
+          <Animated.View style={bubbleAnim}>
             <Pressable
               ref={(node) => {
                 registerRef(message.id, node as unknown as View | null);
@@ -373,7 +432,8 @@ function MessageBubbleImpl({
                 </View>
               )}
             </Pressable>
-        </Animated.View>
+          </Animated.View>
+        </GestureDetector>
 
         {/* Reaction chips overlap the bottom edge of the bubble (Signal-style),
             rendered just below it and aligned toward the sender side. */}

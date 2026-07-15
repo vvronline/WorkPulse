@@ -952,7 +952,7 @@ function ChatList({
             onPressSelect={c.toggleSelect}
             onReact={c.react}
             onAddReaction={c.openReactionBar}
-            onReply={undefined}
+            onReply={c.startReply}
             onRetry={c.retryFailedMessage}
             onCancelUpload={c.cancelMediaUpload}
             onRetryUpload={c.retryMediaUpload}
