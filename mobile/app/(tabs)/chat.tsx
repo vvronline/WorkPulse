@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  InteractionManager,
   Modal,
   Pressable,
   RefreshControl,
@@ -226,19 +227,28 @@ export default function ChatScreen() {
   // one then paints instantly from disk with no spinner. Bounded + best-effort
   // so it never delays the list or hammers the server. Only fills cold entries.
   const prefetchRecent = useCallback((convs: Conversation[]) => {
-    const recent = [...convs]
-      .filter((c) => !c.is_meeting_chat)
-      .sort(
-        (a, b) =>
-          new Date(b.last_message_at || 0).getTime() -
-          new Date(a.last_message_at || 0).getTime(),
-      )
-      .slice(0, 5);
-    recent.forEach((c) => {
-      if (getCachedMessages(c.id)) return; // already warm
-      getMessages(c.id)
-        .then((r) => setCachedMessages(c.id, r.data || []))
-        .catch(() => {});
+    // Never let speculative prefetch compete with a user's tap-to-open. Run it
+    // only after current navigation/list interactions have settled, and skip it
+    // if a row is already opening.
+    InteractionManager.runAfterInteractions(() => {
+      if (openingConvRef.current) return;
+      const recent = [...convs]
+        .filter((c) => !c.is_meeting_chat)
+        .sort(
+          (a, b) =>
+            new Date(b.last_message_at || 0).getTime() -
+            new Date(a.last_message_at || 0).getTime(),
+        )
+        .slice(0, 5);
+      recent.forEach((c) => {
+        if (openingConvRef.current) return;
+        if (getCachedMessages(c.id)) return; // already warm
+        getMessages(c.id)
+          .then((r) => {
+            if (!openingConvRef.current) setCachedMessages(c.id, r.data || []);
+          })
+          .catch(() => {});
+      });
     });
   }, []);
 
@@ -400,11 +410,10 @@ export default function ChatScreen() {
     }
     setOpeningConversationId(c.id);
     requestAnimationFrame(() => {
-      // Single-active-conversation model: do NOT stack a new native chat card
-      // on every list → thread open. Replacing keeps repeated open/exit cycles
-      // from accumulating retained route/header/Fabric resources underneath the
-      // current chat (Signal/WhatsApp-style one active conversation surface).
-      router.replace({ pathname: "/chat/[id]", params });
+      // Push the thread so the already-painted chat list stays physically behind
+      // it for native/system back gestures. The heavy thread body unmounts on
+      // blur, so pushed route cards no longer retain live chat hooks.
+      router.push({ pathname: "/chat/[id]", params });
     });
   }
 

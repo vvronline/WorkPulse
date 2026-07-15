@@ -407,29 +407,6 @@ function mergeNewestPageIntoLoadedThread(
  * from `app/chat/[id].tsx` so the screen is a thin presentational orchestrator
  * (mirrors the web ChatMessages container/hook split). Behavior-preserving.
  */
-// ── DEV INSTRUMENTATION (TEMPORARY — remove before finishing) ──
-// Tracks how many `useChatThread` instances are simultaneously MOUNTED. On a
-// native stack a plain list→chat→back→chat cycle should keep this at 1. If it
-// climbs with each open, blurred threads are staying mounted/live underneath
-// the current one (the real root cause of the compounding open slowdown).
-let __LIVE_THREAD_COUNT = 0;
-
-// Best-effort JS heap size in MB (Hermes / JSC expose usedJSHeapSize on
-// performance.memory; returns "?" when unavailable). TEMPORARY diagnostic —
-// remove with the live-thread instrumentation once the freeze is confirmed gone.
-function __jsHeapMB(): string {
-  try {
-    const mem = (globalThis as any)?.performance?.memory;
-    const used = mem?.usedJSHeapSize;
-    if (typeof used === "number" && used > 0) {
-      return (used / (1024 * 1024)).toFixed(1);
-    }
-  } catch {
-    /* ignore */
-  }
-  return "?";
-}
-
 export function useChatThread() {
   const params = useLocalSearchParams<{
     id: string;
@@ -670,27 +647,6 @@ export function useChatThread() {
     [],
   );
 
-  // ── DEV INSTRUMENTATION (TEMPORARY — remove before finishing) ──
-  // Prove/disprove the "blurred chat threads stay mounted and accumulate"
-  // hypothesis. Each mount bumps the module-level live count; each unmount
-  // drops it. On a native stack, list→chat→back→chat should hold this at 1. If
-  // it climbs per open, the blurred threads are NOT being torn down (the real
-  // root cause of the compounding open slowdown).
-  useEffect(() => {
-    __LIVE_THREAD_COUNT += 1;
-    // NOTE: use console.warn (not console.log) — babel-preset-expo strips
-    // console.log from production/release builds but KEEPS warn/error, so this
-    // instrumentation is visible in logcat regardless of the build variant.
-    console.warn(
-      `[useChatThread] MOUNT convId=${convId} | live threads=${__LIVE_THREAD_COUNT} | jsHeapMB=${__jsHeapMB()}`,
-    );
-    return () => {
-      __LIVE_THREAD_COUNT -= 1;
-      console.warn(
-        `[useChatThread] UNMOUNT convId=${convId} | live threads=${__LIVE_THREAD_COUNT} | jsHeapMB=${__jsHeapMB()}`,
-      );
-    };
-  }, [convId]);
   // Ref mirror of isRecordingActive — guards against double-start re-entrancy
   // in the recording handlers without depending on the stale polled value.
   const recordingRef = useRef(false);
@@ -2624,11 +2580,13 @@ export function useChatThread() {
   }
 
   const goBackToChatList = useCallback(() => {
-    // Single-active-conversation model: always leave the thread by replacing it
-    // with the chat tab instead of popping an arbitrarily deep native stack. This
-    // keeps repeated list → thread → list cycles from retaining old chat route
-    // cards/resources and mirrors Signal/WhatsApp's one active conversation
-    // surface.
+    // Prefer a real stack pop so the already-painted chat list remains behind
+    // the thread during Android/iOS back gestures. If this thread was launched
+    // as a root route (cold notification/deep link), fall back to the chat tab.
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
     router.replace("/(tabs)/chat" as never);
   }, [router]);
 

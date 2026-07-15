@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import { Modal } from "react-native";
-import { Stack } from "expo-router";
+import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
 import {
   ArrowLeft,
   Building2,
@@ -27,8 +27,15 @@ import {
 } from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { useFocusEffect } from "expo-router";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Animated, {
   FadeIn,
   FadeInRight,
@@ -119,25 +126,60 @@ const STATUS_DOT_COLOR: Record<string, string> = {
  */
 export default function ChatThread() {
   const theme = useTheme();
-  const [isFocused, setIsFocused] = useState(true);
+  const params = useLocalSearchParams<{ name?: string }>();
+  const [bodyMounted, setBodyMounted] = useState(false);
+  const mountRaf = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
+  const unmountTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Track focus so the heavy body is torn down the moment this screen is no
-  // longer the active conversation (backing to the list, or pushing a
-  // sub-screen like search/info/saved). useFocusEffect fires on focus and its
-  // cleanup on blur.
+  // Let the native route/header commit first, then mount the heavy thread hook on
+  // the next frame. The previous version rendered <ConversationBody>
+  // immediately, so useChatThread's synchronous cache reads/state initializers
+  // still blocked the tap→open frame even though the message list itself was
+  // gated later.
   useFocusEffect(
     useCallback(() => {
-      setIsFocused(true);
-      return () => setIsFocused(false);
+      if (unmountTimer.current) {
+        clearTimeout(unmountTimer.current);
+        unmountTimer.current = null;
+      }
+      mountRaf.current = requestAnimationFrame(() => {
+        mountRaf.current = null;
+        setBodyMounted(true);
+      });
+
+      return () => {
+        if (mountRaf.current) {
+          cancelAnimationFrame(mountRaf.current);
+          mountRaf.current = null;
+        }
+        // Keep the last painted chat content alive while the native back gesture
+        // / pop transition finishes. Unmounting immediately on blur exposed a
+        // blank/native-gray card for a frame during system back.
+        unmountTimer.current = setTimeout(() => {
+          unmountTimer.current = null;
+          setBodyMounted(false);
+        }, 350);
+      };
     }, []),
   );
 
-  if (!isFocused) {
-    // Blurred: the conversation tree is unmounted (all its socket
-    // subscriptions/timers cleaned up). Render a solid themed surface so the
-    // slide-away transition never exposes a gray/blank native card. On Android
-    // the thread uses `animation: "none"` so this is never even visible.
-    return <View style={{ flex: 1, backgroundColor: theme.bg }} />;
+  useEffect(
+    () => () => {
+      if (mountRaf.current) cancelAnimationFrame(mountRaf.current);
+      if (unmountTimer.current) clearTimeout(unmountTimer.current);
+    },
+    [],
+  );
+
+  if (!bodyMounted) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.bg }}>
+        <Stack.Screen options={{ title: params.name || "Chat" }} />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator size="large" color={theme.primary} />
+        </View>
+      </View>
+    );
   }
 
   return <ConversationBody />;
