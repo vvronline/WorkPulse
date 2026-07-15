@@ -1,35 +1,29 @@
 import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import Animated, { Keyframe } from "react-native-reanimated";
 import { Plus } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
-// Pronounced Signal-style zoom (no layout slide). The chip pops in from a small
-// scale, overshoots slightly past 1, then settles — so adding a reaction is
-// clearly noticeable. Removal shrinks back down while fading. We deliberately
-// DON'T use `layout` here: an image loads after the chat opens and grows the
-// bubble, and a layout transition would make the pills "fall" to follow the new
-// image height.
-const CHIP_IN = new Keyframe({
-  0: { opacity: 0, transform: [{ scale: 0.3 }] },
-  60: { opacity: 1, transform: [{ scale: 1.18 }] },
-  100: { opacity: 1, transform: [{ scale: 1 }] },
-}).duration(260);
-
-const CHIP_OUT = new Keyframe({
-  0: { opacity: 1, transform: [{ scale: 1 }] },
-  40: { opacity: 1, transform: [{ scale: 1.12 }] },
-  100: { opacity: 0, transform: [{ scale: 0.3 }] },
-}).duration(200);
-
 /**
  * Reaction chips row rendered BELOW the bubble (mirrors the web ReactionBar /
  * MessageBubble reactions row). Aggregates a message's reactions by emoji and
  * highlights the current user's own reactions.
+ *
+ * PERF ROOT-CAUSE FIX (the compounding "gradually lags very much then freezes"
+ * bug): these chips previously used Reanimated `entering`/`exiting` Keyframe
+ * layout animations. Reanimated layout animations are UNSAFE on virtualized
+ * list rows under the New Architecture (Fabric): the FlatList — not the
+ * animation — controls when a row is mounted/unmounted, so when a row is
+ * recycled (scrolling) or the thread unmounts, Reanimated tries to play the
+ * `exiting` animation on a view whose Fabric surface is already gone. Every
+ * such attempt throws `Unable to find SurfaceMountingManager for tag` and
+ * RETRIES the next frame, forever — confirmed on-device as MILLIONS of
+ * `synchronouslyUpdateUIProps failed` log lines that saturate the UI thread and
+ * progressively freeze the app. `exiting` on a list-owned row is the single
+ * worst offender. WhatsApp/Signal/Telegram do NOT run enter/exit animations on
+ * recycled conversation rows — reactions simply appear/disappear. So the
+ * animations are removed entirely; the chips render as plain Pressables.
  */
 export default function ReactionChips({
   message,
@@ -65,18 +59,17 @@ export default function ReactionChips({
       ]}
     >
       {Object.entries(groups).map(([emoji, g]) => (
-        // Gentle zoom in/out on add/remove — no layout slide, so reactions on
-        // images don't "fall" when the image loads and grows the bubble.
-        <AnimatedPressable
+        // Plain Pressable — NO Reanimated entering/exiting (see the root-cause
+        // note above: layout animations on virtualized rows leak failing Fabric
+        // mappers when the row is recycled).
+        <Pressable
           key={emoji}
-          entering={CHIP_IN}
-          exiting={CHIP_OUT}
           style={[styles.reactionChip, g.mine && styles.myReactionChip]}
           onPress={() => onToggle(message, emoji)}
         >
           <Text style={styles.reactionEmoji}>{emoji}</Text>
           <Text style={styles.reactionCount}>{g.count}</Text>
-        </AnimatedPressable>
+        </Pressable>
       ))}
       <Pressable
         style={styles.addReactionBtn}

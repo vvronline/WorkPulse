@@ -8,7 +8,6 @@ import Animated, {
   withTiming,
   withSequence,
   runOnJS,
-  FadeIn,
   interpolateColor,
 } from "react-native-reanimated";
 import { Check, CornerUpLeft, Pin, Star } from "../../icons";
@@ -246,26 +245,23 @@ function MessageBubbleImpl({
 
   return (
     <Animated.View
-      // Signal-style message enter: a freshly sent/received bubble simply FADES
-      // in (no spring/bounce) so it flows straight into place and stays put.
-      //
-      // PERF ROOT-CAUSE FIX (the "fast at first, then gradually freezes" bug):
-      // this row used to also carry `layout={LinearTransition.springify()}`.
-      // A SPRING layout animation has NO fixed duration, and it was applied to
-      // EVERY mounted bubble. Every scroll, keyboard toggle, receipt update or
-      // reaction re-measured the rows and RESTARTED those springs, so Reanimated
-      // kept posting Choreographer frame callbacks that never settled — a
-      // recursive doFrame→doCallbacks→doFrame flood (thousands/sec, confirmed in
-      // logcat) that compounds as more rows mount. Native chat apps
-      // (WhatsApp/Signal/Telegram → RecyclerView ItemAnimator) animate ONLY the
-      // single inserted/changed item, never a spring layout on every existing
-      // row. So the per-row layout animation is removed entirely; neighbours now
-      // snap into place when a bubble grows (a reaction chip appears), exactly
-      // like Signal. `entering` is ALSO gated by `animateEntry`, which the list
-      // now sets TRUE only for the genuinely-new newest message (not for every
-      // recycled row that scrolls into the FlatList window), so scrolling never
-      // replays fades on recycled rows.
-      entering={animateEntry ? FadeIn.duration(180) : undefined}
+      // PERF ROOT-CAUSE FIX (the compounding "gradually lags very much then
+      // freezes" bug): this row used to carry Reanimated LAYOUT animations —
+      // first `layout={LinearTransition.springify()}`, then `entering={FadeIn}`.
+      // Reanimated layout animations (`entering`/`exiting`/`layout`) are UNSAFE
+      // on virtualized FlatList rows under the New Architecture (Fabric): the
+      // LIST controls when a row is mounted/recycled, so the animation manager
+      // races the Fabric surface teardown. When a row is recycled or the thread
+      // unmounts, Reanimated keeps trying to update a view whose surface is gone
+      // → `Unable to find SurfaceMountingManager for tag`, retried every frame
+      // forever (confirmed on-device: 20M+ `synchronouslyUpdateUIProps failed`
+      // lines that saturate the UI thread). WhatsApp/Signal/Telegram animate
+      // recycled rows via the RecyclerView item-animator, NOT per-row JS layout
+      // animations — new messages just appear. So ALL layout animations are
+      // removed from the row; `animateEntry` is now unused (kept in the prop
+      // type for call-site compatibility). This Animated.View remains ONLY for
+      // the `highlightAnim` value-style (a shared-value background tint on the
+      // stable mounted view — safe, not a layout animation).
       style={[
         styles.bubbleRow,
         mine ? styles.rowMine : styles.rowTheirs,
