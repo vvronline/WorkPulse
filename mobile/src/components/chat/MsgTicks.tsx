@@ -4,13 +4,12 @@ import Animated, {
   Easing,
   useAnimatedStyle,
   useSharedValue,
-  withRepeat,
   withSequence,
   withTiming,
   cancelAnimation,
 } from "react-native-reanimated";
 import Svg, { Circle, Path } from "react-native-svg";
-import { AlertTriangle, RefreshCw } from "../../icons";
+import { AlertTriangle, Clock, RefreshCw } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
@@ -73,23 +72,25 @@ export default function MsgTicks({
   // Pop-in animation on each delivery-state transition (sent→delivered→read).
   const scale = useSharedValue(1);
   const opacity = useSharedValue(1);
-  // Continuous rotation for the "sending" ring.
-  const spin = useSharedValue(0);
 
-  useEffect(() => {
-    if (phase === "sending") {
-      spin.value = 0;
-      spin.value = withRepeat(
-        withTiming(360, { duration: 900, easing: Easing.linear }),
-        -1,
-        false,
-      );
-      return () => cancelAnimation(spin);
-    }
-    cancelAnimation(spin);
-    spin.value = 0;
-    return undefined;
-  }, [phase, spin]);
+  // PERF ROOT-CAUSE FIX (the "gradually lags very much then freezes" bug):
+  // this component used to drive the "sending" state with an INFINITE
+  // `withRepeat(withTiming(360), -1)` rotation. Under the New Architecture
+  // (Fabric), an infinite animation keeps its Reanimated mapper posting a
+  // `synchronouslyUpdateUIProps` for the animated view on EVERY frame, forever.
+  // When the row is then unmounted/recycled (FlatList windowing, or the thread
+  // screen unmounting) the view's Fabric surface is gone, so every one of those
+  // per-frame updates throws `Unable to find SurfaceMountingManager for tag`
+  // and RETRIES the next frame — indefinitely. Each pending/sending message
+  // that ever mounted leaks one such never-ending failing mapper, so the log
+  // (confirmed on-device: ~9.8 MILLION `synchronouslyUpdateUIProps failed`
+  // lines) and the UI thread saturate progressively → the compounding freeze.
+  //
+  // WhatsApp/Signal/Telegram render "sending" as a STATIC clock glyph, not an
+  // animation-framework loop. So the infinite spin is removed entirely; the
+  // sending state is now a static Clock icon. Only FINITE pop-in animations
+  // remain, and they're cancelled on unmount below so a row recycled mid-pop
+  // can't leave a dangling mapper either.
 
   useEffect(() => {
     if (phase === "sent" || phase === "delivered" || phase === "read") {
@@ -103,12 +104,20 @@ export default function MsgTicks({
     }
   }, [phase, scale, opacity]);
 
+  // Cancel any in-flight finite animation when the row unmounts so Reanimated
+  // never tries to update a torn-down Fabric view tag (belt-and-suspenders
+  // against the SurfaceMountingManager retry spam described above).
+  useEffect(
+    () => () => {
+      cancelAnimation(scale);
+      cancelAnimation(opacity);
+    },
+    [scale, opacity],
+  );
+
   const glyphAnim = useAnimatedStyle(() => ({
     opacity: opacity.value,
     transform: [{ scale: scale.value }],
-  }));
-  const spinAnim = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${spin.value}deg` }],
   }));
 
   if (!mine) return null;
@@ -130,26 +139,12 @@ export default function MsgTicks({
   if (phase === "hidden") return null;
 
   if (phase === "sending") {
+    // Static clock glyph (Signal/WhatsApp "sending" indicator). NO animation —
+    // see the root-cause note above; an infinite spin here saturated Fabric with
+    // failing per-frame UI updates once the row unmounted.
     return (
       <View style={styles.box}>
-        <Animated.View style={spinAnim}>
-          <Svg width={14} height={14} viewBox="0 0 16 16" fill="none">
-            <Circle
-              cx={8}
-              cy={8}
-              r={6}
-              stroke={mutedColor}
-              strokeWidth={1.5}
-              opacity={0.35}
-            />
-            <Path
-              d="M8 2a6 6 0 016 6"
-              stroke={mutedColor}
-              strokeWidth={1.5}
-              strokeLinecap="round"
-            />
-          </Svg>
-        </Animated.View>
+        <Clock size={13} color={mutedColor} />
       </View>
     );
   }
