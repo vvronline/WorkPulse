@@ -827,6 +827,15 @@ function ChatList({
   // floating chevron fades in; tapping it smooth-scrolls back to the newest
   // message.
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const scrollReadyRef = useRef(false);
+
+  useEffect(() => {
+    scrollReadyRef.current = false;
+    const timer = setTimeout(() => {
+      scrollReadyRef.current = true;
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [c.convId]);
 
   // Gate the per-bubble FadeIn/LinearTransition animations. They stay OFF for
   // the initial render so opening the conversation paints the whole visible
@@ -1054,6 +1063,7 @@ function ChatList({
           const distanceToOlderEdge =
             contentSize.height - layoutMeasurement.height - y;
           if (
+            scrollReadyRef.current &&
             distanceToOlderEdge < 700 &&
             c.hasMore &&
             !c.loadingOlder &&
@@ -1062,6 +1072,7 @@ function ChatList({
             c.loadOlder();
           }
         }}
+        showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
         onScrollToIndexFailed={() => {
           setTimeout(() => c.scrollToEnd(false), 200);

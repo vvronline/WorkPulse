@@ -962,15 +962,11 @@ export function useChatThread() {
       const loadedAt = Date.now();
       lastLoadedAtRef.current = loadedAt;
       __LAST_THREAD_RECONCILE_AT.set(convId, loadedAt);
-      // Only force a jump-to-bottom on the very FIRST cold paint. The list is
-      // INVERTED (structurally bottom-pinned), so re-scrolling on every
-      // background reconcile just caused a visible "settle"/jump on open and
-      // could yank a user who had scrolled up to read history. Subsequent
-      // reconciles leave the scroll position untouched (Signal-Android feel).
-      if (!didInitialScrollRef.current) {
-        didInitialScrollRef.current = true;
-        setTimeout(() => scrollToEnd(false), 80);
-      }
+      // Inverted FlatList is structurally bottom-pinned: index 0 is already the
+      // visual bottom/newest message. Do not force scrollToEnd() on open/reconcile
+      // because even non-animated native offset writes make the scrollbar flash
+      // and look like the chat is auto-scrolling while it opens.
+      didInitialScrollRef.current = true;
     } catch {
       /* ignore */
     } finally {
