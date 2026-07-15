@@ -51,11 +51,35 @@ type VideoSource = {
 };
 
 /** Simple in-memory cache so a bubble doesn't re-generate its poster on every
- *  re-render (the chat list recycles rows frequently). Keyed by source uri. */
-const posterCache = new Map<
-  string,
-  { uri: string; width: number; height: number }
->();
+ *  re-render (the chat list recycles rows frequently). Keyed by source uri.
+ *
+ *  BOUNDED (LRU): previously unbounded — it grew one poster entry per unique
+ *  video URL for the whole app session and was never cleared, a slow native/JS
+ *  heap creep across many chats/videos viewed. A JS Map keeps insertion order,
+ *  so we evict the oldest entry once past the cap (posterSet). Cap is small
+ *  because posters are only needed for currently/recently visible video rows. */
+type PosterEntry = { uri: string; width: number; height: number };
+const POSTER_MAX = 60;
+const posterCache = new Map<string, PosterEntry>();
+
+function posterGet(uri: string): PosterEntry | undefined {
+  const hit = posterCache.get(uri);
+  if (hit === undefined) return undefined;
+  // LRU touch.
+  posterCache.delete(uri);
+  posterCache.set(uri, hit);
+  return hit;
+}
+
+function posterSet(uri: string, entry: PosterEntry): void {
+  if (posterCache.has(uri)) posterCache.delete(uri);
+  posterCache.set(uri, entry);
+  while (posterCache.size > POSTER_MAX) {
+    const oldest = posterCache.keys().next().value;
+    if (oldest === undefined) break;
+    posterCache.delete(oldest);
+  }
+}
 
 /** mm:ss duration label from milliseconds. */
 function fmtDuration(ms?: number | null): string {
@@ -176,7 +200,7 @@ export default function InlineVideo({
     isLocal ? { uri } : null,
   );
   const [poster, setPoster] = useState<string | null>(
-    posterCache.get(uri)?.uri ?? null,
+    posterGet(uri)?.uri ?? null,
   );
   const [open, setOpen] = useState(false);
   const reportedRef = useRef(false);
@@ -212,7 +236,7 @@ export default function InlineVideo({
   // Generate the poster frame once (cached). Report its dimensions up so the
   // bubble box can adopt the real aspect ratio.
   useEffect(() => {
-    const cached = posterCache.get(uri);
+    const cached = posterGet(uri);
     if (cached) {
       setPoster(cached.uri);
       if (!reportedRef.current) {
@@ -237,7 +261,7 @@ export default function InlineVideo({
           width: res.width || 0,
           height: res.height || 0,
         };
-        posterCache.set(uri, entry);
+        posterSet(uri, entry);
         setPoster(entry.uri);
         if (entry.width && entry.height && !reportedRef.current) {
           reportedRef.current = true;

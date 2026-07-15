@@ -136,22 +136,17 @@ function ThemedStack() {
           // Explicit opaque background on the thread surface so the swipe-back
           // gesture always drags a fully-painted screen.
           contentStyle: { backgroundColor: theme.bg },
-          // Freeze BLURRED thread screens (react-freeze). Expo Router keeps
-          // every visited `chat/[id]` mounted in the native stack; without this
-          // each one keeps its `useChatThread` re-rendering + fanning out every
-          // global socket/context event underneath the active thread, so the JS
-          // thread + heap climb with each chat opened this session (the "fast at
-          // first, then 3–6s opens" degradation). freezeOnBlur suspends the
-          // blurred tree entirely so N stacked threads cost ~1 active tree's
-          // worth of work — Signal's single-active-conversation model.
-          //
-          // The old objection (it blanked the thread mid swipe-back) no longer
-          // applies on Android: the thread uses `animation: "none"` +
-          // `gestureEnabled: false` above, so there is no interactive card drag
-          // to expose a frozen/gray frame. On iOS the slide still paints because
-          // the ABOUT-TO-FOCUS screen thaws before the transition begins; only
-          // fully-backgrounded (non-top) screens stay frozen.
-          freezeOnBlur: true,
+          // NOTE: freezeOnBlur was REMOVED here. The thread now uses a
+          // focus-gated <ConversationBody> (see app/chat/[id].tsx) that fully
+          // UNMOUNTS the heavy useChatThread tree on blur — proven by the
+          // live-thread instrumentation staying at 0↔1 across every open. That
+          // is the real single-active-conversation model. Keeping freezeOnBlur
+          // on top of it was redundant AND harmful: react-freeze SUSPENDS the
+          // blurred React tree, which can defer/deny the unmount commit that
+          // runs the effect cleanups (socket off(), timer clears, array GC) and
+          // interferes with the native screen teardown — leaving native memory
+          // to creep up per open (the residual "freezes after ~10 opens"). With
+          // the body unmounting itself, freezing is unnecessary.
           animationMatchesGesture: true,
           fullScreenGestureShadowEnabled: false,
         }}

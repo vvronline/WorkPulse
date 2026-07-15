@@ -52,9 +52,41 @@ function localPathFor(remote: string): string {
 }
 
 // remote url -> resolved local uri that is known to exist on disk.
+//
+// BOUNDED (LRU): this used to be an UNBOUNDED module-level Map that grew one
+// entry per unique media URL for the whole app session (only cleared on
+// sign-out) — a slow session-long heap creep that contributed to the "app
+// gradually freezes after many chats/media viewed". A JS Map preserves
+// insertion order, so we implement a tiny LRU: on read we refresh recency
+// (delete + re-set), and on write we evict the oldest entry once we exceed the
+// cap. The on-DISK files are untouched — evicting only drops the in-memory
+// URL→path shortcut; a later view re-resolves it from disk via getInfoAsync.
+const MEMO_MAX = 300;
 const memo = new Map<string, string>();
+
+function memoGet(remote: string): string | undefined {
+  const hit = memo.get(remote);
+  if (hit === undefined) return undefined;
+  // LRU touch: move to the most-recently-used position.
+  memo.delete(remote);
+  memo.set(remote, hit);
+  return hit;
+}
+
+function memoSet(remote: string, local: string): void {
+  if (memo.has(remote)) memo.delete(remote);
+  memo.set(remote, local);
+  // Evict oldest (first-inserted) entries until within the cap.
+  while (memo.size > MEMO_MAX) {
+    const oldest = memo.keys().next().value;
+    if (oldest === undefined) break;
+    memo.delete(oldest);
+  }
+}
 // remote url -> in-flight download promise (dedupes concurrent requests for the
 // same file, e.g. the same image mounted in several recycled list rows).
+// `inflight` is self-bounding: every entry is deleted in the download's finally
+// block, so it only ever holds currently-active downloads.
 const inflight = new Map<string, Promise<string | null>>();
 
 /**
@@ -70,13 +102,13 @@ export async function getCachedMedia(
   if (!remote) return null;
   // Already a local/optimistic uri — nothing to cache, use as-is.
   if (/^(file|content|data):/i.test(remote)) return remote;
-  const hit = memo.get(remote);
+  const hit = memoGet(remote);
   if (hit) return hit;
   const local = localPathFor(remote);
   try {
     const info = await FileSystem.getInfoAsync(local);
     if (info.exists && (info.size ?? 0) > 0) {
-      memo.set(remote, local);
+      memoSet(remote, local);
       return local;
     }
   } catch {
@@ -101,7 +133,7 @@ export function getCachedMediaSync(pathOrUrl?: string | null): string | null {
   const remote = uploadUrl(pathOrUrl || "");
   if (!remote) return null;
   if (/^(file|content|data):/i.test(remote)) return remote;
-  return memo.get(remote) ?? null;
+  return memoGet(remote) ?? null;
 }
 
 /**
@@ -146,7 +178,7 @@ export async function ensureCachedMedia(
       }
       const info = await FileSystem.getInfoAsync(local);
       if (info.exists && (info.size ?? 0) > 0) {
-        memo.set(remote, local);
+        memoSet(remote, local);
         return local;
       }
       return null;

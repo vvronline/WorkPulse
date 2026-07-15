@@ -405,6 +405,22 @@ function mergeNewestPageIntoLoadedThread(
 // the current one (the real root cause of the compounding open slowdown).
 let __LIVE_THREAD_COUNT = 0;
 
+// Best-effort JS heap size in MB (Hermes / JSC expose usedJSHeapSize on
+// performance.memory; returns "?" when unavailable). TEMPORARY diagnostic —
+// remove with the live-thread instrumentation once the freeze is confirmed gone.
+function __jsHeapMB(): string {
+  try {
+    const mem = (globalThis as any)?.performance?.memory;
+    const used = mem?.usedJSHeapSize;
+    if (typeof used === "number" && used > 0) {
+      return (used / (1024 * 1024)).toFixed(1);
+    }
+  } catch {
+    /* ignore */
+  }
+  return "?";
+}
+
 export function useChatThread() {
   const params = useLocalSearchParams<{
     id: string;
@@ -657,12 +673,12 @@ export function useChatThread() {
     // console.log from production/release builds but KEEPS warn/error, so this
     // instrumentation is visible in logcat regardless of the build variant.
     console.warn(
-      `[useChatThread] MOUNT convId=${convId} | live threads=${__LIVE_THREAD_COUNT}`,
+      `[useChatThread] MOUNT convId=${convId} | live threads=${__LIVE_THREAD_COUNT} | jsHeapMB=${__jsHeapMB()}`,
     );
     return () => {
       __LIVE_THREAD_COUNT -= 1;
       console.warn(
-        `[useChatThread] UNMOUNT convId=${convId} | live threads=${__LIVE_THREAD_COUNT}`,
+        `[useChatThread] UNMOUNT convId=${convId} | live threads=${__LIVE_THREAD_COUNT} | jsHeapMB=${__jsHeapMB()}`,
       );
     };
   }, [convId]);

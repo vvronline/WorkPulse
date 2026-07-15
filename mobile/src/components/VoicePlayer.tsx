@@ -110,6 +110,24 @@ export default function VoicePlayer({ uri }: { uri: string }) {
     }
   }, [status?.didJustFinish, player]);
 
+  // Release the native audio decoder when this bubble unmounts. `useAudioPlayer`
+  // frees the player itself on unmount, but a clip that is still PLAYING (or
+  // paused mid-buffer) can otherwise hold the audio session / a native decoder
+  // briefly after the row is recycled or the thread closes. Explicitly pausing
+  // on unmount guarantees the decoder is quiesced immediately — one less native
+  // resource lingering per voice note viewed (part of the gradual-freeze creep
+  // on media-heavy chats). Wrapped in try/catch because the native player may
+  // already be torn down by the hook when this runs.
+  useEffect(() => {
+    return () => {
+      try {
+        player.pause();
+      } catch {
+        /* player already released by the hook — nothing to do */
+      }
+    };
+  }, [player]);
+
   const playing = status?.playing ?? false;
   const liveDuration = status?.duration ? status.duration * 1000 : 0;
   const position = status?.currentTime ? status.currentTime * 1000 : 0;
