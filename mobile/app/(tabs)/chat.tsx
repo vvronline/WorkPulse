@@ -161,6 +161,9 @@ export default function ChatScreen() {
   // fetch PER message). The ref holds the pending debounce timer.
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const openedFromLaunchParamRef = useRef<string | null>(null);
+  // Re-entrancy guard for openConv — prevents a rapid double-tap from pushing
+  // two stacked chat/[id] screens for the same conversation (see openConv).
+  const openingConvRef = useRef(false);
 
   // Signal-style in-place search: the list stays visible while filtering.
   const [searchOpen, setSearchOpen] = useState(false);
@@ -303,6 +306,9 @@ export default function ChatScreen() {
       // instant open feedback; without this reset the row stayed highlighted
       // after returning to the list via the back gesture.
       setOpeningConversationId(null);
+      // Re-arm the open re-entrancy guard (see openConv) now that we're back on
+      // the list, so the next tap opens normally.
+      openingConvRef.current = false;
       load();
       const off = socket.subscribe((msg) => {
         // Debounced refresh instead of a full fetch per message.
@@ -359,6 +365,20 @@ export default function ChatScreen() {
   }, [load, loadCalls, tab]);
 
   function openConv(c: Conversation) {
+    // Re-entrancy guard: a rapid double-tap on a conversation row previously
+    // fired router.push TWICE, stacking two chat/[id] screens for the same
+    // conversation. Under the single-active-conversation model that meant a
+    // duplicate thread mount and a doubled back-stack. Gate on a ref so only the
+    // first tap pushes; it's re-armed when the list regains focus (see the
+    // useFocusEffect above) and on the safety timer below.
+    if (openingConvRef.current) return;
+    openingConvRef.current = true;
+    // Safety re-arm: if the push is somehow aborted (navigation cancelled) the
+    // focus-effect re-arm may not fire, so clear the guard after a short window
+    // to avoid wedging the row permanently un-openable.
+    setTimeout(() => {
+      openingConvRef.current = false;
+    }, 1000);
     // Only pass params that have a real value. Sending empty strings ("") for a
     // missing avatar / peerId / group flag is a foot-gun: any consumer that does
     // `Number(params.peerId)` without a truthy guard would get `0` and resolve

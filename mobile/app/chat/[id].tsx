@@ -27,7 +27,8 @@ import {
 } from "../../src/icons";
 import type { Theme } from "../../src/theme";
 import { useTheme } from "../../src/theme/ThemeProvider";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect } from "expo-router";
 import Animated, {
   FadeIn,
   FadeInRight,
@@ -47,7 +48,6 @@ import VoiceRecorderController from "../../src/components/chat/VoiceRecorderCont
 import { useChatThread } from "../../src/components/chat/useChatThread";
 import {
   fmtDaySeparator,
-  isSameDay,
   WORK_MODE_LABEL,
 } from "../../src/components/chat/chatUtils";
 
@@ -98,12 +98,59 @@ const STATUS_DOT_COLOR: Record<string, string> = {
 };
 
 /**
- * Chat thread screen — a thin presentational orchestrator. All state, socket
- * effects and handlers live in the `useChatThread` hook (mirrors the web
- * ChatMessages container/hook split). The UI is composed from the chat
- * sub-components in `src/components/chat`.
+ * Chat thread ROUTE — Signal-Android "single active conversation" gate.
+ *
+ * ROOT-CAUSE FIX for the compounding "chat opens get slower / freeze after a
+ * few opens" bug: the native stack can retain previously-visited `chat/[id]`
+ * screens (blurred, but still MOUNTED). Each retained screen kept its own
+ * `useChatThread` alive — a 3.6k-line hook that subscribes to the global
+ * socket, holds the full message array, and runs effects/timers. With N chats
+ * opened this session the JS thread + heap did ~N conversations' worth of work
+ * on every socket event, so open #6 competed with 5 zombie threads → the 5–6s
+ * freeze. `freezeOnBlur` only pauses RENDERING; it does NOT unsubscribe the
+ * socket, clear timers, or free the arrays, so the leak survived it.
+ *
+ * The fix: mount the heavy conversation tree (`ConversationBody`, which is the
+ * ONLY caller of `useChatThread`) ONLY while this route is focused. On blur we
+ * unmount it, which runs every effect cleanup — socket `off()`, timer clears,
+ * array GC — so at most ONE conversation is ever live, exactly like Signal's
+ * single active `ConversationFragment`. On refocus it remounts and repaints
+ * instantly from the MMKV cache (getCachedMessages), so the return is snappy.
  */
 export default function ChatThread() {
+  const theme = useTheme();
+  const [isFocused, setIsFocused] = useState(true);
+
+  // Track focus so the heavy body is torn down the moment this screen is no
+  // longer the active conversation (backing to the list, or pushing a
+  // sub-screen like search/info/saved). useFocusEffect fires on focus and its
+  // cleanup on blur.
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      return () => setIsFocused(false);
+    }, []),
+  );
+
+  if (!isFocused) {
+    // Blurred: the conversation tree is unmounted (all its socket
+    // subscriptions/timers cleaned up). Render a solid themed surface so the
+    // slide-away transition never exposes a gray/blank native card. On Android
+    // the thread uses `animation: "none"` so this is never even visible.
+    return <View style={{ flex: 1, backgroundColor: theme.bg }} />;
+  }
+
+  return <ConversationBody />;
+}
+
+/**
+ * Chat thread body — a thin presentational orchestrator. All state, socket
+ * effects and handlers live in the `useChatThread` hook (mirrors the web
+ * ChatMessages container/hook split). The UI is composed from the chat
+ * sub-components in `src/components/chat`. Mounted ONLY while the route is
+ * focused (see ChatThread above) so exactly one conversation is ever live.
+ */
+function ConversationBody() {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const c = useChatThread();
@@ -779,6 +826,136 @@ function ChatList({
     };
   }, []);
 
+  // Signal-Android parity: a STABLE, memoized row renderer. Defining renderItem
+  // inline created a NEW function identity on every ChatList render, which
+  // defeated FlatList's ability to skip re-rendering unchanged cells and forced
+  // every visible row to reconcile on each parent render (scroll, typing pulse,
+  // receipt update…). The consecutive-grouping + day-divider math it used to do
+  // per row (two `new Date(...)` parses each) is now precomputed ONCE per page in
+  // the hook (`c.rowMeta`) and looked up here in O(1) — mirroring how Signal's
+  // ConversationAdapter resolves presentation when a page is built, not on bind.
+  const { rowMeta, messagesReversed, user, starredIds } = c;
+  const renderItem = useCallback(
+    ({ item }: { item: ChatMessage }) => {
+      const mine = Number(item.sender_id) === Number(user?.id);
+      const key = item.clientMsgId ?? String(item.id);
+      const meta = rowMeta.get(key);
+      const firstInGroup = meta?.firstInGroup ?? true;
+      const lastInGroup = meta?.lastInGroup ?? true;
+      const showDaySeparator = meta?.showDaySeparator ?? false;
+
+      // Inline call-history row (Signal parity): a `system` message whose
+      // metadata describes a call renders as a centred call event instead
+      // of a chat bubble.
+      if (item.format_type === "system" && item.metadata?.type === "call") {
+        return (
+          <View>
+            <CallSystemMessage
+              message={item}
+              userId={user?.id}
+              onCallBack={c.startCall}
+            />
+            {showDaySeparator ? (
+              <View style={styles.daySeparator}>
+                <View style={styles.dayPill}>
+                  <Text style={styles.dayPillText}>
+                    {fmtDaySeparator(item.created_at)}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+          </View>
+        );
+      }
+      // Group activity tombstone (Phase 1): member added/removed/left,
+      // renamed, role changed, ownership transferred, etc. Any non-call
+      // system message renders as a centred grey pill.
+      if (item.format_type === "system") {
+        const label = (item.metadata?.text as string) || item.content || "";
+        return (
+          <View>
+            <View style={styles.sysWrap}>
+              <Text style={styles.sysText}>{label}</Text>
+            </View>
+            {showDaySeparator ? (
+              <View style={styles.daySeparator}>
+                <View style={styles.dayPill}>
+                  <Text style={styles.dayPillText}>
+                    {fmtDaySeparator(item.created_at)}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+          </View>
+        );
+      }
+      return (
+        <View>
+          <MessageBubble
+            message={item}
+            mine={mine}
+            deleted={!!item.deleted_at}
+            starred={starredIds.has(item.id)}
+            pinned={!!item.pinned_at}
+            participantCount={c.participantCount}
+            readReceipts={c.readReceipts}
+            userId={user?.id}
+            firstInGroup={firstInGroup}
+            lastInGroup={lastInGroup}
+            highlighted={c.highlightedId === item.id}
+            selected={c.selectedIds.has(item.id)}
+            selectionActive={c.selectionMode}
+            registerRef={c.registerBubbleRef}
+            onLongPress={c.openReactionBar}
+            onPressSelect={c.toggleSelect}
+            onReact={c.react}
+            onAddReaction={c.openReactionBar}
+            onReply={c.startReply}
+            onRetry={c.retryFailedMessage}
+            onCancelUpload={c.cancelMediaUpload}
+            onRetryUpload={c.retryMediaUpload}
+            onJumpToReply={c.jumpToReply}
+            animateEntry={entryAnimReady}
+          />
+          {showDaySeparator ? (
+            <View style={styles.daySeparator}>
+              <View style={styles.dayPill}>
+                <Text style={styles.dayPillText}>
+                  {fmtDaySeparator(item.created_at)}
+                </Text>
+              </View>
+            </View>
+          ) : null}
+        </View>
+      );
+    },
+    // c is a stable object of refs/callbacks from the hook; listing the fields
+    // actually read keeps the row renderer identity stable across scrolls while
+    // still updating when selection/highlight/receipt state changes.
+    [
+      rowMeta,
+      user?.id,
+      starredIds,
+      entryAnimReady,
+      c.participantCount,
+      c.readReceipts,
+      c.highlightedId,
+      c.selectedIds,
+      c.selectionMode,
+      c.registerBubbleRef,
+      c.openReactionBar,
+      c.toggleSelect,
+      c.react,
+      c.startReply,
+      c.retryFailedMessage,
+      c.cancelMediaUpload,
+      c.retryMediaUpload,
+      c.jumpToReply,
+      c.startCall,
+      styles,
+    ],
+  );
+
   return (
     // NOTE: this list stays on the stock FlatList because it is INVERTED — the
     // Signal-Android bottom-pinned model below depends on `inverted`, which
@@ -873,121 +1050,7 @@ function ChatList({
             </Pressable>
           ) : null
         }
-        renderItem={({ item, index }) => {
-          // Type-safe ownership: sender_id / user.id can mismatch number vs
-          // string, which previously hid Edit/Delete in the reaction overlay.
-          const mine = Number(item.sender_id) === Number(c.user?.id);
-          // Consecutive-message grouping (same sender within 5 min) — see
-          // docs/CHAT_DESIGN_SPEC.md §4. firstInGroup drives the sender name,
-          // lastInGroup drives the bubble tail.
-          //
-          // INVERTED-LIST INDEXING: the data is newest-first, so the visually
-          // PREVIOUS (older, ABOVE) message is at index+1 and the visually NEXT
-          // (newer, BELOW) message is at index-1 — the opposite of a normal list.
-          const prev = c.messagesReversed[index + 1]; // older, above
-          const next = c.messagesReversed[index - 1]; // newer, below
-          const within = (a?: ChatMessage, b?: ChatMessage) =>
-            !!a &&
-            !!b &&
-            a.sender_id === b.sender_id &&
-            Math.abs(
-              new Date(b.created_at).getTime() -
-                new Date(a.created_at).getTime(),
-            ) <= 300000;
-          const firstInGroup = !within(prev, item);
-          const lastInGroup = !within(item, next);
-          // Signal-style day divider. The list is INVERTED so a row's visual TOP
-          // is rendered AFTER the bubble; `prev` (index+1) is the older message
-          // ABOVE. We show the divider when this message starts a new calendar
-          // day relative to the older neighbour (or it's the oldest message).
-          const showDaySeparator =
-            !prev || !isSameDay(prev.created_at, item.created_at);
-          // Inline call-history row (Signal parity): a `system` message whose
-          // metadata describes a call renders as a centred call event instead
-          // of a chat bubble.
-          if (item.format_type === "system" && item.metadata?.type === "call") {
-            return (
-              <View>
-                <CallSystemMessage
-                  message={item}
-                  userId={c.user?.id}
-                  onCallBack={c.startCall}
-                />
-                {showDaySeparator ? (
-                  <View style={styles.daySeparator}>
-                    <View style={styles.dayPill}>
-                      <Text style={styles.dayPillText}>
-                        {fmtDaySeparator(item.created_at)}
-                      </Text>
-                    </View>
-                  </View>
-                ) : null}
-              </View>
-            );
-          }
-          // Group activity tombstone (Phase 1): member added/removed/left,
-          // renamed, role changed, ownership transferred, etc. Any non-call
-          // system message renders as a centred grey pill.
-          if (item.format_type === "system") {
-            const label =
-              (item.metadata?.text as string) || item.content || "";
-            return (
-              <View>
-                <View style={styles.sysWrap}>
-                  <Text style={styles.sysText}>{label}</Text>
-                </View>
-                {showDaySeparator ? (
-                  <View style={styles.daySeparator}>
-                    <View style={styles.dayPill}>
-                      <Text style={styles.dayPillText}>
-                        {fmtDaySeparator(item.created_at)}
-                      </Text>
-                    </View>
-                  </View>
-                ) : null}
-              </View>
-            );
-          }
-          return (
-            <View>
-              <MessageBubble
-                message={item}
-                mine={mine}
-                deleted={!!item.deleted_at}
-                starred={c.starredIds.has(item.id)}
-                pinned={!!item.pinned_at}
-                participantCount={c.participantCount}
-                readReceipts={c.readReceipts}
-                userId={c.user?.id}
-                firstInGroup={firstInGroup}
-                lastInGroup={lastInGroup}
-                highlighted={c.highlightedId === item.id}
-                selected={c.selectedIds.has(item.id)}
-                selectionActive={c.selectionMode}
-                registerRef={c.registerBubbleRef}
-                onLongPress={c.openReactionBar}
-                onPressSelect={c.toggleSelect}
-                onReact={c.react}
-                onAddReaction={c.openReactionBar}
-                onReply={c.startReply}
-                onRetry={c.retryFailedMessage}
-                onCancelUpload={c.cancelMediaUpload}
-                onRetryUpload={c.retryMediaUpload}
-                onJumpToReply={c.jumpToReply}
-                animateEntry={entryAnimReady}
-              />
-              {showDaySeparator ? (
-                <View style={styles.daySeparator}>
-                  <View style={styles.dayPill}>
-                    <Text style={styles.dayPillText}>
-                      {fmtDaySeparator(item.created_at)}
-                    </Text>
-                  </View>
-                </View>
-              ) : null}
-            </View>
-          );
-        }}
+        renderItem={renderItem}
       />
       {/* Floating "scroll to latest" pill (Signal-style). Fades in/out and
           smooth-scrolls to the newest message when tapped. */}

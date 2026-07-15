@@ -63,7 +63,10 @@ import {
   emitChatUnreadChanged,
   chatUnreadManager,
 } from "../../realtime/chatUnreadEvents";
-import { subscribeChatJump } from "../../realtime/chatJumpEvents";
+import {
+  subscribeChatJump,
+  consumePendingChatJump,
+} from "../../realtime/chatJumpEvents";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 import { hydrateEmojiStore } from "../../emoji/emojiStore";
 import {
@@ -87,7 +90,7 @@ import {
   removeOutboxMessage,
   type OutboxMessage,
 } from "../../storage/chatOutbox";
-import { STATUS_LABEL, type HeaderSheet } from "./chatUtils";
+import { STATUS_LABEL, isSameDay, type HeaderSheet } from "./chatUtils";
 
 type PendingMediaSource = {
   uri: string;
@@ -864,10 +867,22 @@ export function useChatThread() {
     useCallback(() => {
       isFocusedRef.current = true;
       setActiveConversation(convId);
+      // Signal single-active-conversation model: the thread body is UNMOUNTED
+      // while a sub-screen (search / saved / pinned) is on top, so a jump that
+      // screen emitted while we were gone never reached a live subscriber. On
+      // refocus (remount) consume any recent pending jump for THIS conversation
+      // and scroll to it once the list has settled.
+      const pendingJumpId = consumePendingChatJump(convId);
+      if (pendingJumpId != null) {
+        setTimeout(() => jumpToMessage(pendingJumpId), 120);
+      }
       return () => {
         isFocusedRef.current = false;
         setActiveConversation(null);
       };
+      // jumpToMessage reads refs + current messages and is stable enough; convId
+      // is the only real dependency.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [convId]),
   );
 
@@ -3453,6 +3468,45 @@ export function useChatThread() {
     return out;
   }, [messages, locallyDeleted, convId]);
 
+  // Signal-Android-style precomputed row bind metadata. Signal's
+  // ConversationAdapter resolves per-row presentation (grouping, day dividers)
+  // ONCE when a page is built, not on every RecyclerView bind. Here the FlatList
+  // `renderItem` previously recomputed consecutive-grouping + day-divider for
+  // EVERY visible row on EVERY render — each row parsing two `new Date(...)`
+  // timestamps. On a busy thread that is hundreds of Date parses per render pass
+  // (scroll, typing pulse, receipt update…), all on the JS thread. We compute it
+  // ONCE per `messagesReversed` change and let `renderItem` do an O(1) lookup,
+  // keyed by the same stable id the list keys by (clientMsgId ?? id). Because
+  // the memoized MessageBubble's inputs are unchanged, this also stops rows from
+  // re-binding when unrelated state changes.
+  const rowMeta = useMemo(() => {
+    const GROUP_WINDOW_MS = 300000; // 5 min — same-sender consecutive grouping
+    const within = (a?: ChatMessage, b?: ChatMessage) => {
+      if (!a || !b) return false;
+      if (a.sender_id !== b.sender_id) return false;
+      const ta = new Date(a.created_at).getTime();
+      const tb = new Date(b.created_at).getTime();
+      return Math.abs(tb - ta) <= GROUP_WINDOW_MS;
+    };
+    const map = new Map<
+      string,
+      { firstInGroup: boolean; lastInGroup: boolean; showDaySeparator: boolean }
+    >();
+    for (let index = 0; index < messagesReversed.length; index++) {
+      const item = messagesReversed[index];
+      // INVERTED list: older (above) is index+1, newer (below) is index-1.
+      const prev = messagesReversed[index + 1]; // older, above
+      const next = messagesReversed[index - 1]; // newer, below
+      const key = item.clientMsgId ?? String(item.id);
+      map.set(key, {
+        firstInGroup: !within(prev, item),
+        lastInGroup: !within(item, next),
+        showDaySeparator: !prev || !isSameDay(prev.created_at, item.created_at),
+      });
+    }
+    return map;
+  }, [messagesReversed]);
+
   const latestPin = pinnedMsgs[0];
 
   // FlatList extraData. Keep this Signal-style targeted and O(1): message
@@ -3532,6 +3586,7 @@ export function useChatThread() {
     loading,
     messages,
     messagesReversed,
+    rowMeta,
     listRef,
     listExtraData,
     scrollToEnd,
