@@ -160,9 +160,9 @@ function ConversationBody() {
     setThreadBodyReady(false);
     let raf = 0;
     const task = InteractionManager.runAfterInteractions(() => {
-      // Let navigation/header paint first, then mount the heavy inverted
-      // message FlatList on the next frame. This prevents the chat-list tap from
-      // feeling frozen while MessageBubble rows/gestures are constructed.
+      // Let navigation/header paint first on a TRUE cold thread. Cached threads
+      // bypass this gate below and render immediately from MMKV, matching
+      // Signal/WhatsApp's cache-first open path.
       raf = requestAnimationFrame(() => setThreadBodyReady(true));
     });
     return () => {
@@ -170,6 +170,10 @@ function ConversationBody() {
       if (raf) cancelAnimationFrame(raf);
     };
   }, [c.convId]);
+
+  const hasCachedRows = c.messagesReversed.length > 0;
+  const showInitialSpinner = c.loading && !hasCachedRows;
+  const canRenderThread = hasCachedRows || threadBodyReady || !c.loading;
 
   return (
     <View style={styles.screen}>
@@ -459,7 +463,7 @@ function ConversationBody() {
                 }
         }
       />
-      {c.loading || !threadBodyReady ? (
+      {showInitialSpinner || !canRenderThread ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.primary} />
         </View>
@@ -911,7 +915,7 @@ function ChatList({
             starred={starredIds.has(item.id)}
             pinned={!!item.pinned_at}
             participantCount={c.participantCount}
-            readReceipts={c.readReceipts}
+            readReceiptTimes={c.readReceiptTimes}
             userId={user?.id}
             firstInGroup={firstInGroup}
             lastInGroup={lastInGroup}
@@ -952,7 +956,7 @@ function ChatList({
       starredIds,
       entryAnimReady,
       c.participantCount,
-      c.readReceipts,
+      c.readReceiptTimes,
       c.highlightedId,
       c.selectedIds,
       c.selectionMode,

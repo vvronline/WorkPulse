@@ -37,7 +37,7 @@ export default function MsgTicks({
   mine,
   msg,
   participantCount,
-  readReceipts,
+  readReceiptTimes,
   userId,
   onMedia,
   onRetry,
@@ -45,7 +45,7 @@ export default function MsgTicks({
   mine: boolean;
   msg: ChatMessage;
   participantCount: number;
-  readReceipts: Record<number, string>;
+  readReceiptTimes: readonly (readonly [number, number])[];
   userId?: number;
   // When the ticks sit OVER media (an image/video) inside the translucent dark
   // meta pill, force white glyphs and a dark punch-out for the read check so it
@@ -67,7 +67,7 @@ export default function MsgTicks({
   const readColor = onMedia ? "#fff" : theme.primary;
   const readCheckColor = onMedia ? "rgba(0,0,0,0.6)" : "#fff";
 
-  const phase = resolvePhase(msg, participantCount, readReceipts, userId);
+  const phase = resolvePhase(msg, participantCount, readReceiptTimes, userId);
 
   // Pop-in animation on each delivery-state transition (sent→delivered→read).
   const scale = useSharedValue(1);
@@ -166,7 +166,7 @@ type Phase = "sending" | "sent" | "delivered" | "read" | "hidden";
 function resolvePhase(
   msg: ChatMessage,
   participantCount: number,
-  readReceipts: Record<number, string>,
+  readReceiptTimes: readonly (readonly [number, number])[],
   userId?: number,
 ): Phase {
   if (msg._pending || msg.id < 0) return "sending";
@@ -175,9 +175,8 @@ function resolvePhase(
 
   const delivered = msg.delivered_to || [];
   const msgTime = new Date(msg.created_at).getTime();
-  const otherReaders = Object.entries(readReceipts).filter(
-    ([uid, readAt]) =>
-      Number(uid) !== userId && new Date(readAt).getTime() >= msgTime,
+  const otherReaders = readReceiptTimes.filter(
+    ([uid, readAtMs]) => uid !== userId && readAtMs >= msgTime,
   );
 
   // Read by everyone (or read + delivered to all) → ringed double ticks.

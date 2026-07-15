@@ -132,6 +132,15 @@ const INITIAL_THREAD_PAGE_SIZE = 50;
 // full screen of bubbles so trimming is never visible at the bottom.
 const MAX_MOUNTED_MESSAGES = 200;
 
+// Skip repaying a full messages/read-receipts/pins reconcile when the same
+// conversation is reopened quickly. With single-active route replacement the
+// hook remounts on every list→thread open, so per-instance refs cannot remember
+// the previous load. This module-level TTL mirrors Signal/WhatsApp's cache-first
+// open: show the warm page immediately and avoid doing the same network + state
+// reconcile during repeated quick open/exit cycles.
+const THREAD_RECONCILE_TTL_MS = 10_000;
+const __LAST_THREAD_RECONCILE_AT = new Map<number, number>();
+
 // Trim a message array (oldest-first) to the newest MAX_MOUNTED_MESSAGES when
 // it grows past the bound. Only ever DROPS from the head (oldest), so the
 // visible bottom of the (inverted) list is untouched and `loadOlder`'s
@@ -710,7 +719,12 @@ export function useChatThread() {
   // Timestamp (ms) of the last completed network reconcile. Used to skip a
   // redundant `load()` when the same thread is re-focused within a short window
   // (quickly bouncing in/out of a chat shouldn't repay the full reconcile).
-  const lastLoadedAtRef = useRef(0);
+  const lastLoadedAtRef = useRef(__LAST_THREAD_RECONCILE_AT.get(convId) || 0);
+  // Guards async continuations after route replacement / back navigation. A
+  // replaced chat screen can unmount while messages/read-status/presence requests
+  // are still in flight; without this guard their `.then()` continuations can
+  // still allocate objects and call setState on a dead conversation.
+  const mountedRef = useRef(true);
   // Bubble host-node refs so we can reliably measure each bubble's window rect
   // for the reaction-bar anchor (Pressable forwards its ref to the host View,
   // which exposes measureInWindow — currentTarget often does not).
@@ -762,6 +776,24 @@ export function useChatThread() {
   // appeared this session.
   const lastKbHeight = useRef(Math.round(winHeight * 0.4));
   if (kbInset > 100) lastKbHeight.current = kbInset;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (typingClear.current) clearTimeout(typingClear.current);
+      for (const controller of mediaUploadControllers.current.values()) {
+        try {
+          controller.abort();
+        } catch {
+          /* ignore */
+        }
+      }
+      mediaUploadControllers.current.clear();
+      mediaUploadSources.current.clear();
+      uploadProgressTs.current.clear();
+    };
+  }, []);
 
   useEffect(() => {
     emojiKeyboardOpenRef.current = emojiKeyboardOpen;
@@ -903,8 +935,23 @@ export function useChatThread() {
   );
 
   const load = useCallback(async () => {
+    const now = Date.now();
+    if (
+      initialCachedMessages &&
+      initialCachedMessages.length > 0 &&
+      now - lastLoadedAtRef.current < THREAD_RECONCILE_TTL_MS
+    ) {
+      // Warm cache + very recent reconcile: do not repay the full messages /
+      // read-status / pinned refresh on quick repeated open/exit cycles. The
+      // global cache sync keeps incoming messages current while the thread is
+      // closed; the next open after the TTL will reconcile normally.
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data } = await getMessages(convId);
+      if (!mountedRef.current) return;
       // Map the REST reply aliases (reply_content / reply_sender_name /
       // reply_file_*) to the canonical reply_to_* shape so the in-bubble quote
       // doesn't collapse to the generic "Message" when this refresh replaces
@@ -932,6 +979,7 @@ export function useChatThread() {
       // read colour on the first frame (no delivered→read flip).
       getReadStatus(convId)
         .then((r) => {
+          if (!mountedRef.current) return;
           const map: Record<number, string> = {};
           for (const row of r.data || []) {
             if (row.user_id != null && row.last_read_at) {
@@ -949,7 +997,9 @@ export function useChatThread() {
         .catch(() => {});
       // Record the reconcile time so a quick re-focus of the same thread can
       // skip repaying this whole `load()` (see the focus-gated effect below).
-      lastLoadedAtRef.current = Date.now();
+      const loadedAt = Date.now();
+      lastLoadedAtRef.current = loadedAt;
+      __LAST_THREAD_RECONCILE_AT.set(convId, loadedAt);
       // Only force a jump-to-bottom on the very FIRST cold paint. The list is
       // INVERTED (structurally bottom-pinned), so re-scrolling on every
       // background reconcile just caused a visible "settle"/jump on open and
@@ -962,9 +1012,16 @@ export function useChatThread() {
     } catch {
       /* ignore */
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  }, [convId, markReadAndSync, scrollToEnd, user?.id, user?.full_name]);
+  }, [
+    convId,
+    initialCachedMessages,
+    markReadAndSync,
+    scrollToEnd,
+    user?.id,
+    user?.full_name,
+  ]);
 
   // Defer the network refresh + its (large) setMessages re-render until AFTER
   // the screen's open transition has settled. The cached page is already on
@@ -2567,14 +2624,11 @@ export function useChatThread() {
   }
 
   const goBackToChatList = useCallback(() => {
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
-
-    // Fallback for external/deep-link launches where this thread is the first
-    // route in the stack. Signal-Android uses explicit up-navigation to the
-    // conversation list in this case instead of letting Back finish the task.
+    // Single-active-conversation model: always leave the thread by replacing it
+    // with the chat tab instead of popping an arbitrarily deep native stack. This
+    // keeps repeated list → thread → list cycles from retaining old chat route
+    // cards/resources and mirrors Signal/WhatsApp's one active conversation
+    // surface.
     router.replace("/(tabs)/chat" as never);
   }, [router]);
 
@@ -3525,6 +3579,20 @@ export function useChatThread() {
 
   const latestPin = pinnedMsgs[0];
 
+  // Pre-parse read receipt timestamps ONCE per receipt-map change. Previously
+  // every own visible MsgTicks row did `Object.entries(readReceipts)` plus
+  // `new Date(readAt)` parsing during render. On text-only threads with many
+  // own messages, that became repeated O(visibleRows × participants) JS work on
+  // every open/reconcile. Signal computes delivery state from a cached receipt
+  // model; this gives each row a tiny numeric array instead of reparsing dates.
+  const readReceiptTimes = useMemo(
+    () =>
+      Object.entries(readReceipts)
+        .map(([uid, readAt]) => [Number(uid), new Date(readAt).getTime()] as const)
+        .filter(([, ts]) => Number.isFinite(ts)),
+    [readReceipts],
+  );
+
   // FlatList extraData. Keep this Signal-style targeted and O(1): message
   // content/reaction/pin/delete changes already arrive through immutable
   // `messages` updates (the FlatList `data` prop). extraData is only for
@@ -3536,7 +3604,7 @@ export function useChatThread() {
       starredIds,
       selectedIds,
       highlightedId,
-      readReceipts,
+      readReceiptTimes,
       participantCount,
       selectionMode,
       userId: user?.id,
@@ -3545,7 +3613,7 @@ export function useChatThread() {
       starredIds,
       selectedIds,
       highlightedId,
-      readReceipts,
+      readReceiptTimes,
       participantCount,
       selectionMode,
       user?.id,
@@ -3615,7 +3683,7 @@ export function useChatThread() {
     user,
     starredIds,
     participantCount,
-    readReceipts,
+    readReceiptTimes,
     registerBubbleRef,
     openReactionBar,
     react,

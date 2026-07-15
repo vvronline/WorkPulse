@@ -47,7 +47,7 @@ type MessageBubbleProps = {
   starred: boolean;
   pinned: boolean;
   participantCount: number;
-  readReceipts: Record<number, string>;
+  readReceiptTimes: readonly (readonly [number, number])[];
   userId?: number;
   // Consecutive-message grouping (see docs/CHAT_DESIGN_SPEC.md §4). The sender
   // name shows on the first of a group; Signal tightens the sender-side corners
@@ -94,7 +94,7 @@ function MessageBubbleImpl({
   starred,
   pinned,
   participantCount,
-  readReceipts,
+  readReceiptTimes,
   userId,
   firstInGroup = true,
   lastInGroup = true,
@@ -382,15 +382,15 @@ function MessageBubbleImpl({
                     <Text style={styles.mediaMetaText}>
                       {fmtTime(message.created_at)}
                     </Text>
-                    <MsgTicks
-                      mine={mine}
-                      msg={message}
-                      participantCount={participantCount}
-                      readReceipts={readReceipts}
-                      userId={userId}
-                      onMedia
-                      onRetry={mine ? () => onRetry?.(message) : undefined}
-                    />
+                      <MsgTicks
+                        mine={mine}
+                        msg={message}
+                        participantCount={participantCount}
+                        readReceiptTimes={readReceiptTimes}
+                        userId={userId}
+                        onMedia
+                        onRetry={mine ? () => onRetry?.(message) : undefined}
+                      />
                   </View>
                 )
               ) : (
@@ -422,7 +422,7 @@ function MessageBubbleImpl({
                         mine={mine}
                         msg={message}
                         participantCount={participantCount}
-                        readReceipts={readReceipts}
+                        readReceiptTimes={readReceiptTimes}
                         userId={userId}
                         onRetry={mine ? () => onRetry?.(message) : undefined}
                       />
@@ -639,7 +639,7 @@ function areEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
     prev.starred === next.starred &&
     prev.pinned === next.pinned &&
     prev.participantCount === next.participantCount &&
-    prev.readReceipts === next.readReceipts &&
+    prev.readReceiptTimes === next.readReceiptTimes &&
     prev.userId === next.userId &&
     prev.firstInGroup === next.firstInGroup &&
     prev.lastInGroup === next.lastInGroup &&

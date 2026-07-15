@@ -400,7 +400,11 @@ export default function ChatScreen() {
     }
     setOpeningConversationId(c.id);
     requestAnimationFrame(() => {
-      router.push({ pathname: "/chat/[id]", params });
+      // Single-active-conversation model: do NOT stack a new native chat card
+      // on every list → thread open. Replacing keeps repeated open/exit cycles
+      // from accumulating retained route/header/Fabric resources underneath the
+      // current chat (Signal/WhatsApp-style one active conversation surface).
+      router.replace({ pathname: "/chat/[id]", params });
     });
   }
 
@@ -431,9 +435,10 @@ export default function ChatScreen() {
     // No cached identity yet (cold notification launch before the list/cache is
     // warm) → open by id IMMEDIATELY. The thread screen resolves name/avatar
     // from cache/network on its own, exactly like Signal's recipient-id based
-    // ConversationIntents. The key fix: this push happens unconditionally,
-    // independent of `items`, so the correct 1:1 thread always opens.
-    router.push({ pathname: "/chat/[id]", params: { id: target } });
+    // ConversationIntents. The key fix: this replace happens unconditionally,
+    // independent of `items`, so the correct 1:1 thread always opens without
+    // stacking retained chat route cards.
+    router.replace({ pathname: "/chat/[id]", params: { id: target } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.openConversationId, router]);
 
@@ -500,7 +505,7 @@ export default function ChatScreen() {
       return;
     }
     if (entry.is_group) {
-      router.push({
+      router.replace({
         pathname: "/chat/[id]",
         params: {
           id: String(entry.conversation_id),
@@ -539,7 +544,7 @@ export default function ChatScreen() {
       setSearchOpen(false);
       setQuery("");
       setSearchResults([]);
-      router.push({
+      router.replace({
         pathname: "/chat/[id]",
         params: {
           id: String(convId),
