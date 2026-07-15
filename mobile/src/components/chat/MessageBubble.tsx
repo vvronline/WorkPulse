@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -133,12 +133,23 @@ function MessageBubbleImpl({
       message._mediaState === "uploading" ||
       message._mediaState === "failed");
 
-  const swipeEnabled = !!onReply && !deleted && !selectionActive && !mediaUploadInProgress;
+  const swipeEnabled =
+    !!onReply && !deleted && !selectionActive && !mediaUploadInProgress;
+  const replyRef = useRef(onReply);
+  const messageRef = useRef(message);
+  const swipeEnabledRef = useRef(swipeEnabled);
+
+  useEffect(() => {
+    replyRef.current = onReply;
+    messageRef.current = message;
+    swipeEnabledRef.current = swipeEnabled;
+  }, [onReply, message, swipeEnabled]);
 
   const fireReply = () => {
-    if (swipeEnabled) onReply?.(message);
+    if (swipeEnabledRef.current) replyRef.current?.(messageRef.current);
   };
 
+  const messageId = message.id;
   const panGesture = useMemo(
     () =>
       Gesture.Pan()
@@ -163,23 +174,13 @@ function MessageBubbleImpl({
           translateX.value = withSpring(0, { damping: 18, stiffness: 220 });
           iconProgress.value = withTiming(0, { duration: 140 });
         }),
+    // Keep the native gesture object stable across message object identity churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mine, swipeEnabled, onReply, message],
+    [mine, swipeEnabled, messageId],
   );
 
-  // Signal-style press feedback: while the finger is down the bubble eases to a
-  // slightly smaller scale, then springs back on release. Combined with the
-  // reaction overlay's scale-in this reads as one continuous "lift" gesture.
-  const pressScale = useSharedValue(1);
-  const onPressIn = () => {
-    pressScale.value = withTiming(0.97, { duration: 140 });
-  };
-  const onPressOut = () => {
-    pressScale.value = withSpring(1, { damping: 14, stiffness: 260 });
-  };
-
   const bubbleAnim = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }, { scale: pressScale.value }],
+    transform: [{ translateX: translateX.value }],
   }));
   const iconAnim = useAnimatedStyle(() => ({
     opacity: iconProgress.value,
@@ -305,8 +306,6 @@ function MessageBubbleImpl({
               ref={(node) => {
                 registerRef(message.id, node as unknown as View | null);
               }}
-              onPressIn={onPressIn}
-              onPressOut={onPressOut}
               onPress={() => {
                 // While in selection mode, a plain tap toggles this row in/out of
                 // the selection instead of doing nothing (Signal-style).

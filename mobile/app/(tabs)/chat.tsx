@@ -388,7 +388,8 @@ export default function ChatScreen() {
     // to avoid wedging the row permanently un-openable.
     setTimeout(() => {
       openingConvRef.current = false;
-    }, 1000);
+      setOpeningConversationId(null);
+    }, 500);
     // Only pass params that have a real value. Sending empty strings ("") for a
     // missing avatar / peerId / group flag is a foot-gun: any consumer that does
     // `Number(params.peerId)` without a truthy guard would get `0` and resolve
@@ -409,12 +410,10 @@ export default function ChatScreen() {
       }
     }
     setOpeningConversationId(c.id);
-    requestAnimationFrame(() => {
-      // Push the thread so the already-painted chat list stays physically behind
-      // it for native/system back gestures. The heavy thread body unmounts on
-      // blur, so pushed route cards no longer retain live chat hooks.
-      router.push({ pathname: "/chat/[id]", params });
-    });
+    // Push immediately. Deferring this through requestAnimationFrame left the
+    // tapped row highlighted while the JS thread was busy, making chat open feel
+    // stuck for ~1–2 seconds before navigation started.
+    router.push({ pathname: "/chat/[id]", params });
   }
 
   useEffect(() => {
