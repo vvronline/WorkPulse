@@ -1037,7 +1037,8 @@ function ChatList({
         // list). Show the "scroll to bottom" pill once the user has scrolled up
         // past ~1.5 screens of history.
         onScroll={(e) => {
-          const y = e.nativeEvent.contentOffset.y;
+          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+          const y = contentOffset.y;
           // Feed the raw offset to the hook so it can track whether the list is
           // near the visual bottom (inverted list → offset 0 is the bottom).
           // This gates the incoming-message auto-scroll so a new message never
@@ -1045,6 +1046,21 @@ function ChatList({
           c.onListScroll(y);
           const next = y > 400;
           if (next !== showScrollBtn) setShowScrollBtn(next);
+
+          // In an inverted FlatList the older-history edge is the END of the
+          // scroll range. `onEndReached` can miss after clipping/recycling or
+          // after the background latest-page reconcile, so also trigger from a
+          // direct distance-to-edge check (RecyclerView/Signal-style threshold).
+          const distanceToOlderEdge =
+            contentSize.height - layoutMeasurement.height - y;
+          if (
+            distanceToOlderEdge < 700 &&
+            c.hasMore &&
+            !c.loadingOlder &&
+            !c.prependingRef.current
+          ) {
+            c.loadOlder();
+          }
         }}
         scrollEventThrottle={16}
         onScrollToIndexFailed={() => {

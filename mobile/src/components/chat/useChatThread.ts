@@ -489,9 +489,12 @@ export function useChatThread() {
   const [locallyDeleted, setLocallyDeleted] = useState<Set<number>>(
     () => new Set(getLocalDeletedIds(convId)),
   );
-  // Cursor pagination for older history (mirrors web loadMore).
+  // Cursor pagination for older history (mirrors web loadMore). A full cached
+  // newest page means older history MAY exist, so keep pagination enabled until
+  // an actual older-page request proves otherwise. The latest-page refresh must
+  // never turn this off: it only knows about newest rows, not historical depth.
   const [hasMore, setHasMore] = useState(
-    () => (cachedMessages?.length || 0) > (initialCachedMessages?.length || 0),
+    () => (initialCachedMessages?.length || 0) >= INITIAL_THREAD_PAGE_SIZE,
   );
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [text, setText] = useState("");
@@ -928,7 +931,10 @@ export function useChatThread() {
       });
       // Persist the freshest page so the next open paints instantly from disk.
       setCachedMessages(convId, normalized);
-      setHasMore(normalized.length >= 50);
+      // Do NOT set hasMore=false from this newest-page refresh. Only loadOlder()
+      // can know when older history is exhausted; otherwise waiting for this
+      // reconcile could disable pagination before the user scrolls up.
+      if (normalized.length >= INITIAL_THREAD_PAGE_SIZE) setHasMore(true);
       markReadAndSync();
       // Seed read receipts so own messages show the correct tick immediately.
       // Also persist them to the on-device cache so the NEXT open paints the
