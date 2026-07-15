@@ -1,6 +1,7 @@
 import {
   ActivityIndicator,
   InteractionManager,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -8,7 +9,7 @@ import {
   View,
 } from "react-native";
 import { Modal } from "react-native";
-import { Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { Stack, useFocusEffect } from "expo-router";
 import {
   ArrowLeft,
   Building2,
@@ -125,64 +126,46 @@ const STATUS_DOT_COLOR: Record<string, string> = {
  * instantly from the MMKV cache (getCachedMessages), so the return is snappy.
  */
 export default function ChatThread() {
-  const theme = useTheme();
-  const params = useLocalSearchParams<{ name?: string }>();
-  const [bodyMounted, setBodyMounted] = useState(false);
-  const mountRaf = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
+  const [bodyMounted, setBodyMounted] = useState(true);
   const unmountTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusGeneration = useRef(0);
 
-  // Let the native route/header commit first, then mount the heavy thread hook on
-  // the next frame. The previous version rendered <ConversationBody>
-  // immediately, so useChatThread's synchronous cache reads/state initializers
-  // still blocked the tap→open frame even though the message list itself was
-  // gated later.
   useFocusEffect(
     useCallback(() => {
+      focusGeneration.current += 1;
       if (unmountTimer.current) {
         clearTimeout(unmountTimer.current);
         unmountTimer.current = null;
       }
-      mountRaf.current = requestAnimationFrame(() => {
-        mountRaf.current = null;
-        setBodyMounted(true);
-      });
+      // Mount synchronously on focus so warm cached threads paint immediately.
+      // The previous next-frame gate caused a visible spinner and then a staged
+      // bottom→top list paint even when MMKV already had the newest page.
+      setBodyMounted(true);
 
       return () => {
-        if (mountRaf.current) {
-          cancelAnimationFrame(mountRaf.current);
-          mountRaf.current = null;
-        }
-        // Keep the last painted chat content alive while the native back gesture
-        // / pop transition finishes. Unmounting immediately on blur exposed a
-        // blank/native-gray card for a frame during system back.
+        const blurGeneration = ++focusGeneration.current;
+        // Keep the last painted chat content alive just long enough for native
+        // back/pop gestures to finish, then tear down the heavy hook. The
+        // generation guard prevents an old blur timer from unmounting a newly
+        // focused/reopened chat.
         unmountTimer.current = setTimeout(() => {
-          unmountTimer.current = null;
-          setBodyMounted(false);
-        }, 350);
+          if (focusGeneration.current === blurGeneration) {
+            unmountTimer.current = null;
+            setBodyMounted(false);
+          }
+        }, 300);
       };
     }, []),
   );
 
   useEffect(
     () => () => {
-      if (mountRaf.current) cancelAnimationFrame(mountRaf.current);
       if (unmountTimer.current) clearTimeout(unmountTimer.current);
     },
     [],
   );
 
-  if (!bodyMounted) {
-    return (
-      <View style={{ flex: 1, backgroundColor: theme.bg }}>
-        <Stack.Screen options={{ title: params.name || "Chat" }} />
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-          <ActivityIndicator size="large" color={theme.primary} />
-        </View>
-      </View>
-    );
-  }
-
-  return <ConversationBody />;
+  return bodyMounted ? <ConversationBody /> : null;
 }
 
 /**
@@ -969,7 +952,7 @@ function ChatList({
             onPressSelect={c.toggleSelect}
             onReact={c.react}
             onAddReaction={c.openReactionBar}
-            onReply={c.startReply}
+            onReply={undefined}
             onRetry={c.retryFailedMessage}
             onCancelUpload={c.cancelMediaUpload}
             onRetryUpload={c.retryMediaUpload}
@@ -1080,7 +1063,7 @@ function ChatList({
         // clipping on, the freshly-grown region wasn't repainted until the
         // row scrolled — making the reaction look delayed. Disabling it
         // forces the chip to paint instantly (matches the web).
-        removeClippedSubviews={false}
+        removeClippedSubviews={Platform.OS === "android"}
         // Windowing tuned for a SNAPPY open + smooth scrolling (Signal-Android
         // feel). Each MessageBubble is relatively heavy to mount (a Pan gesture,
         // several reanimated shared values / animated styles, a GestureDetector),
@@ -1089,10 +1072,10 @@ function ChatList({
         // on open). A smaller initial batch + tighter window mounts far fewer
         // rows during the transition while still keeping ~5 screens of history
         // mounted each way so fast flings don't reveal blank gaps.
-        initialNumToRender={6}
-        maxToRenderPerBatch={6}
-        windowSize={9}
-        updateCellsBatchingPeriod={50}
+        initialNumToRender={18}
+        maxToRenderPerBatch={14}
+        windowSize={7}
+        updateCellsBatchingPeriod={16}
         // In an inverted list the FOOTER renders at the visual TOP, so the
         // "load earlier" spinner/button belongs here (not the header).
         ListFooterComponent={
