@@ -835,6 +835,16 @@ function ChatList({
   // the hook (`c.rowMeta`) and looked up here in O(1) — mirroring how Signal's
   // ConversationAdapter resolves presentation when a page is built, not on bind.
   const { rowMeta, messagesReversed, user, starredIds } = c;
+  // Identity of the NEWEST message (index 0 of the inverted list). Only this row
+  // is allowed to play the FadeIn enter animation — see the comment in
+  // MessageBubble. Gating on the newest id (instead of a global `entryAnimReady`
+  // flag applied to every row) means recycled rows scrolling into the FlatList
+  // window never replay their fade, which — combined with removing the per-row
+  // LinearTransition spring — kills the recursive Reanimated frame flood.
+  const newestKey =
+    messagesReversed.length > 0
+      ? (messagesReversed[0].clientMsgId ?? String(messagesReversed[0].id))
+      : null;
   const renderItem = useCallback(
     ({ item }: { item: ChatMessage }) => {
       const mine = Number(item.sender_id) === Number(user?.id);
@@ -843,6 +853,9 @@ function ChatList({
       const firstInGroup = meta?.firstInGroup ?? true;
       const lastInGroup = meta?.lastInGroup ?? true;
       const showDaySeparator = meta?.showDaySeparator ?? false;
+      // Only the newest message animates its entrance (Signal/WhatsApp: only the
+      // just-arrived item animates, never every visible row).
+      const isNewest = key === newestKey;
 
       // Inline call-history row (Signal parity): a `system` message whose
       // metadata describes a call renders as a centred call event instead
@@ -915,7 +928,7 @@ function ChatList({
             onCancelUpload={c.cancelMediaUpload}
             onRetryUpload={c.retryMediaUpload}
             onJumpToReply={c.jumpToReply}
-            animateEntry={entryAnimReady}
+            animateEntry={entryAnimReady && isNewest}
           />
           {showDaySeparator ? (
             <View style={styles.daySeparator}>
@@ -934,6 +947,7 @@ function ChatList({
     // still updating when selection/highlight/receipt state changes.
     [
       rowMeta,
+      newestKey,
       user?.id,
       starredIds,
       entryAnimReady,

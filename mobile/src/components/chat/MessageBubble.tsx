@@ -9,7 +9,6 @@ import Animated, {
   withSequence,
   runOnJS,
   FadeIn,
-  LinearTransition,
   interpolateColor,
 } from "react-native-reanimated";
 import { Check, CornerUpLeft, Pin, Star } from "../../icons";
@@ -249,19 +248,24 @@ function MessageBubbleImpl({
     <Animated.View
       // Signal-style message enter: a freshly sent/received bubble simply FADES
       // in (no spring/bounce) so it flows straight into place and stays put.
-      // `LinearTransition` animates neighbours easing into place when a bubble
-      // grows (e.g. a reaction chip row appears) instead of snapping.
       //
-      // Both are GATED on `animateEntry`: the list disables them for the initial
-      // batch so opening a conversation paints the whole thread at once (no
-      // per-row fade flicker during the slide-in). Once the open settles the
-      // list flips this on, so new messages and reaction-grow still animate.
+      // PERF ROOT-CAUSE FIX (the "fast at first, then gradually freezes" bug):
+      // this row used to also carry `layout={LinearTransition.springify()}`.
+      // A SPRING layout animation has NO fixed duration, and it was applied to
+      // EVERY mounted bubble. Every scroll, keyboard toggle, receipt update or
+      // reaction re-measured the rows and RESTARTED those springs, so Reanimated
+      // kept posting Choreographer frame callbacks that never settled — a
+      // recursive doFrame→doCallbacks→doFrame flood (thousands/sec, confirmed in
+      // logcat) that compounds as more rows mount. Native chat apps
+      // (WhatsApp/Signal/Telegram → RecyclerView ItemAnimator) animate ONLY the
+      // single inserted/changed item, never a spring layout on every existing
+      // row. So the per-row layout animation is removed entirely; neighbours now
+      // snap into place when a bubble grows (a reaction chip appears), exactly
+      // like Signal. `entering` is ALSO gated by `animateEntry`, which the list
+      // now sets TRUE only for the genuinely-new newest message (not for every
+      // recycled row that scrolls into the FlatList window), so scrolling never
+      // replays fades on recycled rows.
       entering={animateEntry ? FadeIn.duration(180) : undefined}
-      layout={
-        animateEntry
-          ? LinearTransition.springify().damping(22).stiffness(200)
-          : undefined
-      }
       style={[
         styles.bubbleRow,
         mine ? styles.rowMine : styles.rowTheirs,
