@@ -464,7 +464,12 @@ export default function Index() {
       <Redirect
         href={{
           pathname: "/chat/[id]",
-          params: { id: String(chatRoute.conversationId) },
+          params: {
+            id: String(chatRoute.conversationId),
+            ...(chatRoute.messageId
+              ? { messageId: String(chatRoute.messageId) }
+              : {}),
+          },
         }}
       />
     );

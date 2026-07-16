@@ -217,7 +217,12 @@ export default function PendingChatNavigator() {
             // back to `/(tabs)/chat`, so back still returns to the chat list.
             router.push({
               pathname: "/chat/[id]",
-              params: { id: String(targetRoute.conversationId) },
+              params: {
+                id: String(targetRoute.conversationId),
+                ...(targetRoute.messageId
+                  ? { messageId: String(targetRoute.messageId) }
+                  : {}),
+              },
             });
           }
         } catch (err) {

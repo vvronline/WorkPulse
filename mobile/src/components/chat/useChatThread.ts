@@ -415,9 +415,14 @@ export function useChatThread() {
     peerId?: string;
     isGroup?: string;
     groupMemberAvatars?: string;
+    messageId?: string;
   }>();
   const { id } = params;
   const convId = Number(id);
+  const notificationMessageId = useMemo(() => {
+    const n = Number(params.messageId);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [params.messageId]);
   const parsedGroupMemberAvatars = useMemo(() => {
     if (!params.groupMemberAvatars) return [];
     try {
@@ -893,9 +898,11 @@ export function useChatThread() {
     }, [convId]),
   );
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { force?: boolean }) => {
+    const force = opts?.force === true;
     const now = Date.now();
     if (
+      !force &&
       initialCachedMessages &&
       initialCachedMessages.length > 0 &&
       now - lastLoadedAtRef.current < THREAD_RECONCILE_TTL_MS
@@ -980,6 +987,20 @@ export function useChatThread() {
     user?.id,
     user?.full_name,
   ]);
+
+  // A notification tap carries the exact message id that must be visible. The
+  // normal open path intentionally delays `load()` until after navigation
+  // interactions and may skip it for THREAD_RECONCILE_TTL_MS on a warm cache.
+  // That is good for ordinary chat-list opens, but bad for notification opens:
+  // the status-bar push can arrive while the websocket/cache path is suspended,
+  // so the cached thread may not yet contain the tapped message. If the route
+  // includes a messageId and the synchronous cache seed does not contain it,
+  // force an immediate reconcile that bypasses both the animation delay and TTL.
+  useEffect(() => {
+    if (!notificationMessageId) return;
+    if (messages.some((m) => Number(m.id) === notificationMessageId)) return;
+    void load({ force: true });
+  }, [load, messages, notificationMessageId]);
 
   // Defer the network refresh + its (large) setMessages re-render until AFTER
   // the screen's open transition has settled. The cached page is already on
