@@ -166,6 +166,49 @@ describe("chatMessage handler — happy path", () => {
         expect(ws._sent[0].data.clientMsgId).toBe("abc");
     });
 
+    test("rejects a reply target outside the destination conversation", async () => {
+        const query = jest
+            .fn()
+            // Sender is an authorized participant.
+            .mockResolvedValueOnce({
+                rows: [{ is_group: true, group_name: "Team" }],
+            })
+            // Reply target lookup is scoped to conversation 5 and finds none.
+            .mockResolvedValueOnce({ rows: [] });
+        const db = { query };
+        const send = jest.fn();
+        const ws = makeWs();
+
+        await chatMessage({
+            db,
+            senderId: 7,
+            tenantId: 1,
+            data: {
+                conversationId: 5,
+                content: "foreign reply",
+                replyToId: 999,
+                clientMsgId: "reply-1",
+            },
+            ws,
+            sendToUser: send,
+        });
+
+        expect(query).toHaveBeenCalledTimes(2);
+        expect(query.mock.calls[1][1]).toEqual([999, 5]);
+        expect(
+            query.mock.calls.some(
+                ([sql]: any[]) =>
+                    typeof sql === "string" &&
+                    sql.includes("INSERT INTO messages"),
+            ),
+        ).toBe(false);
+        expect(send).not.toHaveBeenCalled();
+        expect(ws._sent[0].data).toEqual({
+            clientMsgId: "reply-1",
+            reason: "invalid-reply-target",
+        });
+    });
+
     test("mentions broadcast a chat_mention ONLY to participants who are mentioned (and not the sender)", async () => {
         const db = makeHappyPathDb();
         const send = jest.fn();

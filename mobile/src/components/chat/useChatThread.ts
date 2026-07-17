@@ -15,7 +15,6 @@ import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Clipboard from "expo-clipboard";
-import * as SecureStore from "expo-secure-store";
 import {
   AudioModule,
   createAudioPlayer,
@@ -23,6 +22,21 @@ import {
   type AudioPlayer,
 } from "expo-audio";
 import type { VoiceRecorderControllerHandle } from "./VoiceRecorderController";
+import useMobileConversationDraft, {
+  type PendingMediaSource,
+} from "./useMobileConversationDraft";
+import useChatMessageSelection from "./useChatMessageSelection";
+import {
+  applyMediaJobUpdate,
+  applyMessageDelete,
+  applyMessageEdit,
+  applyMessagePin,
+  applyMessageReaction,
+  mapRealtimeChatMessage,
+  normalizeUploadedMessage as normalizeUploadedMessageReducer,
+  replaceUploadedMessage,
+  updateMessageById,
+} from "./chatMessageReducers";
 import { getNotificationPreviewDataUri } from "../../utils/notificationSoundPreview";
 import { useAuth } from "../../auth/AuthContext";
 import { useDialog } from "../../hooks/useDialog";
@@ -92,28 +106,6 @@ import {
 } from "../../storage/chatOutbox";
 import { STATUS_LABEL, isSameDay, type HeaderSheet } from "./chatUtils";
 
-type PendingMediaSource = {
-  uri: string;
-  fileName: string;
-  mimeType?: string;
-  viewOnce?: boolean;
-  caption?: string;
-  // Intrinsic image dimensions (Signal-style aspect-ratio sizing).
-  width?: number;
-  height?: number;
-};
-
-type ConversationDraft = {
-  text: string;
-  replyTo?: {
-    id: number;
-    content?: string | null;
-    sender_name?: string | null;
-  } | null;
-  editing?: { id: number; text?: string | null } | null;
-  mediaDrafts: PendingMediaSource[];
-};
-
 // Keep the first synchronous thread paint bounded. A cached thread can contain
 // hundreds of messages after paging; processing all of them on route mount is
 // what makes tapping a busy chat freeze on the chat list for 2–3 seconds. Signal
@@ -171,40 +163,7 @@ function capNewestWindow(msgs: ChatMessage[]): ChatMessage[] {
  * Mapping the camelCase response → snake_case here fixes both at once.
  */
 function normalizeUploadedMessage(data: any): ChatMessage {
-  if (!data || typeof data !== "object") return data;
-  // GET /messages already returns snake_case — if it's already shaped that way
-  // (has file_url and no fileUrl), pass through untouched.
-  const isCamel =
-    "fileUrl" in data || "mediaState" in data || "senderId" in data;
-  if (!isCamel) return data as ChatMessage;
-  return {
-    id: data.id,
-    sender_id: data.senderId ?? data.sender_id,
-    sender_name: data.senderName ?? data.sender_name,
-    sender_avatar: data.senderAvatar ?? data.sender_avatar ?? null,
-    content: data.content ?? "",
-    created_at: data.createdAt ?? data.created_at,
-    file_url: data.fileUrl ?? data.file_url ?? null,
-    file_name: data.fileName ?? data.file_name ?? null,
-    file_type: data.fileType ?? data.file_type ?? null,
-    file_size: data.fileSize ?? data.file_size ?? null,
-    reply_to_id: data.replyToId ?? data.reply_to_id ?? null,
-    reply_to_content: data.replyContent ?? data.reply_to_content ?? null,
-    reply_to_sender_name:
-      data.replySenderName ?? data.reply_to_sender_name ?? null,
-    reply_to_file_url: data.replyFileUrl ?? data.reply_to_file_url ?? null,
-    reply_to_file_type: data.replyFileType ?? data.reply_to_file_type ?? null,
-    reply_to_file_name: data.replyFileName ?? data.reply_to_file_name ?? null,
-    metadata: data.metadata ?? null,
-    reactions: data.reactions ?? [],
-    clientMsgId: data.clientMsgId ?? null,
-    media_job_id: data.mediaJobId ?? data.media_job_id ?? null,
-    media_state: data.mediaState ?? data.media_state ?? null,
-    media_stage: data.mediaStage ?? data.media_stage ?? null,
-    media_progress: data.mediaProgress ?? data.media_progress ?? null,
-    media_pipeline_meta:
-      data.mediaPipelineMeta ?? data.media_pipeline_meta ?? null,
-  } as ChatMessage;
+  return normalizeUploadedMessageReducer(data);
 }
 
 /**
@@ -585,13 +544,16 @@ export function useChatThread() {
   // Locally-tracked starred message ids (server list doesn't return per-message
   // starred state, so we reflect it optimistically after the action).
   const [starredIds, setStarredIds] = useState<Set<number>>(new Set());
-  // ── Multi-select model (Signal-style) ─────────────────────────────────────
-  // Long-pressing a message enters selection mode; subsequent taps toggle more
-  // messages in/out. The header swaps to a selection action bar (pin / save /
-  // forward / copy / delete) that operates on this set. Selection is "active"
-  // whenever the set is non-empty.
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const selectionMode = selectedIds.size > 0;
+  const {
+    selectedIds,
+    selectedMessages,
+    selectionMode,
+    selectionAllOwn,
+    selectedCount,
+    clearSelection,
+    toggleSelect,
+    selectOnly,
+  } = useChatMessageSelection(messages, user?.id);
   // Top-anchored overflow menu (Signal-style) open state.
   const [menuOpen, setMenuOpen] = useState(false);
   // Block state for the 1:1 peer (Signal parity). When blocked, the composer
@@ -702,10 +664,6 @@ export function useChatThread() {
   const uploadProgressTs = useRef<Map<number, { t: number; loaded: number }>>(
     new Map(),
   );
-  const pendingDraftReply = useRef<ConversationDraft["replyTo"]>(null);
-  const pendingDraftEditing = useRef<ConversationDraft["editing"]>(null);
-  const pendingDraftMedia = useRef<PendingMediaSource[]>([]);
-  const draftHydrated = useRef(false);
   const typingSentAt = useRef(0);
   const typingClear = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True while older messages are being prepended, so the auto
@@ -1282,83 +1240,17 @@ export function useChatThread() {
       if (msg.type === "chat_media_job") {
         if (Number(d.conversationId) !== convId) return;
         setMessages((prev) =>
-          prev.map((m) => {
-            if (m.id !== d.messageId) return m;
-            // Once the HTTP upload has RESOLVED (the optimistic bubble was
-            // replaced by the server row → positive id + a persisted file_url
-            // that is NOT a local file: uri), the message is effectively
-            // "sent". The server-side media PIPELINE (queued→processing→
-            // completed) is a SEPARATE post-processing step; its non-terminal
-            // events must NOT drag a delivered message back to a "Queued"/
-            // "Uploading" spinner (the bug where a delivered+seen image stuck
-            // on "Queued" forever when the final `completed` event was missed
-            // on reconnect). For a sent message we therefore ONLY react to a
-            // terminal FAILURE; success/queued/processing are ignored.
-            const httpUploadDone =
-              Number(m.id) > 0 &&
-              !!m.file_url &&
-              !/^(file|content|data):/i.test(String(m.file_url));
-            if (httpUploadDone) {
-              if (d.status === "failed") {
-                return {
-                  ...m,
-                  media_state: "failed",
-                  media_failure_reason: d.failureReason ?? null,
-                  _mediaState: "failed",
-                  _failed: true,
-                  _failureReason: d.failureReason ?? m._failureReason ?? null,
-                };
-              }
-              // completed / queued / processing / cancelled → keep delivered.
-              return {
-                ...m,
-                media_job_id: d.mediaJobId ?? m.media_job_id ?? null,
-                media_state: "completed",
-                _mediaState: undefined,
-                _mediaProgress: 100,
-                _failed: false,
-              };
-            }
-            // Optimistic (not-yet-uploaded) message: reflect live pipeline.
-            return {
-              ...m,
-              media_job_id: d.mediaJobId ?? m.media_job_id ?? null,
-              media_state: d.status ?? m.media_state ?? null,
-              media_progress:
-                typeof d.progress === "number"
-                  ? d.progress
-                  : (m.media_progress ?? null),
-              media_failure_reason: d.failureReason ?? null,
-              _mediaState:
-                d.status === "processing"
-                  ? "uploading"
-                  : (d.status ?? m._mediaState),
-              _mediaProgress:
-                typeof d.progress === "number"
-                  ? d.progress
-                  : (m._mediaProgress ?? 0),
-              _failed: d.status === "failed" || d.status === "cancelled",
-              _failureReason:
-                d.failureReason ??
-                (d.status === "cancelled"
-                  ? "Upload cancelled"
-                  : m._failureReason),
-            };
-          }),
+          updateMessageById(prev, d.messageId, (message) =>
+            applyMediaJobUpdate(message, d, true),
+          ),
         );
         return;
       }
       if (msg.type === "chat_pin") {
         if (Number(d.conversationId) !== convId) return;
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === d.messageId
-              ? {
-                  ...m,
-                  pinned_at: d.pinned ? new Date().toISOString() : null,
-                  pinned_by: d.pinned ? d.pinnedBy : null,
-                }
-              : m,
+          updateMessageById(prev, d.messageId, (message) =>
+            applyMessagePin(message, d),
           ),
         );
         loadPinned();
@@ -1368,30 +1260,9 @@ export function useChatThread() {
       if (msg.type === "chat_reaction") {
         if (Number(d.conversationId) !== convId) return;
         setMessages((prev) =>
-          prev.map((m) => {
-            if (m.id !== d.messageId) return m;
-            if (m.deleted_at) return { ...m, reactions: [] };
-            let reactions = [...(m.reactions || [])];
-            if (d.action === "added") {
-              // Idempotent: don't duplicate an optimistically-added reaction.
-              if (
-                !reactions.some(
-                  (r) => r.userId === d.userId && r.emoji === d.emoji,
-                )
-              ) {
-                reactions.push({
-                  userId: d.userId,
-                  fullName: d.fullName,
-                  emoji: d.emoji,
-                });
-              }
-            } else {
-              reactions = reactions.filter(
-                (r) => !(r.userId === d.userId && r.emoji === d.emoji),
-              );
-            }
-            return { ...m, reactions };
-          }),
+          updateMessageById(prev, d.messageId, (message) =>
+            applyMessageReaction(message, d),
+          ),
         );
         return;
       }
@@ -1399,10 +1270,8 @@ export function useChatThread() {
       if (msg.type === "chat_edit") {
         if (Number(d.conversationId) !== convId) return;
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === d.messageId
-              ? { ...m, content: d.content, edited_at: d.editedAt }
-              : m,
+          updateMessageById(prev, d.messageId, (message) =>
+            applyMessageEdit(message, d),
           ),
         );
         return;
@@ -1411,20 +1280,7 @@ export function useChatThread() {
       if (msg.type === "chat_delete") {
         if (Number(d.conversationId) !== convId) return;
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === d.messageId
-              ? {
-                  ...m,
-                  deleted_at: new Date().toISOString(),
-                  content: "",
-                  file_url: null,
-                  file_name: null,
-                  file_type: null,
-                  file_size: null,
-                  reactions: [],
-                }
-              : m,
-          ),
+          updateMessageById(prev, d.messageId, applyMessageDelete),
         );
         return;
       }
@@ -1468,32 +1324,7 @@ export function useChatThread() {
           const idx = prev.findIndex((m) => m.clientMsgId === d.clientMsgId);
           if (idx >= 0) {
             const copy = [...prev];
-            copy[idx] = {
-              id: d.id,
-              sender_id: d.senderId,
-              sender_name: d.senderName,
-              content: d.content,
-              created_at: d.createdAt,
-              file_url: d.fileUrl,
-              file_name: d.fileName,
-              file_type: d.fileType,
-              file_size: d.fileSize,
-              reply_to_id: d.replyToId ?? null,
-              reply_to_content: d.replyContent ?? null,
-              reply_to_sender_name: d.replySenderName ?? null,
-              reply_to_file_url: d.replyFileUrl ?? null,
-              reply_to_file_type: d.replyFileType ?? null,
-              reply_to_file_name:
-                d.replyFileName ?? d.reply_to_file_name ?? null,
-              format_type: d.formatType ?? d.format_type ?? null,
-              metadata: d.metadata ?? null,
-              clientMsgId: d.clientMsgId,
-              _mediaState: d.mediaState ?? null,
-              _mediaProgress:
-                typeof d.mediaProgress === "number" ? d.mediaProgress : 0,
-              _failureReason: d.failureReason ?? null,
-              media_job_id: d.mediaJobId ?? null,
-            };
+            copy[idx] = mapRealtimeChatMessage(d);
             return copy;
           }
         }
@@ -1505,30 +1336,7 @@ export function useChatThread() {
         // remains reachable via loadOlder / the on-disk cache.
         return capNewestWindow([
           ...prev,
-          {
-            id: d.id,
-            sender_id: d.senderId,
-            sender_name: d.senderName,
-            content: d.content,
-            created_at: d.createdAt,
-            file_url: d.fileUrl,
-            file_name: d.fileName,
-            file_type: d.fileType,
-            file_size: d.fileSize,
-            reply_to_id: d.replyToId ?? null,
-            reply_to_content: d.replyContent ?? null,
-            reply_to_sender_name: d.replySenderName ?? null,
-            reply_to_file_url: d.replyFileUrl ?? null,
-            reply_to_file_type: d.replyFileType ?? null,
-            reply_to_file_name: d.replyFileName ?? d.reply_to_file_name ?? null,
-            format_type: d.formatType ?? d.format_type ?? null,
-            metadata: d.metadata ?? null,
-            _mediaState: d.mediaState ?? null,
-            _mediaProgress:
-              typeof d.mediaProgress === "number" ? d.mediaProgress : 0,
-            _failureReason: d.failureReason ?? null,
-            media_job_id: d.mediaJobId ?? null,
-          },
+          mapRealtimeChatMessage(d),
         ]);
       });
       markReadAndSync();
@@ -1655,32 +1463,9 @@ export function useChatThread() {
         })
           .then(({ data }) => {
             const normalized = normalizeUploadedMessage(data);
-            setMessages((prev) => {
-              const replaced = prev.map((m) =>
-                m.id === id
-                  ? {
-                      ...normalized,
-                      // Preserve intrinsic dimensions captured optimistically so
-                      // the bubble keeps its aspect-ratio size (server metadata
-                      // may omit them).
-                      metadata: {
-                        ...(m.metadata || {}),
-                        ...(normalized.metadata || {}),
-                      },
-                      _pending: false,
-                      _failed: false,
-                    }
-                  : m,
-              );
-              const seen = new Set<number>();
-              return replaced.filter((m) => {
-                const key = Number(m.id);
-                if (!Number.isFinite(key)) return true;
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-              });
-            });
+            setMessages((prev) =>
+              replaceUploadedMessage(prev, id, normalized),
+            );
             mediaUploadControllers.current.delete(id);
             mediaUploadSources.current.delete(id);
             if (mediaUploadControllers.current.size === 0) setUploading(false);
@@ -1932,31 +1717,9 @@ export function useChatThread() {
         );
         uploadProgressTs.current.delete(tempId);
         const normalized = normalizeUploadedMessage(data);
-        setMessages((prev) => {
-          const replaced = prev.map((m) =>
-            m.id === tempId
-              ? {
-                  ...normalized,
-                  // Keep intrinsic dimensions from the optimistic message so the
-                  // image doesn't reflow when the server row arrives.
-                  metadata: {
-                    ...(m.metadata || {}),
-                    ...(normalized.metadata || {}),
-                  },
-                  _pending: false,
-                  _failed: false,
-                }
-              : m,
-          );
-          const seen = new Set<number>();
-          return replaced.filter((m) => {
-            const key = Number(m.id);
-            if (!Number.isFinite(key)) return true;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          });
-        });
+        setMessages((prev) =>
+          replaceUploadedMessage(prev, tempId, normalized),
+        );
         mediaUploadControllers.current.delete(tempId);
         mediaUploadSources.current.delete(tempId);
         if (mediaUploadControllers.current.size === 0) setUploading(false);
@@ -2030,124 +1793,19 @@ export function useChatThread() {
     [scrollToEnd, uploadSingleMedia, user?.full_name, user?.id],
   );
 
-  const draftStorageKey = useMemo(() => `chat:draft:${convId}`, [convId]);
-
-  // Restore per-conversation compose draft (text/reply/edit + pending media
-  // descriptors) so app restarts/backgrounding don't lose composer context.
-  useEffect(() => {
-    let cancelled = false;
-    draftHydrated.current = false;
-    pendingDraftReply.current = null;
-    pendingDraftEditing.current = null;
-    pendingDraftMedia.current = [];
-    SecureStore.getItemAsync(draftStorageKey)
-      .then((raw: string | null) => {
-        if (cancelled || !raw) {
-          draftHydrated.current = true;
-          return;
-        }
-        let parsed: ConversationDraft | null = null;
-        try {
-          parsed = JSON.parse(raw) as ConversationDraft;
-        } catch {
-          parsed = null;
-        }
-        if (!parsed) {
-          draftHydrated.current = true;
-          return;
-        }
-        if (typeof parsed.text === "string") setText(parsed.text);
-        pendingDraftReply.current = parsed.replyTo || null;
-        pendingDraftEditing.current = parsed.editing || null;
-        pendingDraftMedia.current = Array.isArray(parsed.mediaDrafts)
-          ? parsed.mediaDrafts
-          : [];
-        draftHydrated.current = true;
-      })
-      .catch(() => {
-        draftHydrated.current = true;
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [draftStorageKey]);
-
-  useEffect(() => {
-    if (!draftHydrated.current) return;
-    if (pendingDraftMedia.current.length === 0) return;
-    const drafts = [...pendingDraftMedia.current];
-    pendingDraftMedia.current = [];
-    for (const d of drafts) {
-      enqueueMediaUpload(d);
-    }
-  }, [enqueueMediaUpload, convId]);
-
-  useEffect(() => {
-    if (!draftHydrated.current) return;
-    if (pendingDraftReply.current?.id) {
-      const target = messages.find(
-        (m) => m.id === pendingDraftReply.current!.id,
-      );
-      if (target) {
-        setReplyTo(target);
-        pendingDraftReply.current = null;
-      }
-    }
-    if (pendingDraftEditing.current?.id) {
-      const target = messages.find(
-        (m) => m.id === pendingDraftEditing.current!.id,
-      );
-      if (target) {
-        setEditingId(Number(target.id));
-        setText(
-          typeof pendingDraftEditing.current.text === "string"
-            ? pendingDraftEditing.current.text
-            : target.content || "",
-        );
-        pendingDraftEditing.current = null;
-      }
-    }
-  }, [messages]);
-
-  useEffect(() => {
-    if (!draftHydrated.current) return;
-    const mediaDrafts: PendingMediaSource[] = messages
-      .filter((m) => Number(m.id) < 0 && !!m.file_url)
-      .map((m) => ({
-        uri: String(m.file_url),
-        fileName: String(m.file_name || `draft-${Math.abs(Number(m.id))}`),
-        mimeType: m.file_type || undefined,
-      }));
-    const payload: ConversationDraft = {
-      text,
-      replyTo: replyTo
-        ? {
-            id: Number(replyTo.id),
-            content: replyTo.content || null,
-            sender_name: replyTo.sender_name || null,
-          }
-        : null,
-      editing: editingId
-        ? {
-            id: editingId,
-            text,
-          }
-        : null,
-      mediaDrafts,
-    };
-    if (
-      !payload.text.trim() &&
-      !payload.replyTo &&
-      !payload.editing &&
-      payload.mediaDrafts.length === 0
-    ) {
-      SecureStore.deleteItemAsync(draftStorageKey).catch(() => {});
-      return;
-    }
-    SecureStore.setItemAsync(draftStorageKey, JSON.stringify(payload)).catch(
-      () => {},
-    );
-  }, [draftStorageKey, text, replyTo, editingId, messages]);
+  useMobileConversationDraft({
+    conversationId: convId,
+    user,
+    messages,
+    setMessages,
+    text,
+    setText,
+    replyTo,
+    setReplyTo,
+    editingId,
+    setEditingId,
+    mediaUploadSources,
+  });
 
   async function uploadPickedMedia(
     uri: string,
@@ -3183,36 +2841,6 @@ export function useChatThread() {
   }
 
   // ── Multi-select (Signal-style) ───────────────────────────────────────────
-  // Clear the selection and exit selection mode.
-  function clearSelection() {
-    setSelectedIds(new Set());
-  }
-
-  // Toggle a single message in/out of the selection (used on tap while in
-  // selection mode). Removing the last selected message exits selection mode.
-  function toggleSelect(message: ChatMessage) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(message.id)) next.delete(message.id);
-      else next.add(message.id);
-      return next;
-    });
-  }
-
-  // The currently-selected ChatMessage objects (oldest → newest order).
-  const selectedMessages = useMemo(
-    () => messages.filter((m) => selectedIds.has(m.id)),
-    [messages, selectedIds],
-  );
-  // Whether EVERY selected message is the current user's own message — gates
-  // the Delete-for-everyone action (you can only delete your own messages).
-  const selectionAllOwn = useMemo(
-    () =>
-      selectedMessages.length > 0 &&
-      selectedMessages.every((m) => Number(m.sender_id) === Number(user?.id)),
-    [selectedMessages, user?.id],
-  );
-
   // Pin / unpin every selected message (header pin icon). Pin toggles per
   // message; we simply call the pin endpoint for each and refresh the banner.
   function pinSelected() {
@@ -3386,7 +3014,7 @@ export function useChatThread() {
   function enterSelectionWith(message: ChatMessage) {
     setReactTarget(null);
     setReactAnchor(null);
-    setSelectedIds(new Set([message.id]));
+    selectOnly(message);
   }
 
   // Anchor the reaction/context menu to the long-pressed bubble (mirrors the
@@ -3674,7 +3302,7 @@ export function useChatThread() {
     selectedIds,
     selectionMode,
     selectionAllOwn,
-    selectedCount: selectedIds.size,
+    selectedCount,
     toggleSelect,
     clearSelection,
     enterSelectionWith,

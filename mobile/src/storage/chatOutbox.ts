@@ -1,4 +1,8 @@
 import { storage } from "./mmkv";
+import {
+  activeChatStoragePrefix,
+  scopedChatStorageKey,
+} from "./chatStorageScope";
 
 /**
  * Persistent outbox for outgoing chat messages (MMKV-backed, synchronous).
@@ -30,7 +34,7 @@ import { storage } from "./mmkv";
  * outbox into its initial state without a spinner, mirroring chatCache.
  */
 
-const OUTBOX_PREFIX = "chat:outbox:";
+const OUTBOX_PREFIX = "outbox:";
 const MAX_ATTEMPTS = 30;
 
 export type OutboxMessage = {
@@ -50,11 +54,12 @@ export type OutboxMessage = {
   failureReason?: string | null;
 };
 
-function keyFor(clientMsgId: string): string {
-  return `${OUTBOX_PREFIX}${clientMsgId}`;
+function keyFor(clientMsgId: string): string | null {
+  return scopedChatStorageKey(`${OUTBOX_PREFIX}${clientMsgId}`);
 }
 
-function readEntry(key: string): OutboxMessage | null {
+function readEntry(key: string | null): OutboxMessage | null {
+  if (!key) return null;
   const raw = storage.getString(key);
   if (!raw) return null;
   try {
@@ -66,8 +71,10 @@ function readEntry(key: string): OutboxMessage | null {
 
 /** Add (or refresh) an outgoing message in the persistent outbox. */
 export function enqueueOutboxMessage(msg: OutboxMessage): void {
+  const key = keyFor(msg.clientMsgId);
+  if (!key) return;
   try {
-    storage.set(keyFor(msg.clientMsgId), JSON.stringify(msg));
+    storage.set(key, JSON.stringify(msg));
   } catch {
     /* best-effort — persistence failure must not block the send */
   }
@@ -75,7 +82,8 @@ export function enqueueOutboxMessage(msg: OutboxMessage): void {
 
 /** Remove a message once the server echo confirms it was persisted. */
 export function removeOutboxMessage(clientMsgId: string): void {
-  storage.remove(keyFor(clientMsgId));
+  const key = keyFor(clientMsgId);
+  if (key) storage.remove(key);
 }
 
 export function getOutboxMessage(clientMsgId: string): OutboxMessage | null {
@@ -85,9 +93,12 @@ export function getOutboxMessage(clientMsgId: string): OutboxMessage | null {
 /** Every pending outbox message, oldest-first (send order). */
 export function getAllOutboxMessages(): OutboxMessage[] {
   const out: OutboxMessage[] = [];
+  const prefix = activeChatStoragePrefix();
+  if (!prefix) return out;
+  const outboxPrefix = `${prefix}${OUTBOX_PREFIX}`;
   try {
     for (const key of storage.getAllKeys()) {
-      if (!key.startsWith(OUTBOX_PREFIX)) continue;
+      if (!key.startsWith(outboxPrefix)) continue;
       const entry = readEntry(key);
       if (entry) out.push(entry);
     }
@@ -150,9 +161,12 @@ export function markOutboxRetrying(clientMsgId: string): void {
 
 /** Drop every outbox entry (sign-out / account switch). */
 export function clearAllOutboxMessages(): void {
+  const prefix = activeChatStoragePrefix();
+  if (!prefix) return;
+  const outboxPrefix = `${prefix}${OUTBOX_PREFIX}`;
   try {
     for (const key of storage.getAllKeys()) {
-      if (key.startsWith(OUTBOX_PREFIX)) storage.remove(key);
+      if (key.startsWith(outboxPrefix)) storage.remove(key);
     }
   } catch {
     /* best-effort */

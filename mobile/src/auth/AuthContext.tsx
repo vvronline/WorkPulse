@@ -30,6 +30,10 @@ import {
   clearPersistedPendingCall,
 } from "../realtime/pendingCall";
 import { clearAllChatCache } from "../storage/chatCache";
+import {
+  clearChatStorageScope,
+  setChatStorageScope,
+} from "../storage/chatStorageScope";
 import { mmkvQueryPersister } from "../storage/queryPersister";
 import { clearMediaCache } from "../components/chat/mediaCache";
 import {
@@ -102,7 +106,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // still validates the token and refreshes the profile in the background —
   // and signs the user out if the token turns out to be missing/invalid.
   const cachedProfileRef = React.useRef<User | null>(readCachedProfile());
-  const [user, setUser] = useState<User | null>(cachedProfileRef.current);
+  const [user, setUser] = useState<User | null>(() => {
+    // Chat caches are synchronous; activate the restored identity namespace
+    // once, before descendants seed their first render from MMKV. This must not
+    // run on every provider render, or logout could reactivate the stale scope.
+    const cached = cachedProfileRef.current;
+    if (cached) setChatStorageScope(cached);
+    return cached;
+  });
   // When a cached profile exists we are optimistically "not loading" — the
   // router can redirect straight to the tabs while the network re-validates.
   const [loading, setLoading] = useState(cachedProfileRef.current == null);
@@ -221,6 +232,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // ignore — best-effort
     }
 
+    clearChatStorageScope();
     setUser(null);
   }, [queryClient]);
 
@@ -238,6 +250,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // (e.g. the token was cleared but the app was killed before the cache
         // was). Drop it so the router lands on /login.
         clearCachedProfile();
+        clearChatStorageScope();
         if (active) {
           setUser(null);
           setLoading(false);
@@ -252,6 +265,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const res = await api.get<User>("/profile");
         if (active) {
+          setChatStorageScope(res.data);
           setUser(res.data);
           writeCachedProfile(res.data);
           if (!hadCachedProfile) socket.connect();
@@ -264,6 +278,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (status === 401 || !hadCachedProfile) {
           await clearToken();
           clearCachedProfile();
+          clearChatStorageScope();
           if (active) setUser(null);
         }
       } finally {
@@ -298,6 +313,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch {
         /* best-effort */
       }
+      clearChatStorageScope();
       setUser(null);
     });
     return () => setUnauthorizedHandler(null);
@@ -309,12 +325,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // biometric login so the two paths stay in lock-step.
   const completeSession = useCallback(async (token: string, seedUser: User) => {
     await setToken(token);
+    setChatStorageScope(seedUser);
     setUser(seedUser);
     writeCachedProfile(seedUser);
     socket.connect();
     try {
       const profile = await api.get<User>("/profile");
       if (profile.data) {
+        setChatStorageScope(profile.data);
         setUser(profile.data);
         writeCachedProfile(profile.data);
       }
@@ -340,6 +358,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshUser = useCallback(async () => {
     try {
       const res = await api.get<User>("/profile");
+      setChatStorageScope(res.data);
       setUser(res.data);
       writeCachedProfile(res.data);
     } catch {

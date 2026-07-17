@@ -86,6 +86,38 @@ function setupAuth() {
     mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 });
 }
 
+// ─── GET /uploads/.../chat/... ─────────────────────────────────────────────
+
+describe("GET chat attachment", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test("denies an authenticated non-participant before static file serving", async () => {
+        setupAuth();
+        // Participant-authorized attachment lookup returns no matching row.
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        const res = await request(app)
+            .get("/uploads/org_1/chat/private-file.png")
+            .set("Cookie", authCookie(3));
+
+        expect(res.status).toBe(403);
+        expect(res.body.error).toBe("Forbidden");
+        const authorizationCall = mockQuery.mock.calls.find(
+            ([sql]: any[]) =>
+                typeof sql === "string" &&
+                sql.includes("JOIN conversation_participants cp") &&
+                sql.includes("m.file_url = $2"),
+        );
+        expect(authorizationCall).toBeTruthy();
+        expect(authorizationCall[1]).toEqual([
+            3,
+            "/uploads/org_1/chat/private-file.png",
+        ]);
+    });
+});
+
 // ─── GET /api/chat/search ─────────────────────────────────────────────────
 
 describe("GET /api/chat/search", () => {
@@ -620,6 +652,42 @@ describe("PUT /api/chat/conversations/:id/group", () => {
         );
         expect(deleteCalls).toHaveLength(1);
         expect(deleteCalls[0][1]).toEqual([10, 2]);
+    });
+});
+
+describe("POST /api/chat/conversations/:id/messages", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test("rejects a reply target from another conversation before insertion", async () => {
+        setupAuth();
+        mockQuery
+            // Sender participates in destination conversation.
+            .mockResolvedValueOnce({ rows: [{ ok: 1 }], rowCount: 1 })
+            // Group avoids unrelated direct-chat block enforcement.
+            .mockResolvedValueOnce({
+                rows: [{ is_group: true, group_name: "Team" }],
+                rowCount: 1,
+            })
+            // Reply message is not in the destination conversation.
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        const res = await request(app)
+            .post("/api/chat/conversations/10/messages")
+            .set("Cookie", authCookie(1))
+            .set(CSRF)
+            .send({ content: "Reply attempt", replyToId: 999 });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/reply target/i);
+        expect(
+            mockQuery.mock.calls.some(
+                ([sql]: any[]) =>
+                    typeof sql === "string" &&
+                    sql.includes("INSERT INTO messages (conversation_id, sender_id, content, reply_to_id)"),
+            ),
+        ).toBe(false);
     });
 });
 

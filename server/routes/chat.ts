@@ -110,6 +110,29 @@ async function verifyParticipant(
   return r.rows.length > 0;
 }
 
+/**
+ * A reply may only reference a message in the destination conversation.
+ * This prevents a message ID from another conversation being persisted and
+ * later exposing its reply context through an unconstrained join.
+ */
+async function verifyReplyTarget(
+  conversationId: number,
+  replyToId: number | null,
+  db: DbLike,
+): Promise<boolean> {
+  if (replyToId === null) return true;
+
+  const result = await db.query(
+    `SELECT 1
+       FROM messages
+      WHERE id = $1
+        AND conversation_id = $2
+        AND deleted_at IS NULL`,
+    [replyToId, conversationId],
+  );
+  return result.rows.length > 0;
+}
+
 // ─── Helper: get user org ───
 async function getUserOrg(
   userId: number | undefined,
@@ -1273,7 +1296,9 @@ router.get(
             FROM messages m
             JOIN users u ON u.id = m.sender_id
             LEFT JOIN chat_media_jobs cmj ON cmj.message_id = m.id
-            LEFT JOIN messages rm ON rm.id = m.reply_to_id
+            LEFT JOIN messages rm
+              ON rm.id = m.reply_to_id
+             AND rm.conversation_id = m.conversation_id
             LEFT JOIN users ru ON ru.id = rm.sender_id
             LEFT JOIN starred_messages sm ON sm.message_id = m.id AND sm.user_id = $1
             WHERE m.conversation_id = $2
@@ -1512,6 +1537,16 @@ router.post(
       const replyToId = req.body.replyToId
         ? parseInt(String(req.body.replyToId), 10)
         : null;
+      if (
+        (replyToId !== null && !Number.isInteger(replyToId)) ||
+        !(await verifyReplyTarget(
+          convId,
+          replyToId,
+          req.db as unknown as DbLike,
+        ))
+      ) {
+        return res.status(400).json({ error: "Invalid reply target" });
+      }
 
       const result = (
         await req.db!.query(
@@ -1720,6 +1755,16 @@ router.post(
       const replyToId = req.body.replyToId
         ? parseInt(req.body.replyToId, 10)
         : null;
+      if (
+        (replyToId !== null && !Number.isInteger(replyToId)) ||
+        !(await verifyReplyTarget(
+          convId,
+          replyToId,
+          req.db as unknown as DbLike,
+        ))
+      ) {
+        return res.status(400).json({ error: "Invalid reply target" });
+      }
       // View-once (disappearing media): the composer sends viewOnce="true".
       // We persist it in the message metadata JSONB (no schema change) and
       // strip the file URL for a recipient once they've opened it.

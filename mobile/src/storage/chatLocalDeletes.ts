@@ -1,4 +1,5 @@
 import { storage } from "./mmkv";
+import { scopedChatStorageKey } from "./chatStorageScope";
 
 /**
  * Per-conversation "delete for me" store (MMKV-backed, synchronous).
@@ -15,12 +16,14 @@ import { storage } from "./mmkv";
  */
 const PREFIX = "chat:localdeletes:";
 
-function key(conversationId: number): string {
-  return `${PREFIX}${conversationId}`;
+function key(conversationId: number): string | null {
+  return scopedChatStorageKey(`${PREFIX}${conversationId}`);
 }
 
 export function getLocalDeletedIds(conversationId: number): number[] {
-  const raw = storage.getString(key(conversationId));
+  const storageKey = key(conversationId);
+  if (!storageKey) return [];
+  const raw = storage.getString(storageKey);
   if (!raw) return [];
   try {
     const arr = JSON.parse(raw);
@@ -39,7 +42,8 @@ export function addLocalDeletedIds(
   const merged = Array.from(
     new Set([...getLocalDeletedIds(conversationId), ...keep]),
   );
-  storage.set(key(conversationId), JSON.stringify(merged));
+  const storageKey = key(conversationId);
+  if (storageKey) storage.set(storageKey, JSON.stringify(merged));
   return merged;
 }
 
@@ -55,19 +59,21 @@ export function addLocalDeletedIds(
  */
 const CLEARED_PREFIX = "chat:cleared:";
 
-function clearedKey(conversationId: number): string {
-  return `${CLEARED_PREFIX}${conversationId}`;
+function clearedKey(conversationId: number): string | null {
+  return scopedChatStorageKey(`${CLEARED_PREFIX}${conversationId}`);
 }
 
 export function getClearedAt(conversationId: number): string | null {
-  return storage.getString(clearedKey(conversationId)) ?? null;
+  const storageKey = clearedKey(conversationId);
+  return storageKey ? storage.getString(storageKey) ?? null : null;
 }
 
 export function setClearedAt(
   conversationId: number,
   iso: string = new Date().toISOString(),
 ): void {
-  storage.set(clearedKey(conversationId), iso);
+  const storageKey = clearedKey(conversationId);
+  if (storageKey) storage.set(storageKey, iso);
 }
 
 /**

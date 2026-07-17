@@ -275,6 +275,36 @@ app.use("/uploads", authMiddleware, async (req: any, res: Response, next: NextFu
         }
     }
 
+    // Chat attachments are conversation-private. Tenant/org membership is not
+    // sufficient: a colleague who is not a participant must not be able to
+    // retrieve a file merely by learning its upload URL.
+    if (/\/chat\//.test(req.path)) {
+        const fileUrl = `/uploads${req.path}`;
+        try {
+            const allowed = (
+                await req.db.query(
+                    `SELECT 1
+                       FROM messages m
+                       JOIN conversation_participants cp
+                         ON cp.conversation_id = m.conversation_id
+                        AND cp.user_id = $1
+                      WHERE m.file_url = $2
+                        AND m.deleted_at IS NULL
+                      LIMIT 1`,
+                    [req.userId, fileUrl],
+                )
+            ).rows[0];
+            if (!allowed) {
+                return res.status(403).json({ error: "Forbidden" });
+            }
+        } catch (err) {
+            // Attachment access must fail closed if tenant DB authorization is
+            // unavailable rather than falling back to organization membership.
+            (req.log || logger).warn({ err }, "chat attachment check failed — denying");
+            return res.status(403).json({ error: "Forbidden" });
+        }
+    }
+
     // Enforce org isolation whenever the URL contains an `org_<id>` segment.
     const orgMatch = req.path.match(/\/org_(\d+)\//);
     if (orgMatch) {

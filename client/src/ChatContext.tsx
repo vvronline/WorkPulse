@@ -11,19 +11,41 @@ import { getConversations } from "./api";
 import { useAuth } from "./AuthContext";
 import type { Conversation } from "./types";
 
+type UnreadConversation = {
+    [key: string]: unknown;
+    unread_count?: unknown;
+};
+
 interface ChatContextValue {
     unreadCount: number;
     refreshUnread: () => Promise<void> | void;
+    updateUnreadFromConversations: (
+        conversations: UnreadConversation[],
+    ) => void;
 }
 
 const ChatCtx = createContext<ChatContextValue>({
     unreadCount: 0,
     refreshUnread: () => {},
+    updateUnreadFromConversations: () => {},
 });
 
 export function ChatProvider({ children }: { children: ReactNode }) {
     const { isAuthenticated } = useAuth();
     const [unreadCount, setUnreadCount] = useState(0);
+
+    const updateUnreadFromConversations = useCallback(
+        (conversations: UnreadConversation[]) => {
+            setUnreadCount(
+                conversations.reduce(
+                    (sum, conversation) =>
+                        sum + (Number(conversation.unread_count) || 0),
+                    0,
+                ),
+            );
+        },
+        [],
+    );
 
     const refreshUnread = useCallback(async () => {
         if (!isAuthenticated) {
@@ -32,16 +54,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
         try {
             const { data } = await getConversations();
-            setUnreadCount(
-                ((data as Conversation[]) || []).reduce(
-                    (sum, c) => sum + (Number(c.unread_count) || 0),
-                    0,
-                ),
+            updateUnreadFromConversations(
+                ((data as Conversation[]) || []),
             );
         } catch {
             /* ignore */
         }
-    }, [isAuthenticated]);
+    }, [isAuthenticated, updateUnreadFromConversations]);
 
     useEffect(() => {
         refreshUnread();
@@ -68,8 +87,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }, [unreadCount]);
 
     const value = useMemo(
-        () => ({ unreadCount, refreshUnread }),
-        [unreadCount, refreshUnread],
+        () => ({
+            unreadCount,
+            refreshUnread,
+            updateUnreadFromConversations,
+        }),
+        [unreadCount, refreshUnread, updateUnreadFromConversations],
     );
 
     return <ChatCtx.Provider value={value}>{children}</ChatCtx.Provider>;

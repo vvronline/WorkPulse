@@ -1,13 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
     searchChatUsers,
-    getConversations,
     createConversation,
-    getMessages,
     markConversationRead,
-    getPresence,
-    getMembers,
-    getReadStatus,
     ackDelivered,
 } from "../../api";
 import { useAuth } from "../../AuthContext";
@@ -16,21 +11,39 @@ import useWebSocket from "../../hooks/useWebSocket";
 import type { WebSocketMessage } from "../../hooks/useWebSocket";
 import useChatNotification from "../../hooks/useChatNotification";
 import useCallState from "./useCallState";
+import useConversationDraft from "./useConversationDraft";
+import useConversationLoader from "./useConversationLoader";
+import useConversationList from "./useConversationList";
+import {
+    applyRealtimeDelete,
+    applyRealtimeEdit,
+    applyRealtimeMediaJob,
+    applyRealtimePin,
+    applyRealtimeReaction,
+    mapRealtimeMessage,
+    updateRealtimeMessage,
+} from "./chatRealtimeReducers";
 import type { AnyRecord } from "../../types";
 
 type ChatMessage = AnyRecord & { id: number | string };
 type Conversation = AnyRecord & { id: number | string };
-type ChatDraft = {
-    input: string;
-    replyTo?: { id: number | string; content?: string | null; sender_name?: string | null } | null;
-    editing?: { id: number | string; content?: string | null } | null;
-};
 
 export default function useChatState() {
     const { user } = useAuth();
-    const { refreshUnread } = useChatUnread();
+    const { refreshUnread, updateUnreadFromConversations } = useChatUnread();
     const { notifyMessage, notifyMention, notifyReaction } =
         useChatNotification();
+    const {
+        conversations,
+        setConversations,
+        loadingConversations: loadingConvs,
+        onlineUsers,
+        setOnlineUsers,
+        userStatusMap,
+        setUserStatusMap,
+        userWorkModeMap,
+        loadConversations,
+    } = useConversationList({ updateUnreadFromConversations });
 
     // Ref for wsSend (allows useCallState to access it before WS is initialized)
     const wsSendRef = useRef<((type: string, data?: unknown) => void) | null>(
@@ -49,7 +62,6 @@ export default function useChatState() {
     } = useCallState(wsSendRef);
 
     // Core state
-    const [conversations, setConversations] = useState<Conversation[]>([]);
     const [activeConv, setActiveConv] = useState<Conversation | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState("");
@@ -57,7 +69,6 @@ export default function useChatState() {
     const [searchResults, setSearchResults] = useState<AnyRecord[]>([]);
     const [searching, setSearching] = useState(false);
     const [loadingMsgs, setLoadingMsgs] = useState(false);
-    const [loadingConvs, setLoadingConvs] = useState(true);
     const [hasMore, setHasMore] = useState(false);
     const [typingUsers, setTypingUsers] = useState<
         Record<string, number | string>
@@ -65,18 +76,6 @@ export default function useChatState() {
     const [mobileView, setMobileView] = useState("list");
 
     // Feature state
-    const [onlineUsers, setOnlineUsers] = useState<Set<number | string>>(
-        new Set(),
-    );
-    const [userStatusMap, setUserStatusMap] = useState<Record<string, string>>(
-        {},
-    );
-    // Per-user current work mode (office/remote/hybrid) from today's attendance
-    // clock-in, shown as a badge in the chat header. null = logged out / no data.
-    // Updated on each presence fetch (no live WS event in v1).
-    const [userWorkModeMap, setUserWorkModeMap] = useState<
-        Record<string, string | null>
-    >({});
     const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
     const [editingMsg, setEditingMsg] = useState<ChatMessage | null>(null);
     const [showSearch, setShowSearch] = useState(false);
@@ -99,8 +98,6 @@ export default function useChatState() {
     const [convMembers, setConvMembers] = useState<AnyRecord[]>([]);
     const [deleteConfirm, setDeleteConfirm] = useState<AnyRecord | null>(null);
     const [convMenu, setConvMenu] = useState<AnyRecord | null>(null);
-    const pendingDraftReplyRef = useRef<ChatDraft["replyTo"]>(null);
-    const pendingDraftEditRef = useRef<ChatDraft["editing"]>(null);
 
     // Refs
     const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -144,39 +141,7 @@ export default function useChatState() {
                                 ],
                             );
                         }
-                        const msgFields: ChatMessage = {
-                            id: d.id as number | string,
-                            sender_id: d.senderId,
-                            sender_name: d.senderName,
-                            sender_avatar: d.senderAvatar,
-                            content: d.content,
-                            created_at: d.createdAt,
-                            reply_to_id: d.replyToId || null,
-                            reply_sender_name: d.replySenderName,
-                            reply_content: d.replyContent,
-                            file_url: d.fileUrl,
-                            file_name: d.fileName,
-                            file_type: d.fileType,
-                            file_size: d.fileSize,
-                            forwarded_from_id: d.forwardedFromId,
-                            format_type: d.formatType || "text",
-                            metadata: d.metadata || null,
-                            link_preview: d.linkPreview || null,
-                            media_job_id: d.mediaJobId || null,
-                            media_state: d.mediaState || null,
-                            media_progress:
-                                typeof d.mediaProgress === "number"
-                                    ? d.mediaProgress
-                                    : null,
-                            media_failure_reason: d.failureReason || null,
-                            _mediaState: d.mediaState || null,
-                            _mediaProgress:
-                                typeof d.mediaProgress === "number"
-                                    ? d.mediaProgress
-                                    : null,
-                            delivered_to: [],
-                            reactions: [],
-                        };
+                        const msgFields = mapRealtimeMessage(d);
                         setMessages((prev) => {
                             // Deduplicate: don't add if a real message with this ID already exists
                             if (prev.some((m) => m.id === d.id)) return prev;
@@ -199,9 +164,9 @@ export default function useChatState() {
                             }
                             return [...prev, msgFields];
                         });
-                        markConversationRead(d.conversationId as number | string)
-                            .then(() => refreshUnread())
-                            .catch(() => {});
+                        markConversationRead(
+                            d.conversationId as number | string,
+                        ).catch(() => {});
                         if (d.senderId !== user?.id && d.id) {
                             ackDelivered(d.id as number | string).catch(
                                 () => {},
@@ -307,29 +272,14 @@ export default function useChatState() {
                 }
                 case "chat_media_job": {
                     if (activeConvRef.current?.id === d.conversationId) {
-                        setMessages((prev) =>
-                            prev.map((m) =>
-                                m.id === d.messageId
-                                    ? {
-                                          ...m,
-                                          media_job_id: d.mediaJobId || m.media_job_id,
-                                          media_state: d.status || m.media_state,
-                                          media_progress:
-                                              typeof d.progress === "number"
-                                                  ? d.progress
-                                                  : m.media_progress,
-                                          media_failure_reason:
-                                              d.failureReason || null,
-                                          _mediaState: d.status || m._mediaState,
-                                          _mediaProgress:
-                                              typeof d.progress === "number"
-                                                  ? d.progress
-                                                  : m._mediaProgress,
-                                          _failureReason:
-                                              d.failureReason || m._failureReason,
-                                      }
-                                    : m,
-                            ),
+                        setMessages(
+                            (current) =>
+                                updateRealtimeMessage(
+                                    current,
+                                    d.messageId as number | string,
+                                    (message) =>
+                                        applyRealtimeMediaJob(message, d),
+                                ) as ChatMessage[],
                         );
                     }
                     break;
@@ -344,55 +294,28 @@ export default function useChatState() {
                             if (target && target.sender_id === user?.id)
                                 notifyReaction();
                         }
-                        setMessages((prev) =>
-                            prev.map((m) => {
-                                if (m.id !== d.messageId) return m;
-                                if (m.deleted_at) return { ...m, reactions: [] };
-                                let reactions = [
-                                    ...((m.reactions as AnyRecord[]) || []),
-                                ];
-                                if (d.action === "added") {
-                                    // Idempotent: avoid duplicating an optimistically-added reaction.
-                                    if (
-                                        !reactions.some(
-                                            (r) =>
-                                                r.userId === d.userId &&
-                                                r.emoji === d.emoji,
-                                        )
-                                    ) {
-                                        reactions.push({
-                                            userId: d.userId,
-                                            fullName: d.fullName,
-                                            emoji: d.emoji,
-                                        });
-                                    }
-                                } else {
-                                    reactions = reactions.filter(
-                                        (r) =>
-                                            !(
-                                                r.userId === d.userId &&
-                                                r.emoji === d.emoji
-                                            ),
-                                    );
-                                }
-                                return { ...m, reactions };
-                            }),
+                        setMessages(
+                            (current) =>
+                                updateRealtimeMessage(
+                                    current,
+                                    d.messageId as number | string,
+                                    (message) =>
+                                        applyRealtimeReaction(message, d),
+                                ) as ChatMessage[],
                         );
                     }
                     break;
                 }
                 case "chat_edit": {
                     if (activeConvRef.current?.id === d.conversationId) {
-                        setMessages((prev) =>
-                            prev.map((m) =>
-                                m.id === d.messageId
-                                    ? {
-                                          ...m,
-                                          content: d.content,
-                                          edited_at: d.editedAt,
-                                      }
-                                    : m,
-                            ),
+                        setMessages(
+                            (current) =>
+                                updateRealtimeMessage(
+                                    current,
+                                    d.messageId as number | string,
+                                    (message) =>
+                                        applyRealtimeEdit(message, d),
+                                ) as ChatMessage[],
                         );
                     }
                     break;
@@ -413,21 +336,13 @@ export default function useChatState() {
                                     targetTs,
                         );
                     if (activeConvRef.current?.id === d.conversationId) {
-                        setMessages((prev) =>
-                            prev.map((m) =>
-                                m.id === d.messageId
-                                    ? {
-                                          ...m,
-                                          deleted_at: new Date().toISOString(),
-                                          content: "",
-                                          file_url: null,
-                                          file_name: null,
-                                          file_type: null,
-                                          file_size: null,
-                                          reactions: [],
-                                      }
-                                    : m,
-                            ),
+                        setMessages(
+                            (current) =>
+                                updateRealtimeMessage(
+                                    current,
+                                    d.messageId as number | string,
+                                    applyRealtimeDelete,
+                                ) as ChatMessage[],
                         );
                     }
                     if (isLatest) {
@@ -467,20 +382,14 @@ export default function useChatState() {
                 }
                 case "chat_pin": {
                     if (activeConvRef.current?.id === d.conversationId) {
-                        setMessages((prev) =>
-                            prev.map((m) =>
-                                m.id === d.messageId
-                                    ? {
-                                          ...m,
-                                          pinned_at: d.pinned
-                                              ? new Date().toISOString()
-                                              : null,
-                                          pinned_by: d.pinned
-                                              ? d.pinnedBy
-                                              : null,
-                                      }
-                                    : m,
-                            ),
+                        setMessages(
+                            (current) =>
+                                updateRealtimeMessage(
+                                    current,
+                                    d.messageId as number | string,
+                                    (message) =>
+                                        applyRealtimePin(message, d),
+                                ) as ChatMessage[],
                         );
                     }
                     break;
@@ -656,11 +565,6 @@ export default function useChatState() {
         };
     }, [activeConv?.id]);
 
-    // Load conversations on mount
-    useEffect(() => {
-        loadConversations();
-    }, []);
-
     // Sync current user's avatar into self-chat conversation
     useEffect(() => {
         setConversations((prev) =>
@@ -741,65 +645,6 @@ export default function useChatState() {
 
     // ─── Core operations ───
 
-    const loadConversations = async () => {
-        setLoadingConvs(true);
-        try {
-            const { data } = await getConversations();
-            setConversations(data as Conversation[]);
-            const uids = new Set<number | string>();
-            (data as Conversation[]).forEach((c) => {
-                if (c.other_user_id)
-                    uids.add(c.other_user_id as number | string);
-            });
-            if (uids.size > 0) {
-                try {
-                    const { data: pres } = await getPresence([...uids]);
-                    const onlineSet = new Set<number | string>();
-                    const statusMap: Record<string, string> = {};
-                    const workModeMap: Record<string, string | null> = {};
-                    for (const [k, v] of Object.entries(
-                        pres as Record<string, unknown>,
-                    )) {
-                        const uid = Number(k);
-                        if (typeof v === "object" && v !== null) {
-                            // New format: { presence, userStatus, workMode }
-                            const obj = v as {
-                                presence?: string;
-                                userStatus?: string;
-                                workMode?: string | null;
-                            };
-                            const isOnline = obj.presence === "online";
-                            if (isOnline) onlineSet.add(uid);
-                            // If the user's WS is disconnected we must show
-                            // them as 'offline' in chat — even if user_status
-                            // in DB is still 'available' from a stale
-                            // session. Otherwise the chat dot stays green
-                            // while the navbar/profile shows offline.
-                            statusMap[uid] = isOnline
-                                ? obj.userStatus || "available"
-                                : "offline";
-                            workModeMap[uid] = obj.workMode ?? null;
-                        } else {
-                            // Legacy format: 'online' | 'offline'
-                            if (v === "online") onlineSet.add(uid);
-                            statusMap[uid] =
-                                v === "online" ? "available" : "offline";
-                            workModeMap[uid] = null;
-                        }
-                    }
-                    setOnlineUsers(onlineSet);
-                    setUserStatusMap((prev) => ({ ...prev, ...statusMap }));
-                    setUserWorkModeMap((prev) => ({ ...prev, ...workModeMap }));
-                } catch (e) {
-                    console.error("Failed to load presence", e);
-                }
-            }
-        } catch (e) {
-            console.error("Failed to load conversations", e);
-        }
-        setLoadingConvs(false);
-    };
-
     const startConversation = async (otherUser: AnyRecord) => {
         try {
             const { data } = await createConversation(
@@ -820,140 +665,81 @@ export default function useChatState() {
         }
     };
 
-    const openConversation = async (
-        convId: number | string,
-        convData: AnyRecord,
-    ) => {
-        setActiveConv({ ...convData, id: convId });
-        setMessages([]);
-        setLoadingMsgs(true);
-        setMobileView("chat");
-        setReplyTo(null);
-        setEditingMsg(null);
-        setShowPinned(false);
-        setShowSearch(false);
-        setShowSharedFiles(false);
-        setShowInfo(false);
-        try {
-            const { data } = await getMessages(convId);
-            setMessages(data as ChatMessage[]);
-            setHasMore((data as ChatMessage[]).length >= 50);
-            await markConversationRead(convId);
-            refreshUnread();
-            wsSend("chat_read", { conversationId: convId });
-            setConversations((prev) =>
-                prev.map((c) =>
-                    c.id === convId ? { ...c, unread_count: 0 } : c,
+    const selectConversation = useCallback(
+        (convId: number | string, convData: AnyRecord) => {
+            const selected = { ...convData, id: convId } as Conversation;
+            // Update synchronously so an immediately-resolved request observes
+            // the new active conversation before React's next render.
+            activeConvRef.current = selected;
+            setActiveConv(selected);
+            setMobileView("chat");
+            setReplyTo(null);
+            setEditingMsg(null);
+            setShowPinned(false);
+            setShowSearch(false);
+            setShowSharedFiles(false);
+            setShowInfo(false);
+        },
+        [],
+    );
+
+    const markConversationReadInList = useCallback(
+        (convId: number | string) => {
+            setConversations((current) =>
+                current.map((conversation) =>
+                    conversation.id === convId
+                        ? { ...conversation, unread_count: 0 }
+                        : conversation,
                 ),
             );
-            try {
-                const { data: rs } = await getReadStatus(convId);
-                const map: Record<string, unknown> = {};
-                (rs as AnyRecord[]).forEach((r) => {
-                    map[r.user_id as string] = r.last_read_at;
-                });
-                setReadReceipts(map);
-            } catch (e) {
-                console.error("Failed to load read status", e);
-            }
-            try {
-                const { data: members } = await getMembers(convId);
-                setConvMembers(members as AnyRecord[]);
-            } catch (e) {
-                setConvMembers([]);
-                console.error("Failed to load members", e);
-            }
-        } catch (e) {
-            console.error("Failed to open conversation", e);
-        }
-        setLoadingMsgs(false);
-    };
+        },
+        [],
+    );
 
-    const loadMore = async () => {
-        if (!activeConv || messages.length === 0 || !hasMore) return;
-        const container = messagesContainerRef.current;
-        const prevHeight = container?.scrollHeight || 0;
-        try {
-            const { data } = await getMessages(
-                activeConv.id,
-                String(messages[0].id),
-            );
-            setMessages((prev) => [...(data as ChatMessage[]), ...prev]);
-            setHasMore((data as ChatMessage[]).length >= 50);
-            requestAnimationFrame(() => {
-                if (container)
-                    container.scrollTop =
-                        container.scrollHeight - prevHeight;
-            });
-        } catch (e) {
-            console.error("Failed to load more messages", e);
-        }
-    };
+    const sendReadReceipt = useCallback(
+        (convId: number | string) => {
+            wsSend("chat_read", { conversationId: convId });
+        },
+        [wsSend],
+    );
 
-    const draftKey =
-        activeConv?.id != null ? `chat:draft:${String(activeConv.id)}` : null;
+    const { openConversation, loadMore } = useConversationLoader({
+        activeConversation: activeConv,
+        activeConversationRef: activeConvRef,
+        messages,
+        hasMore,
+        messagesContainerRef,
+        setMessages,
+        setHasMore,
+        setLoading: setLoadingMsgs,
+        setReadReceipts,
+        setMembers: setConvMembers,
+        onSelectConversation: selectConversation,
+        onMarkedRead: markConversationReadInList,
+        sendReadReceipt,
+    });
 
-    useEffect(() => {
-        pendingDraftReplyRef.current = null;
-        pendingDraftEditRef.current = null;
-        if (!draftKey) return;
-        try {
-            const raw = localStorage.getItem(draftKey);
-            if (!raw) return;
-            const parsed = JSON.parse(raw) as ChatDraft;
-            if (typeof parsed.input === "string") setInput(parsed.input);
-            if (parsed.replyTo) pendingDraftReplyRef.current = parsed.replyTo;
-            if (parsed.editing) pendingDraftEditRef.current = parsed.editing;
-        } catch {
-            // ignore malformed drafts
-        }
-    }, [draftKey]);
-
-    useEffect(() => {
-        if (!messages.length) return;
-        if (pendingDraftReplyRef.current?.id != null) {
-            const match = messages.find((m) => m.id === pendingDraftReplyRef.current!.id);
-            if (match) {
-                setReplyTo(match);
-                pendingDraftReplyRef.current = null;
-            }
-        }
-        if (pendingDraftEditRef.current?.id != null) {
-            const match = messages.find((m) => m.id === pendingDraftEditRef.current!.id);
-            if (match) {
-                setEditingMsg(match);
-                if (typeof pendingDraftEditRef.current.content === "string") {
-                    setInput(pendingDraftEditRef.current.content);
-                }
-                pendingDraftEditRef.current = null;
-            }
-        }
-    }, [messages]);
-
-    useEffect(() => {
-        if (!draftKey) return;
-        const payload: ChatDraft = {
-            input,
-            replyTo: replyTo
+    useConversationDraft({
+        identity:
+            user?.id != null
                 ? {
-                    id: replyTo.id,
-                    content: (replyTo.content as string) || null,
-                    sender_name: (replyTo.sender_name as string) || null,
-                }
+                      id: user.id as number | string,
+                      tenantId: user.tenant_id as
+                          | number
+                          | string
+                          | null
+                          | undefined,
+                  }
                 : null,
-            editing: editingMsg
-                ? {
-                    id: editingMsg.id,
-                    content: (editingMsg.content as string) || null,
-                }
-                : null,
-        };
-        if (!payload.input.trim() && !payload.replyTo && !payload.editing) {
-            localStorage.removeItem(draftKey);
-            return;
-        }
-        localStorage.setItem(draftKey, JSON.stringify(payload));
-    }, [draftKey, input, replyTo, editingMsg]);
+        conversationId: activeConv?.id,
+        messages,
+        input,
+        setInput,
+        replyTo,
+        setReplyTo,
+        editingMessage: editingMsg,
+        setEditingMessage: setEditingMsg,
+    });
 
     return {
         user,

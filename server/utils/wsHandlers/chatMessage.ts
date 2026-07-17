@@ -244,6 +244,26 @@ async function chatMessage({
     return;
   }
 
+  // Reply IDs are global, so they must be bound to this conversation before
+  // persisting. Otherwise a sender could attach a private message from another
+  // conversation and expose its context through history/realtime joins.
+  if (replyToId !== undefined) {
+    const replyTarget = (
+      await db.query(
+        `SELECT 1
+           FROM messages
+          WHERE id = $1
+            AND conversation_id = $2
+            AND deleted_at IS NULL`,
+        [replyToId, conversationId],
+      )
+    ).rows[0];
+    if (!replyTarget) {
+      sendErrorAck(ws, clientMsgId, "invalid-reply-target");
+      return;
+    }
+  }
+
   // ── 2b. Block enforcement (direct chats only, Signal parity) ───────
   // A block in EITHER direction stops direct-message delivery. Group
   // messages are NOT filtered (matches Signal, where blocked users'

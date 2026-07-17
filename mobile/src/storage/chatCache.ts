@@ -1,5 +1,9 @@
 import { storage } from "./mmkv";
 import type { ChatMessage, Conversation } from "../features";
+import {
+  activeChatStoragePrefix,
+  scopedChatStorageKey,
+} from "./chatStorageScope";
 
 /**
  * Synchronous on-device chat cache (MMKV-backed).
@@ -32,7 +36,8 @@ const MAX_CACHED_MESSAGES = 50;
 /** userId → ISO last_read_at */
 export type ReadStatusMap = Record<number, string>;
 
-function readJSON<T>(key: string): T | null {
+function readJSON<T>(key: string | null): T | null {
+  if (!key) return null;
   const raw = storage.getString(key);
   if (!raw) return null;
   try {
@@ -47,15 +52,19 @@ function readJSON<T>(key: string): T | null {
 export function getCachedMessages(
   conversationId: number,
 ): ChatMessage[] | null {
-  return readJSON<ChatMessage[]>(`${THREAD_PREFIX}${conversationId}`);
+  return readJSON<ChatMessage[]>(
+    scopedChatStorageKey(`${THREAD_PREFIX}${conversationId}`),
+  );
 }
 
 export function setCachedMessages(
   conversationId: number,
   messages: ChatMessage[] | undefined,
 ): void {
+  const key = scopedChatStorageKey(`${THREAD_PREFIX}${conversationId}`);
+  if (!key) return;
   if (!messages) {
-    storage.remove(`${THREAD_PREFIX}${conversationId}`);
+    storage.remove(key);
     return;
   }
   // Messages are stored OLDEST-FIRST (mirrors GET /messages). Keep the NEWEST
@@ -66,7 +75,7 @@ export function setCachedMessages(
     messages.length > MAX_CACHED_MESSAGES
       ? messages.slice(messages.length - MAX_CACHED_MESSAGES)
       : messages;
-  storage.set(`${THREAD_PREFIX}${conversationId}`, JSON.stringify(trimmed));
+  storage.set(key, JSON.stringify(trimmed));
 }
 
 /**
@@ -95,9 +104,36 @@ export function appendCachedMessage(
   setCachedMessages(conversationId, [...existing, message]);
 }
 
+/**
+ * Apply a realtime mutation to one cached message without requiring the thread
+ * screen to be mounted. Returns false when the conversation/message is not
+ * cached, allowing callers to remain best-effort.
+ */
+export function updateCachedMessage(
+  conversationId: number,
+  messageId: number | string,
+  update: (message: ChatMessage) => ChatMessage,
+): boolean {
+  const existing = getCachedMessages(conversationId);
+  if (!existing) return false;
+  const index = existing.findIndex(
+    (message) => String(message.id) === String(messageId),
+  );
+  if (index < 0) return false;
+
+  const next = [...existing];
+  next[index] = update(existing[index]);
+  setCachedMessages(conversationId, next);
+  return true;
+}
+
 export function clearCachedMessages(conversationId: number): void {
-  storage.remove(`${THREAD_PREFIX}${conversationId}`);
-  storage.remove(`${READ_STATUS_PREFIX}${conversationId}`);
+  const threadKey = scopedChatStorageKey(`${THREAD_PREFIX}${conversationId}`);
+  const readStatusKey = scopedChatStorageKey(
+    `${READ_STATUS_PREFIX}${conversationId}`,
+  );
+  if (threadKey) storage.remove(threadKey);
+  if (readStatusKey) storage.remove(readStatusKey);
 }
 
 // ── Read receipts (userId → ISO last_read_at) ────────────────────────────────
@@ -105,24 +141,28 @@ export function clearCachedMessages(conversationId: number): void {
 export function getCachedReadStatus(
   conversationId: number,
 ): ReadStatusMap | null {
-  return readJSON<ReadStatusMap>(`${READ_STATUS_PREFIX}${conversationId}`);
+  return readJSON<ReadStatusMap>(
+    scopedChatStorageKey(`${READ_STATUS_PREFIX}${conversationId}`),
+  );
 }
 
 export function setCachedReadStatus(
   conversationId: number,
   map: ReadStatusMap | undefined,
 ): void {
+  const key = scopedChatStorageKey(`${READ_STATUS_PREFIX}${conversationId}`);
+  if (!key) return;
   if (!map) {
-    storage.remove(`${READ_STATUS_PREFIX}${conversationId}`);
+    storage.remove(key);
     return;
   }
-  storage.set(`${READ_STATUS_PREFIX}${conversationId}`, JSON.stringify(map));
+  storage.set(key, JSON.stringify(map));
 }
 
 // ── Conversation list ────────────────────────────────────────────────────────
 
 export function getCachedConversations(): Conversation[] | null {
-  return readJSON<Conversation[]>(CONVERSATIONS_KEY);
+  return readJSON<Conversation[]>(scopedChatStorageKey(CONVERSATIONS_KEY));
 }
 
 // ── Whole-cache wipe (sign-out / account switch) ─────────────────────────────
@@ -140,13 +180,13 @@ export function getCachedConversations(): Conversation[] | null {
  * inside tenant 2's thread. Must be called on logout (see auth/AuthContext).
  */
 export function clearAllChatCache(): void {
-  // All chat artifacts share the `chat:` key prefix (chat:thread:*,
-  // chat:readstatus:*, chat:conversations, chat:localdeletes:*), so a single
-  // prefix sweep covers every cache without touching unrelated MMKV keys
-  // (e.g. zustand persisted state).
+  // A scoped sweep removes only the departing identity's chat artifacts and
+  // leaves another currently-active account's namespace untouched.
+  const prefix = activeChatStoragePrefix();
+  if (!prefix) return;
   try {
     for (const key of storage.getAllKeys()) {
-      if (key.startsWith("chat:")) storage.remove(key);
+      if (key.startsWith(prefix)) storage.remove(key);
     }
   } catch {
     /* best-effort — a failed wipe must not block sign-out */
@@ -156,9 +196,11 @@ export function clearAllChatCache(): void {
 export function setCachedConversations(
   conversations: Conversation[] | undefined,
 ): void {
+  const key = scopedChatStorageKey(CONVERSATIONS_KEY);
+  if (!key) return;
   if (!conversations) {
-    storage.remove(CONVERSATIONS_KEY);
+    storage.remove(key);
     return;
   }
-  storage.set(CONVERSATIONS_KEY, JSON.stringify(conversations));
+  storage.set(key, JSON.stringify(conversations));
 }
