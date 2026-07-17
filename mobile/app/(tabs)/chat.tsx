@@ -166,6 +166,14 @@ export default function ChatScreen() {
   // Re-entrancy guard for openConv — prevents a rapid double-tap from pushing
   // two stacked chat/[id] screens for the same conversation (see openConv).
   const openingConvRef = useRef(false);
+  const prefetchTaskRef = useRef<{ cancel: () => void } | null>(null);
+  const prefetchGenerationRef = useRef(0);
+
+  const cancelRecentPrefetch = useCallback(() => {
+    prefetchGenerationRef.current += 1;
+    prefetchTaskRef.current?.cancel();
+    prefetchTaskRef.current = null;
+  }, []);
 
   // Signal-style in-place search: the list stays visible while filtering.
   const [searchOpen, setSearchOpen] = useState(false);
@@ -230,31 +238,59 @@ export default function ChatScreen() {
   // conversations in the BACKGROUND (Signal prefetches recent threads). Tapping
   // one then paints instantly from disk with no spinner. Bounded + best-effort
   // so it never delays the list or hammers the server. Only fills cold entries.
-  const prefetchRecent = useCallback((convs: Conversation[]) => {
-    // Never let speculative prefetch compete with a user's tap-to-open. Run it
-    // only after current navigation/list interactions have settled, and skip it
-    // if a row is already opening.
-    InteractionManager.runAfterInteractions(() => {
-      if (openingConvRef.current) return;
-      const recent = [...convs]
-        .filter((c) => !c.is_meeting_chat)
-        .sort(
-          (a, b) =>
-            new Date(b.last_message_at || 0).getTime() -
-            new Date(a.last_message_at || 0).getTime(),
-        )
-        .slice(0, 5);
-      recent.forEach((c) => {
-        if (openingConvRef.current) return;
-        if (getCachedMessages(c.id)) return; // already warm
-        getMessages(c.id)
-          .then((r) => {
-            if (!openingConvRef.current) setCachedMessages(c.id, r.data || []);
-          })
-          .catch(() => {});
-      });
-    });
-  }, []);
+  const prefetchRecent = useCallback(
+    (convs: Conversation[]) => {
+      // Replace any older scheduled prefetch and run cold conversations
+      // SEQUENTIALLY. Starting five requests together made their JSON parsing and
+      // synchronous MMKV writes land during a later tap/navigation transition.
+      cancelRecentPrefetch();
+      const generation = prefetchGenerationRef.current;
+      prefetchTaskRef.current = InteractionManager.runAfterInteractions(
+        async () => {
+          if (
+            openingConvRef.current ||
+            generation !== prefetchGenerationRef.current
+          ) {
+            return;
+          }
+          const recent = [...convs]
+            .filter((c) => !c.is_meeting_chat)
+            .sort(
+              (a, b) =>
+                new Date(b.last_message_at || 0).getTime() -
+                new Date(a.last_message_at || 0).getTime(),
+            )
+            .slice(0, 5);
+
+          for (const c of recent) {
+            if (
+              openingConvRef.current ||
+              generation !== prefetchGenerationRef.current
+            ) {
+              return;
+            }
+            if (getCachedMessages(c.id)) continue;
+            try {
+              const response = await getMessages(c.id);
+              if (
+                openingConvRef.current ||
+                generation !== prefetchGenerationRef.current
+              ) {
+                return;
+              }
+              setCachedMessages(c.id, response.data || []);
+            } catch {
+              /* speculative prefetch is best-effort */
+            }
+          }
+          if (generation === prefetchGenerationRef.current) {
+            prefetchTaskRef.current = null;
+          }
+        },
+      );
+    },
+    [cancelRecentPrefetch],
+  );
 
   const load = useCallback(async () => {
     try {
@@ -286,8 +322,9 @@ export default function ChatScreen() {
   useEffect(
     () => () => {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      cancelRecentPrefetch();
     },
-    [],
+    [cancelRecentPrefetch],
   );
 
   const loadCalls = useCallback(async () => {
@@ -391,6 +428,7 @@ export default function ChatScreen() {
     // useFocusEffect above) and on the safety timer below.
     if (openingConvRef.current) return;
     openingConvRef.current = true;
+    cancelRecentPrefetch();
     // Safety re-arm: if the push is somehow aborted (navigation cancelled) the
     // focus-effect re-arm may not fire, so clear the guard after a short window
     // to avoid wedging the row permanently un-openable.

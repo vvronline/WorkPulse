@@ -15,6 +15,10 @@ import {
   broadcastMediaJobUpdate,
   processChatMediaJob,
 } from "../services/chatMediaPipeline";
+import {
+  buildUploadedMediaMetadata,
+  copyForwardedMediaMetadata,
+} from "../utils/chatMediaMetadata";
 const { canDo, loadGroupContext } = require("../utils/groupPerms");
 
 const router = express.Router();
@@ -1768,10 +1772,7 @@ router.post(
       // View-once (disappearing media): the composer sends viewOnce="true".
       // We persist it in the message metadata JSONB (no schema change) and
       // strip the file URL for a recipient once they've opened it.
-      const viewOnce = String(req.body.viewOnce || "") === "true";
-      const metadata = viewOnce
-        ? { viewOnce: true, viewedBy: [] as number[] }
-        : null;
+      const metadata = buildUploadedMediaMetadata(req.body);
 
       const result = (
         await req.db!.query(
@@ -2550,6 +2551,7 @@ router.post(
           [req.userId],
         )
       ).rows[0];
+      const forwardedMetadata = copyForwardedMediaMetadata(original.metadata);
 
       for (const cId of conversationIds) {
         const convIdNum = parseInt(cId, 10);
@@ -2565,8 +2567,8 @@ router.post(
 
         const result = (
           await req.db!.query(
-            `INSERT INTO messages (conversation_id, sender_id, content, file_url, file_name, file_type, file_size, forwarded_from_id)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
+            `INSERT INTO messages (conversation_id, sender_id, content, file_url, file_name, file_type, file_size, forwarded_from_id, metadata)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
             [
               convIdNum,
               req.userId,
@@ -2576,6 +2578,7 @@ router.post(
               original.file_type,
               original.file_size,
               msgId,
+              forwardedMetadata ? JSON.stringify(forwardedMetadata) : null,
             ],
           )
         ).rows[0];
@@ -2612,6 +2615,7 @@ router.post(
           fileType: original.file_type,
           fileSize: original.file_size,
           forwardedFromId: msgId,
+          metadata: forwardedMetadata,
           createdAt: result.created_at,
         };
 

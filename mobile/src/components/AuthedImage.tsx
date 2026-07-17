@@ -65,9 +65,11 @@ export function AuthedImage({ uri, style, ...rest }: AuthedImageProps) {
       //    download a persistent copy in the background for offline use later.
       const t = await getToken();
       if (active) setToken(t);
-      ensureCachedMedia(uri).then((local) => {
-        if (active && local) setLocalUri(local);
-      });
+       // Warm the persistent cache for the next mount, but do not replace the
+       // source of an image that has already started streaming remotely. A
+       // remote→local source swap forces a second decode and visibly flashes in
+       // fullscreen viewers even though both URIs contain identical bytes.
+       void ensureCachedMedia(uri);
     })();
     return () => {
       active = false;

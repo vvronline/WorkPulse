@@ -33,6 +33,11 @@ import type { ChatMessage } from "../../features";
 import { fmtSize, isAudioFile, isImageFile, isVideoFile } from "./chatUtils";
 import { openAuthedFile } from "./openAuthedFile";
 import InlineVideo, { VIDEO_AVAILABLE } from "./InlineVideo";
+import {
+  getCachedMediaDimensions,
+  setCachedMediaDimensions,
+} from "../../storage/mediaDimensionsCache";
+import { getCachedMediaSync } from "./mediaCache";
 
 // Signal-style sent-image envelope — matched 1:1 to the web client's
 // FilePreview.module.css (.imgWrap / .image): max 280×330, min 120 wide, 80
@@ -122,8 +127,17 @@ export default function FilePreview({
   const metaW = Number(message.metadata?.width) || null;
   const metaH = Number(message.metadata?.height) || null;
   const resolvedForSize = uploadUrl(message.file_url || "") || undefined;
+  const cachedDimensions = getCachedMediaDimensions(resolvedForSize);
   const needsMeasure =
-    isImageFile(message) && (!metaW || !metaH) && !!resolvedForSize;
+    isImageFile(message) &&
+    (!metaW || !metaH) &&
+    !cachedDimensions &&
+    !!resolvedForSize;
+
+  useEffect(() => {
+    if (!resolvedForSize || !metaW || !metaH) return;
+    setCachedMediaDimensions(resolvedForSize, metaW, metaH);
+  }, [resolvedForSize, metaW, metaH]);
 
   useEffect(() => {
     if (!needsMeasure || !resolvedForSize) return;
@@ -133,6 +147,7 @@ export default function FilePreview({
     const isLocalUri = /^(file|content|data):/i.test(resolvedForSize);
     const apply = (w: number, h: number) => {
       if (!active || !w || !h) return;
+      setCachedMediaDimensions(resolvedForSize, w, h);
       setMeasured({ url: resolvedForSize, width: w, height: h });
     };
     if (isLocalUri) {
@@ -268,9 +283,15 @@ export default function FilePreview({
     const measuredForThis =
       measured && measured.url === resolvedForSize ? measured : null;
     const intrinsicW =
-      Number(message.metadata?.width) || measuredForThis?.width || null;
+      Number(message.metadata?.width) ||
+      cachedDimensions?.width ||
+      measuredForThis?.width ||
+      null;
     const intrinsicH =
-      Number(message.metadata?.height) || measuredForThis?.height || null;
+      Number(message.metadata?.height) ||
+      cachedDimensions?.height ||
+      measuredForThis?.height ||
+      null;
     const box = computeImageSize(winWidth, intrinsicW, intrinsicH);
     const resolved = uploadUrl(message.file_url) || undefined;
     // Optimistic local images (file:/content:) render with a plain <Image>;
@@ -281,7 +302,9 @@ export default function FilePreview({
     return (
       <View>
         <Pressable
-          onPress={() => setViewer(resolved || null)}
+          onPress={() =>
+            setViewer(getCachedMediaSync(resolved) || resolved || null)
+          }
           onLongPress={onLongPress}
           delayLongPress={250}
         >
@@ -326,9 +349,15 @@ export default function FilePreview({
     const videoForThis =
       videoSize && videoSize.url === resolved ? videoSize : null;
     const intrinsicW =
-      Number(message.metadata?.width) || videoForThis?.width || null;
+      Number(message.metadata?.width) ||
+      cachedDimensions?.width ||
+      videoForThis?.width ||
+      null;
     const intrinsicH =
-      Number(message.metadata?.height) || videoForThis?.height || null;
+      Number(message.metadata?.height) ||
+      cachedDimensions?.height ||
+      videoForThis?.height ||
+      null;
     const box = computeImageSize(winWidth, intrinsicW, intrinsicH);
     const durationMs = Number(message.metadata?.durationMs) || null;
     return (
@@ -341,6 +370,7 @@ export default function FilePreview({
           onLongPress={onLongPress}
           onPosterSize={({ width, height }) => {
             if (!resolved || !width || !height) return;
+            setCachedMediaDimensions(resolved, width, height);
             setVideoSize((prev) =>
               prev && prev.url === resolved && prev.width === width
                 ? prev
@@ -444,7 +474,7 @@ function ImageViewerModal({
   // 1× to dismiss; the close button is always available.
   const isLocal = /^(file|content|data):/i.test(uri);
   return (
-    <Modal visible animationType="fade" transparent onRequestClose={onClose}>
+    <Modal visible animationType="none" transparent onRequestClose={onClose}>
       {/* A Modal renders in a SEPARATE native view hierarchy that sits OUTSIDE
           the app's root GestureHandlerRootView — so gesture-handler receives no
           touches inside it (pinch/pan/double-tap silently do nothing). Wrapping

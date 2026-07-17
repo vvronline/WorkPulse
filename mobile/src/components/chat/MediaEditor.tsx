@@ -33,6 +33,8 @@ export type MediaEditorResult = {
   mimeType: string;
   viewOnce: boolean;
   caption?: string;
+  width: number;
+  height: number;
 };
 
 type EditItem = {
@@ -229,6 +231,8 @@ export default function MediaEditor({
         mimeType: "image/jpeg",
         viewOnce,
         caption,
+        width: res.width,
+        height: res.height,
       };
     },
     [quality, viewOnce, caption],

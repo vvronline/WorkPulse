@@ -1099,10 +1099,10 @@ function ChatList({
         // on open). A smaller initial batch + tighter window mounts far fewer
         // rows during the transition while still keeping ~5 screens of history
         // mounted each way so fast flings don't reveal blank gaps.
-        initialNumToRender={18}
-        maxToRenderPerBatch={14}
-        windowSize={7}
-        updateCellsBatchingPeriod={16}
+        initialNumToRender={10}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        updateCellsBatchingPeriod={32}
         // In an inverted list the FOOTER renders at the visual TOP, so the
         // "load earlier" spinner/button belongs here (not the header).
         ListFooterComponent={

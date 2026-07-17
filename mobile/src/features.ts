@@ -742,6 +742,8 @@ export function uploadChatFile(
     onUploadProgress?: (evt: { loaded: number; total?: number }) => void;
     viewOnce?: boolean;
     caption?: string;
+    width?: number;
+    height?: number;
   },
 ) {
   const name = fileName || uri.split("/").pop() || "file";
@@ -785,6 +787,12 @@ export function uploadChatFile(
   form.append("file", { uri, name, type: mime } as any);
   if (opts?.viewOnce) form.append("viewOnce", "true");
   if (opts?.caption) form.append("content", opts.caption);
+  if (Number.isFinite(opts?.width) && Number(opts?.width) > 0) {
+    form.append("width", String(Math.round(Number(opts?.width))));
+  }
+  if (Number.isFinite(opts?.height) && Number(opts?.height) > 0) {
+    form.append("height", String(Math.round(Number(opts?.height))));
+  }
   return api.post<ChatMessage>(`/chat/conversations/${convId}/files`, form, {
     headers: { "Content-Type": "multipart/form-data" },
     signal: opts?.signal,

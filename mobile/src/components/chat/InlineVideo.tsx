@@ -11,6 +11,11 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { Play, X } from "../../icons";
 import { getToken } from "../../auth/tokenStore";
 
@@ -114,6 +119,10 @@ function FullscreenVideoPlayer({
 }) {
   const insets = useSafeAreaInsets();
   const [firstFrame, setFirstFrame] = useState(false);
+  const posterOpacity = useSharedValue(1);
+  const posterStyle = useAnimatedStyle(() => ({
+    opacity: posterOpacity.value,
+  }));
   const player = ExpoVideo.useVideoPlayer(source, (p: any) => {
     p.loop = false;
     p.muted = false;
@@ -126,7 +135,7 @@ function FullscreenVideoPlayer({
   });
 
   return (
-    <Modal visible animationType="fade" transparent onRequestClose={onClose}>
+    <Modal visible animationType="none" transparent onRequestClose={onClose}>
       <View style={fsStyles.backdrop}>
         <Pressable
           style={[fsStyles.closeBtn, { top: insets.top + 8 }]}
@@ -145,21 +154,28 @@ function FullscreenVideoPlayer({
           // Drop Android's default black ExoPlayer shutter so our poster shows
           // through until the first frame is ready (matches iOS).
           useExoShutter={false}
-          onFirstFrameRender={() => setFirstFrame(true)}
+          onFirstFrameRender={() => {
+            setFirstFrame(true);
+            posterOpacity.value = withTiming(0, { duration: 160 });
+          }}
         />
-        {/* Poster cover — fades out the instant the first video frame paints. */}
-        {!firstFrame ? (
-          <View style={fsStyles.cover} pointerEvents="none">
-            {poster ? (
-              <Image
-                source={{ uri: poster }}
-                style={fsStyles.coverImage}
-                resizeMode="contain"
-              />
-            ) : null}
+        {/* Keep the poster mounted while the player decodes, then cross-fade it
+            away only after expo-video confirms the first frame is visible. */}
+        <Animated.View
+          style={[fsStyles.cover, posterStyle]}
+          pointerEvents="none"
+        >
+          {poster ? (
+            <Image
+              source={{ uri: poster }}
+              style={fsStyles.coverImage}
+              resizeMode="contain"
+            />
+          ) : null}
+          {!firstFrame ? (
             <ActivityIndicator size="large" color="#fff" />
-          </View>
-        ) : null}
+          ) : null}
+        </Animated.View>
       </View>
     </Modal>
   );

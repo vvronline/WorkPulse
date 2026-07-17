@@ -506,6 +506,8 @@ export function useChatThread() {
     uri: string;
     fileName: string;
     mimeType: string;
+    width?: number;
+    height?: number;
   } | null>(null);
   const [tenorOpen, setTenorOpen] = useState(false);
   const [tenorKind, setTenorKind] = useState<"gif" | "sticker">("gif");
@@ -1443,6 +1445,10 @@ export function useChatThread() {
         setUploading(true);
         uploadChatFile(convId, source.uri, source.fileName, source.mimeType, {
           signal: controller.signal,
+          viewOnce: source.viewOnce,
+          caption: source.caption,
+          width: source.width,
+          height: source.height,
           onUploadProgress: (evt) => {
             const total = evt.total || 0;
             const progress =
@@ -1677,6 +1683,8 @@ export function useChatThread() {
           {
             viewOnce: source.viewOnce,
             caption: source.caption,
+            width: source.width,
+            height: source.height,
             signal: controller.signal,
             onUploadProgress: (evt) => {
               const total = evt.total || 0;
@@ -1864,12 +1872,20 @@ export function useChatThread() {
   // Signal-style preview (review + caption + view-once + send/discard) instead
   // of uploading immediately on shutter release.
   const handleCameraVideo = useCallback(
-    (item: { uri: string; fileName: string; mimeType: string }) => {
+    (item: {
+      uri: string;
+      fileName: string;
+      mimeType: string;
+      width?: number;
+      height?: number;
+    }) => {
       setCameraOpen(false);
       setVideoPreview({
         uri: item.uri,
         fileName: item.fileName,
         mimeType: item.mimeType,
+        width: item.width,
+        height: item.height,
       });
     },
     [],
@@ -1888,6 +1904,8 @@ export function useChatThread() {
         mimeType: v.mimeType,
         viewOnce: opts.viewOnce,
         caption: opts.caption,
+        width: v.width,
+        height: v.height,
       });
     },
     [videoPreview, enqueueMediaUpload],
@@ -1913,6 +1931,8 @@ export function useChatThread() {
           uri: item.uri,
           fileName: item.fileName || `video-${Date.now()}.mp4`,
           mimeType: item.mimeType || "video/mp4",
+          width: item.width,
+          height: item.height,
         });
       } else {
         setEditorItems([
@@ -1933,6 +1953,8 @@ export function useChatThread() {
         mimeType: string;
         viewOnce: boolean;
         caption?: string;
+        width: number;
+        height: number;
       }[],
     ) => {
       results.forEach((r, i) => {
@@ -1941,6 +1963,8 @@ export function useChatThread() {
           fileName: r.fileName,
           mimeType: r.mimeType,
           viewOnce: r.viewOnce,
+          width: r.width,
+          height: r.height,
           // Attach the caption to the first item only (matches Signal/web).
           caption: i === 0 ? r.caption : undefined,
         });

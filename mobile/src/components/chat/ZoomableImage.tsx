@@ -1,5 +1,13 @@
-import { useMemo } from "react";
-import { Image, StyleSheet, useWindowDimensions, type ImageResizeMode } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Image,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+  type ImageResizeMode,
+} from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   useAnimatedStyle,
@@ -43,6 +51,21 @@ export default function ZoomableImage({
 }) {
   const { width, height } = useWindowDimensions();
   const styles = useMemo(() => makeStyles(), []);
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const revealOpacity = useSharedValue(0);
+
+  useEffect(() => {
+    setLoaded(false);
+    setFailed(false);
+    revealOpacity.value = 0;
+  }, [uri, revealOpacity]);
+
+  const markLoaded = () => {
+    setFailed(false);
+    setLoaded(true);
+    revealOpacity.value = withTiming(1, { duration: 140 });
+  };
 
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -134,6 +157,7 @@ export default function ZoomableImage({
   );
 
   const animStyle = useAnimatedStyle(() => ({
+    opacity: revealOpacity.value,
     transform: [
       { translateX: translateX.value },
       { translateY: translateY.value },
@@ -144,18 +168,38 @@ export default function ZoomableImage({
   return (
     <GestureDetector gesture={composed}>
       <Animated.View style={[styles.container, { width, height }]}>
-        <Animated.View style={[styles.imageWrap, animStyle]}>
+        {!loaded && !failed ? (
+          <View style={styles.loading} pointerEvents="none">
+            <ActivityIndicator size="large" color="#fff" />
+          </View>
+        ) : null}
+        {failed ? (
+          <View style={styles.loading} pointerEvents="none">
+            <Text style={styles.errorText}>Could not load this image</Text>
+          </View>
+        ) : null}
+        <Animated.View
+          style={[
+            styles.imageWrap,
+            animStyle,
+            failed && { opacity: 0 },
+          ]}
+        >
           {isLocal ? (
             <Image
               source={{ uri }}
               style={styles.image}
               resizeMode={resizeMode}
+              onLoad={markLoaded}
+              onError={() => setFailed(true)}
             />
           ) : (
             <AuthedImage
               uri={uri}
               style={styles.image}
               resizeMode={resizeMode}
+              onLoad={markLoaded}
+              onError={() => setFailed(true)}
             />
           )}
         </Animated.View>
@@ -169,4 +213,14 @@ const makeStyles = () =>
     container: { alignItems: "center", justifyContent: "center" },
     imageWrap: { width: "100%", height: "100%" },
     image: { width: "100%", height: "100%" },
+    loading: {
+      position: "absolute",
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    errorText: { color: "rgba(255,255,255,0.8)", fontSize: 14 },
   });
