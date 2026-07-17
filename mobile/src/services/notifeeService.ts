@@ -50,6 +50,10 @@ import {
   getPendingCallAction,
   clearPendingCallAction,
 } from "../../modules/call-ringer";
+import {
+  ensureAndroidConversation,
+  type ConversationNotificationMetadata,
+} from "../../modules/conversation-notifications";
 
 // Versioned channel IDs. Android notification channels are IMMUTABLE after
 // creation — recreating a channel with the same ID does NOT update its
@@ -107,7 +111,7 @@ function ringtoneResourceForTone(toneId: string): string {
 // creation, so a separate silent channel is the only way to post a non-ringing
 // incoming-call notification while still surfacing the full-screen call UI.
 const CALL_SILENT_CHANNEL_ID = "calls_silent_v2";
-const MESSAGE_CHANNEL_ID = "messages_v2";
+const MESSAGE_CHANNEL_ID = "messages_v3";
 // General app-notification channel (task assigned, leave approved, mentions,
 // meeting started, …). Separate from messages so the user can independently
 // control its importance/sound, and so these alerts render with the SAME
@@ -1361,6 +1365,22 @@ class NotifeeService {
     const isGroupThread = isExplicitGroup || distinctSenders.size > 1;
     const messagingTitle = groupTitle || title;
 
+    // Register this chat as a native Android conversation before posting. On
+    // Android 11+ this returns a child channel linked to a long-lived dynamic
+    // shortcut; Notifee's compiled Android core accepts shortcutId even though
+    // its public TypeScript declaration omits the field. If the optional native
+    // module is unavailable or fails, retain the normal shared message channel.
+    let conversationMetadata: ConversationNotificationMetadata | null = null;
+    if (conversationId) {
+      conversationMetadata = await ensureAndroidConversation({
+        conversationId,
+        title: messagingTitle,
+        senderId: data.senderId,
+        senderName,
+        parentChannelId: MESSAGE_CHANNEL_ID,
+      });
+    }
+
     // Build the MessagingStyle from the accumulated history. `personIcon` (the
     // locally-cached sender avatar) is attached on the SECOND post once the
     // avatar download completes; the first post renders without it.
@@ -1400,7 +1420,13 @@ class NotifeeService {
       largeIconOpts: Record<string, unknown>,
       quietUpdate = false,
     ) => ({
-      channelId: MESSAGE_CHANNEL_ID,
+      channelId: conversationMetadata?.channelId ?? MESSAGE_CHANNEL_ID,
+      // Runtime-supported by Notifee's Android core. This must match the
+      // published ShortcutInfoCompat and the child channel's conversationId for
+      // System UI to promote the large avatar + small WorkPulse badge template.
+      ...(conversationMetadata?.shortcutId
+        ? { shortcutId: conversationMetadata.shortcutId }
+        : {}),
       category: this.AndroidCategory.MESSAGE ?? "msg",
       importance: this.AndroidImportance.HIGH ?? 4,
       visibility: this.AndroidVisibility.PRIVATE ?? 0,
@@ -1557,10 +1583,28 @@ class NotifeeService {
           ),
         ]);
         if (localUri) {
-          await postNotification({
-            largeIcon: localUri,
-            circularLargeIcon: true,
-          }, true);
+          // Update the long-lived shortcut with the downloaded sender avatar
+          // before quietly refreshing the same notification. Android System UI
+          // uses this shortcut icon as the promoted conversation avatar.
+          if (conversationId) {
+            conversationMetadata =
+              (await ensureAndroidConversation({
+                conversationId,
+                title: messagingTitle,
+                senderId: data.senderId,
+                senderName,
+                avatarUri: localUri,
+                parentChannelId: MESSAGE_CHANNEL_ID,
+              })) ?? conversationMetadata;
+          }
+
+          await postNotification(
+            {
+              largeIcon: localUri,
+              circularLargeIcon: true,
+            },
+            true,
+          );
         }
       } catch (err) {
         // Best-effort: the notification was already delivered in step 1.

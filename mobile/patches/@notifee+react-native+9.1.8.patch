@@ -1,0 +1,85 @@
+diff --git a/node_modules/@notifee/react-native/dist/types/NotificationAndroid.d.ts b/node_modules/@notifee/react-native/dist/types/NotificationAndroid.d.ts
+index 09098ac..5ff762f 100644
+--- a/node_modules/@notifee/react-native/dist/types/NotificationAndroid.d.ts
++++ b/node_modules/@notifee/react-native/dist/types/NotificationAndroid.d.ts
+@@ -84,6 +84,13 @@ export interface NotificationAndroid {
+      * more information and usage examples.
+      */
+     channelId?: string;
++    /**
++     * Associates the notification with a published dynamic shortcut.
++     *
++     * Android uses this identity, together with a conversation-specific channel
++     * and MessagingStyle, to promote the notification as a conversation.
++     */
++    shortcutId?: string;
+     /**
+      * Set an custom accent color for the notification. If not provided, the default notification
+      * system color will be used.
+diff --git a/node_modules/@notifee/react-native/dist/validators/validateAndroidNotification.js b/node_modules/@notifee/react-native/dist/validators/validateAndroidNotification.js
+index e1c3d07..0f4f7ac 100644
+--- a/node_modules/@notifee/react-native/dist/validators/validateAndroidNotification.js
++++ b/node_modules/@notifee/react-native/dist/validators/validateAndroidNotification.js
+@@ -129,6 +129,18 @@ function validateAndroidNotification(android) {
+         throw new Error("'notification.android.channelId' expected a string value.");
+     }
+     out.channelId = android.channelId;
++    /**
++     * shortcutId
++     *
++     * Supported by Notifee's Android core and required for Android conversation
++     * notifications, but omitted from the React Native validator in 9.1.8.
++     */
++    if ((0, utils_1.objectHasProperty)(android, 'shortcutId') && !(0, utils_1.isUndefined)(android.shortcutId)) {
++        if (!(0, utils_1.isString)(android.shortcutId)) {
++            throw new Error("'notification.android.shortcutId' expected a string value.");
++        }
++        out.shortcutId = android.shortcutId;
++    }
+     /**
+      * color
+      */
+diff --git a/node_modules/@notifee/react-native/src/types/NotificationAndroid.ts b/node_modules/@notifee/react-native/src/types/NotificationAndroid.ts
+index 4efe9e8..acff5d1 100644
+--- a/node_modules/@notifee/react-native/src/types/NotificationAndroid.ts
++++ b/node_modules/@notifee/react-native/src/types/NotificationAndroid.ts
+@@ -97,6 +97,14 @@ export interface NotificationAndroid {
+    */
+   channelId?: string;
+ 
++  /**
++   * Associates the notification with a published dynamic shortcut.
++   *
++   * Android uses this identity, together with a conversation-specific channel
++   * and MessagingStyle, to promote the notification as a conversation.
++   */
++  shortcutId?: string;
++
+   /**
+    * Set an custom accent color for the notification. If not provided, the default notification
+    * system color will be used.
+diff --git a/node_modules/@notifee/react-native/src/validators/validateAndroidNotification.ts b/node_modules/@notifee/react-native/src/validators/validateAndroidNotification.ts
+index 9bfb745..cbcecb2 100644
+--- a/node_modules/@notifee/react-native/src/validators/validateAndroidNotification.ts
++++ b/node_modules/@notifee/react-native/src/validators/validateAndroidNotification.ts
+@@ -182,6 +182,20 @@ export default function validateAndroidNotification(
+ 
+   out.channelId = android.channelId;
+ 
++  /**
++   * shortcutId
++   *
++   * Supported by Notifee's Android core and required for Android conversation
++   * notifications, but omitted from the React Native validator in 9.1.8.
++   */
++  if (objectHasProperty(android, 'shortcutId') && !isUndefined(android.shortcutId)) {
++    if (!isString(android.shortcutId)) {
++      throw new Error("'notification.android.shortcutId' expected a string value.");
++    }
++
++    out.shortcutId = android.shortcutId;
++  }
++
+   /**
+    * color
+    */
