@@ -3578,7 +3578,7 @@ router.get("/calls", auth, async (req: Request, res: Response) => {
     const rows = (
       await req.db!.query(
         `
-            SELECT * FROM (
+            SELECT sub.*, COUNT(*) OVER()::int AS total_count FROM (
                 SELECT DISTINCT ON (cl.id)
                     cl.id, cl.conversation_id, cl.caller_id, cl.call_type, cl.status,
                     cl.started_at, cl.ended_at, cl.duration, cl.created_at,
@@ -3609,7 +3609,12 @@ router.get("/calls", auth, async (req: Request, res: Response) => {
         [userId],
       )
     ).rows;
-    res.json(rows);
+    const total = Number(rows[0]?.total_count || 0);
+    const calls = rows.map(({ total_count: _totalCount, ...call }) => call);
+    // Keep the response body backward-compatible for existing clients while
+    // exposing the complete selectable count (including rows beyond LIMIT 100).
+    res.setHeader("X-Total-Count", String(total));
+    res.json(calls);
   } catch (err) {
     req.log.error({ err }, "Get all call history error");
     res.status(500).json({ error: "Failed to get call history" });
@@ -3626,22 +3631,44 @@ router.get("/calls", auth, async (req: Request, res: Response) => {
 router.post("/calls/delete", auth, async (req: Request, res: Response) => {
   try {
     const userId = req.userId;
+    const deleteAll = req.body?.all === true;
     const ids = Array.isArray(req.body?.ids)
-      ? (req.body.ids as unknown[])
-          .map((v) => parseInt(String(v), 10))
-          .filter((n) => Number.isInteger(n))
+      ? Array.from(
+          new Set(
+            (req.body.ids as unknown[])
+              .map((v) => parseInt(String(v), 10))
+              .filter((n) => Number.isInteger(n) && n > 0),
+          ),
+        )
       : [];
-    if (ids.length === 0) {
+    if (!deleteAll && ids.length === 0) {
       return res.status(400).json({ error: "No call ids provided" });
     }
-    const result = await req.db!.query(
-      `DELETE FROM call_logs cl
-         USING conversation_participants cp
-        WHERE cl.id = ANY($1::int[])
-          AND cp.conversation_id = cl.conversation_id
-          AND cp.user_id = $2`,
-      [ids, userId],
-    );
+    // Select-all is evaluated on the server rather than expanding the newest
+    // 100 client rows into an ID payload. This makes it include older calls and
+    // avoids the JSON body-size ceiling for long histories.
+    const result = deleteAll
+      ? await req.db!.query(
+          `DELETE FROM call_logs cl
+            WHERE EXISTS (
+              SELECT 1
+                FROM conversation_participants cp
+               WHERE cp.conversation_id = cl.conversation_id
+                 AND cp.user_id = $1
+            )`,
+          [userId],
+        )
+      : await req.db!.query(
+          `DELETE FROM call_logs cl
+            WHERE cl.id = ANY($1::int[])
+              AND EXISTS (
+                SELECT 1
+                  FROM conversation_participants cp
+                 WHERE cp.conversation_id = cl.conversation_id
+                   AND cp.user_id = $2
+              )`,
+          [ids, userId],
+        );
     res.json({ ok: true, deleted: result.rowCount ?? 0 });
   } catch (err) {
     req.log.error({ err }, "Delete call history error");

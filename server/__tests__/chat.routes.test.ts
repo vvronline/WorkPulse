@@ -745,3 +745,119 @@ describe("DELETE /api/chat/messages/:id", () => {
         expect(reactionDeleteCall[1]).toEqual([12]);
     });
 });
+
+// ─── Call-history selection and deletion ───────────────────────────────────
+
+describe("GET /api/chat/calls", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test("returns 401 without auth", async () => {
+        const res = await request(app).get("/api/chat/calls");
+        expect(res.status).toBe(401);
+    });
+
+    test("reports the complete selectable count without leaking it into rows", async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({
+            rows: [
+                {
+                    id: 500,
+                    conversation_id: 10,
+                    caller_id: 1,
+                    call_type: "audio",
+                    status: "ended",
+                    created_at: new Date().toISOString(),
+                    total_count: 237,
+                },
+            ],
+            rowCount: 1,
+        });
+
+        const res = await request(app)
+            .get("/api/chat/calls")
+            .set("Cookie", authCookie(1));
+
+        expect(res.status).toBe(200);
+        expect(res.headers["x-total-count"]).toBe("237");
+        expect(res.body).toHaveLength(1);
+        expect(res.body[0].id).toBe(500);
+        expect(res.body[0]).not.toHaveProperty("total_count");
+
+        const historyQuery = mockQuery.mock.calls.find(
+            ([sql]: any[]) =>
+                typeof sql === "string" &&
+                sql.includes("COUNT(*) OVER()") &&
+                sql.includes("LIMIT 100"),
+        );
+        expect(historyQuery).toBeTruthy();
+        expect(historyQuery[1]).toEqual([1]);
+    });
+});
+
+describe("POST /api/chat/calls/delete", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test("rejects an empty selection", async () => {
+        setupAuth();
+
+        const res = await request(app)
+            .post("/api/chat/calls/delete")
+            .set("Cookie", authCookie(1))
+            .set(CSRF)
+            .send({ ids: [] });
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/No call ids/i);
+    });
+
+    test("deletes an explicit, normalized id subset within participant scope", async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 2 });
+
+        const res = await request(app)
+            .post("/api/chat/calls/delete")
+            .set("Cookie", authCookie(1))
+            .set(CSRF)
+            .send({ ids: [10, "11", 10, -1, "invalid"] });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true, deleted: 2 });
+        const deleteQuery = mockQuery.mock.calls.find(
+            ([sql]: any[]) =>
+                typeof sql === "string" &&
+                sql.includes("DELETE FROM call_logs") &&
+                sql.includes("cl.id = ANY"),
+        );
+        expect(deleteQuery).toBeTruthy();
+        expect(deleteQuery[1]).toEqual([[10, 11], 1]);
+        expect(deleteQuery[0]).toContain("cp.user_id = $2");
+    });
+
+    test("server-side select-all deletes beyond the loaded 100 without an id payload", async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 237 });
+
+        const res = await request(app)
+            .post("/api/chat/calls/delete")
+            .set("Cookie", authCookie(1))
+            .set(CSRF)
+            .send({ all: true });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true, deleted: 237 });
+        const deleteQuery = mockQuery.mock.calls.find(
+            ([sql]: any[]) =>
+                typeof sql === "string" &&
+                sql.includes("DELETE FROM call_logs") &&
+                !sql.includes("cl.id = ANY"),
+        );
+        expect(deleteQuery).toBeTruthy();
+        expect(deleteQuery[0]).toContain("conversation_participants");
+        expect(deleteQuery[0]).toContain("cp.user_id = $1");
+        expect(deleteQuery[1]).toEqual([1]);
+    });
+});

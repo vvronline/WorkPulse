@@ -219,6 +219,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
         res.setHeader("Access-Control-Allow-Credentials", "true");
         res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, x-timezone-offset");
+        // The call-history list remains a backwards-compatible array while its
+        // complete (pre-LIMIT) selection count is carried in this response
+        // header. Expose it so the Vite dev client can read it cross-origin.
+        res.setHeader("Access-Control-Expose-Headers", "X-Total-Count");
     }
 
     if (req.method === "OPTIONS") return res.sendStatus(204);

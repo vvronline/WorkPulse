@@ -152,6 +152,7 @@ export default function ChatScreen() {
   const cachedConvs = useMemo(() => getCachedConversations(), []);
   const [items, setItems] = useState<Conversation[]>(() => cachedConvs || []);
   const [calls, setCalls] = useState<CallLogEntry[]>([]);
+  const [callTotal, setCallTotal] = useState(0);
   const [loading, setLoading] = useState(
     () => !cachedConvs || cachedConvs.length === 0,
   );
@@ -187,6 +188,9 @@ export default function ChatScreen() {
   // themed confirmation dialog before a bulk delete runs.
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // Calls can have more than the 100 rows loaded by the tab. This flag means
+  // the complete server-side history is selected, not just `selectedIds`.
+  const [allCallsSelected, setAllCallsSelected] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [openingConversationId, setOpeningConversationId] = useState<number | null>(
@@ -288,10 +292,14 @@ export default function ChatScreen() {
 
   const loadCalls = useCallback(async () => {
     try {
-      const { data } = await getAllCallHistory();
-      setCalls(data || []);
+      const response = await getAllCallHistory();
+      const nextCalls = response.data || [];
+      const totalHeader = Number(response.headers?.["x-total-count"]);
+      setCalls(nextCalls);
+      setCallTotal(Number.isFinite(totalHeader) ? totalHeader : nextCalls.length);
     } catch {
       setCalls([]);
+      setCallTotal(0);
     }
   }, []);
 
@@ -701,17 +709,22 @@ export default function ChatScreen() {
   const exitSelection = useCallback(() => {
     setSelectionMode(false);
     setSelectedIds(new Set());
+    setAllCallsSelected(false);
   }, []);
 
   // Enter selection mode pre-selecting `id` (long-press entry point).
   const enterSelection = useCallback((id: number) => {
     setSelectionMode(true);
     setSelectedIds(new Set([id]));
+    setAllCallsSelected(false);
   }, []);
 
   // Toggle a row's selected state. If the last item is unselected we drop back
   // out of selection mode (Signal parity).
   const toggleSelected = useCallback((id: number) => {
+    // Toggling one loaded row after a global Select all converts the selection
+    // back to an explicit subset before applying the toggle.
+    setAllCallsSelected(false);
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -729,15 +742,31 @@ export default function ChatScreen() {
   }, [tab, filteredCalls, meetingConvs, regular]);
 
   const allSelected =
-    selectableIds.length > 0 && selectedIds.size === selectableIds.length;
+    tab === "calls"
+      ? allCallsSelected
+      : selectableIds.length > 0 && selectedIds.size === selectableIds.length;
+  const selectedCount =
+    tab === "calls" && allCallsSelected ? callTotal : selectedIds.size;
 
   const selectAll = useCallback(() => {
+    if (tab === "calls") {
+      if (allCallsSelected) {
+        setAllCallsSelected(false);
+        setSelectedIds(new Set());
+      } else {
+        setAllCallsSelected(true);
+        // Mark loaded rows too so every visible checkbox reflects the global
+        // selection and a later individual toggle can become an explicit set.
+        setSelectedIds(new Set(selectableIds));
+      }
+      return;
+    }
     setSelectedIds((prev) =>
       prev.size === selectableIds.length
         ? new Set()
         : new Set(selectableIds),
     );
-  }, [selectableIds]);
+  }, [allCallsSelected, selectableIds, tab]);
 
   // Bulk delete the selected rows. Calls hit the dedicated bulk endpoint;
   // chat/meeting rows loop deleteConversation (no bulk endpoint needed).
@@ -750,8 +779,10 @@ export default function ChatScreen() {
     setDeleting(true);
     try {
       if (tab === "calls") {
-        await deleteCalls(ids);
-        setCalls((prev) => prev.filter((c) => !selectedIds.has(c.id)));
+        await deleteCalls(allCallsSelected ? { all: true } : ids);
+        setCalls((prev) =>
+          allCallsSelected ? [] : prev.filter((c) => !selectedIds.has(c.id)),
+        );
       } else {
         await Promise.allSettled(ids.map((id) => deleteConversation(id)));
         setItems((prev) => prev.filter((c) => !selectedIds.has(c.id)));
@@ -765,7 +796,7 @@ export default function ChatScreen() {
       if (tab === "calls") loadCalls();
       else load();
     }
-  }, [selectedIds, tab, exitSelection, load, loadCalls]);
+  }, [selectedIds, allCallsSelected, tab, exitSelection, load, loadCalls]);
 
   // Leaving a tab or changing search mode cancels any in-progress selection so the
   // selection bar never lingers over the wrong list.
@@ -1183,7 +1214,7 @@ export default function ChatScreen() {
           >
             <X size={22} color={theme.text} />
           </Pressable>
-          <Text style={styles.selectionCount}>{selectedIds.size} selected</Text>
+          <Text style={styles.selectionCount}>{selectedCount} selected</Text>
           <Pressable
             style={styles.selectionAction}
             onPress={selectAll}
@@ -1196,12 +1227,12 @@ export default function ChatScreen() {
           </Pressable>
           <Pressable
             style={styles.selectionAction}
-            onPress={() => selectedIds.size > 0 && setConfirmDelete(true)}
+            onPress={() => selectedCount > 0 && setConfirmDelete(true)}
             hitSlop={8}
           >
             <Trash2
               size={22}
-              color={selectedIds.size > 0 ? theme.danger : theme.textMuted}
+              color={selectedCount > 0 ? theme.danger : theme.textMuted}
             />
           </Pressable>
         </View>
@@ -1612,8 +1643,8 @@ export default function ChatScreen() {
         title="Delete selected?"
         message={
           tab === "calls"
-            ? `Delete ${selectedIds.size} call${selectedIds.size === 1 ? "" : "s"} from your history?`
-            : `Delete ${selectedIds.size} conversation${selectedIds.size === 1 ? "" : "s"}? This cannot be undone.`
+            ? `Delete ${selectedCount} call${selectedCount === 1 ? "" : "s"} from your history?`
+            : `Delete ${selectedCount} conversation${selectedCount === 1 ? "" : "s"}? This cannot be undone.`
         }
         confirmText={deleting ? "Deleting…" : "Delete"}
         isDanger

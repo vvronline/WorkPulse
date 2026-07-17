@@ -895,6 +895,8 @@ export const getLinkPreview = (url: string) =>
 export const getCallHistory = (convId: number | string) =>
     API.get(`/chat/conversations/${convId}/calls`);
 export const getAllCallHistory = () => API.get("/chat/calls");
+export const deleteCalls = (selection: number[] | { all: true }) =>
+    API.post("/chat/calls/delete", Array.isArray(selection) ? { ids: selection } : selection);
 export const getActiveCall = () => API.get("/chat/calls/active");
 export const getIceConfig = () => API.get("/chat/ice-config");
 

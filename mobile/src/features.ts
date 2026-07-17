@@ -1007,14 +1007,15 @@ export function getAllCallHistory() {
 }
 
 /**
- * Bulk-delete call-log entries (Signal-style multi-select delete on the Calls
- * tab). Pass a one-element array for a single delete. The server only removes
- * rows for conversations the current user participates in.
+ * Bulk-delete call-log entries. Explicit ids delete a manual subset; `all`
+ * asks the server to delete the authenticated user's complete call history,
+ * including entries older than the 100 rows loaded by the Calls tab.
  */
-export function deleteCalls(ids: number[]) {
-  return api.post<{ ok: boolean; deleted: number }>("/chat/calls/delete", {
-    ids,
-  });
+export function deleteCalls(selection: number[] | { all: true }) {
+  return api.post<{ ok: boolean; deleted: number }>(
+    "/chat/calls/delete",
+    Array.isArray(selection) ? { ids: selection } : selection,
+  );
 }
 
 export function getConversationCalls(convId: number) {
