@@ -134,10 +134,10 @@ const MESSAGE_GROUP_SUMMARY_ID = "wp-messages-summary";
 // res/drawable/notification_icon.png (a white silhouette of the brand logo).
 const MESSAGE_SMALL_ICON = "notification_icon";
 
-// SecureStore key holding the admin-set org branding logo URL. Cached by the
-// ThemeProvider (BRAND_LOGO_CACHE_KEY) so the killed/headless message handler —
-// which has NO React context / API access — can use the org logo as the message
-// notification LARGE icon fallback when a message has no sender avatar.
+// SecureStore key holding the admin-set org branding logo URL. General app
+// alerts may use this as their large-icon fallback. Message notifications do
+// not: their large position is reserved for the sender avatar/person placeholder
+// while MESSAGE_SMALL_ICON remains the separate WorkPulse app badge.
 const BRAND_LOGO_CACHE_KEY = "wp_brand_logo_url";
 
 type NotifeeModule = any;
@@ -216,6 +216,8 @@ const THREAD_TTL_MS = 24 * 60 * 60 * 1000; // 1 day
 export interface ThreadMessage {
   text: string;
   senderName: string;
+  /** Stable identity lets Android keep one Person/avatar per sender. */
+  senderId?: string;
   /** epoch ms */
   timestamp: number;
 }
@@ -443,9 +445,8 @@ class NotifeeService {
    * middleware (401 without a Bearer token) — so a remote URL silently shows no
    * avatar. We instead download it here WITH the Authorization header (mirroring
    * the in-app AuthedImage component) and hand Notifee the resulting `file://`
-   * URI. Returns the local file URI, or null on any failure (caller then falls
-   * back to the app icon). Cached by a hash of the URL with a short TTL so a
-   * repeat sender doesn't re-download every message.
+   * URI. Returns the local file URI, or null on any failure. Cached by a hash of
+   * the URL with a short TTL so a repeat sender doesn't re-download every message.
    */
   private async fetchAvatarToFile(absoluteUrl: string): Promise<string | null> {
     if (Platform.OS !== "android") return null;
@@ -1346,9 +1347,15 @@ class NotifeeService {
       ? appendThreadMessage(conversationId, {
           text: body,
           senderName,
+          senderId: data.senderId,
           timestamp: Date.now(),
         })
-      : [{ text: body, senderName, timestamp: Date.now() }];
+      : [{
+          text: body,
+          senderName,
+          senderId: data.senderId,
+          timestamp: Date.now(),
+        }];
 
     const distinctSenders = new Set(threadMessages.map((m) => m.senderName));
     const isGroupThread = isExplicitGroup || distinctSenders.size > 1;
@@ -1360,15 +1367,22 @@ class NotifeeService {
     const buildMessagingStyle = (personIcon?: string) => ({
       type: this.AndroidStyle.MESSAGING ?? 3,
       // Top-level person is the device user (the recipient of these messages).
-      person: { name: "You" },
+      // A stable id prevents Android from treating this as a different Person
+      // each time the display name changes.
+      person: { id: "workpulse-self", name: "You" },
       messages: threadMessages.map((m) => ({
         text: m.text,
         timestamp: m.timestamp,
         person: {
+          id: m.senderId ? `workpulse-user-${m.senderId}` : m.senderName,
           name: m.senderName,
-          // Only the latest sender's avatar is available locally; attach it to
-          // their line(s) so MessagingStyle shows the sender photo.
-          ...(personIcon && m.senderName === senderName
+          // The MessagingStyle Person icon is the conversation avatar Android
+          // promotes in its native message template. The separate smallIcon
+          // below becomes the app-logo corner badge on supported System UIs.
+          ...(personIcon &&
+          (m.senderId
+            ? m.senderId === data.senderId
+            : m.senderName === senderName)
             ? { icon: personIcon }
             : {}),
         },
@@ -1387,6 +1401,7 @@ class NotifeeService {
       quietUpdate = false,
     ) => ({
       channelId: MESSAGE_CHANNEL_ID,
+      category: this.AndroidCategory.MESSAGE ?? "msg",
       importance: this.AndroidImportance.HIGH ?? 4,
       visibility: this.AndroidVisibility.PRIVATE ?? 0,
       pressAction: { id: "default", launchActivity: "default" },
@@ -1467,19 +1482,7 @@ class NotifeeService {
             title,
             body: notificationBody,
             data: { ...data } as Record<string, string>,
-            android: {
-              channelId: MESSAGE_CHANNEL_ID,
-              importance: this.AndroidImportance.HIGH ?? 4,
-              pressAction: { id: "default", launchActivity: "default" },
-              sound: "default",
-              smallIcon: MESSAGE_SMALL_ICON,
-              ...(quietUpdate ? { onlyAlertOnce: true } : {}),
-              ...largeIconOpts,
-              style: buildMessagingStyle(
-                largeIconOpts.largeIcon as string | undefined,
-              ),
-              ...(hasBadge ? { badgeCount } : {}),
-            },
+            android: baseAndroid(largeIconOpts, quietUpdate),
           });
         } catch (err2) {
           try {
@@ -1489,13 +1492,8 @@ class NotifeeService {
               body: notificationBody,
               data: { ...data } as Record<string, string>,
               android: {
+                ...baseAndroid(largeIconOpts, quietUpdate),
                 channelId: "default",
-                importance: this.AndroidImportance.HIGH ?? 4,
-                pressAction: { id: "default", launchActivity: "default" },
-                sound: "default",
-                smallIcon: MESSAGE_SMALL_ICON,
-                ...(quietUpdate ? { onlyAlertOnce: true } : {}),
-                ...largeIconOpts,
               },
             });
           } catch (err3) {
@@ -1540,29 +1538,15 @@ class NotifeeService {
       }
     }
 
-    // ── STEP 2: attach the large icon BEST-EFFORT (non-blocking) ──────────
-    // Avatar-first (option 1): use the SENDER's chat avatar when present; when
-    // the message has NO sender avatar, fall back to the admin-set ORG BRANDING
-    // logo (cached to SecureStore by the ThemeProvider — the headless task has
-    // no React context / API). Both are fetched with a HARD TIMEOUT so they can
-    // never hang the headless task, then re-posted with the SAME id to attach
-    // the circular largeIcon (Notifee updates the existing notification in
-    // place). Any failure/timeout simply leaves the already-posted notification.
+    // ── STEP 2: attach the sender avatar BEST-EFFORT (non-blocking) ───────
+    // Signal keeps the two identities separate: the sender photo is the large
+    // conversation/Person icon, while the monochrome app icon is the small
+    // status-bar icon and Android-rendered corner badge. Never substitute the
+    // organization logo for a missing sender avatar here; doing so makes the app
+    // logo occupy the large-avatar position. With no sender photo, MessagingStyle
+    // generates a person placeholder from the sender's name.
     const LARGE_ICON_TIMEOUT_MS = 3500;
-    const senderAvatarUrl = uploadUrl(data.senderAvatar || data.avatar || "");
-
-    // Resolve the large-icon source URL: sender avatar first, else the cached
-    // org logo. Both live behind the server's `/uploads` auth middleware, so
-    // fetchAvatarToFile downloads them WITH the Bearer token.
-    let largeIconUrl: string | null = senderAvatarUrl;
-    if (!largeIconUrl) {
-      try {
-        const cachedLogo = await SecureStore.getItemAsync(BRAND_LOGO_CACHE_KEY);
-        largeIconUrl = uploadUrl(cachedLogo || "");
-      } catch {
-        // best-effort — fall back to the app icon (no large icon)
-      }
-    }
+    const largeIconUrl = uploadUrl(data.senderAvatar || data.avatar || "");
 
     if (largeIconUrl) {
       try {
@@ -1838,6 +1822,7 @@ class NotifeeService {
         data: summaryData,
         android: {
           channelId: MESSAGE_CHANNEL_ID,
+          category: this.AndroidCategory.MESSAGE ?? "msg",
           importance: this.AndroidImportance.HIGH ?? 4,
           visibility: this.AndroidVisibility.PRIVATE ?? 0,
           smallIcon: MESSAGE_SMALL_ICON,
@@ -2254,7 +2239,9 @@ class NotifeeService {
               data: { ...data } as Record<string, string>,
               android: {
                 channelId: MESSAGE_CHANNEL_ID,
+                category: this.AndroidCategory.MESSAGE ?? "msg",
                 importance: this.AndroidImportance.HIGH ?? 4,
+                visibility: this.AndroidVisibility.PRIVATE ?? 0,
                 smallIcon: MESSAGE_SMALL_ICON,
                 pressAction: { id: "default", launchActivity: "default" },
                 // A confirmation, not a new alert — keep it quiet + dismissible.
