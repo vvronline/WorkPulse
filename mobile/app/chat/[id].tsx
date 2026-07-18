@@ -1,12 +1,13 @@
 import {
   ActivityIndicator,
   InteractionManager,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
 import { Modal } from "react-native";
 import { Stack, useFocusEffect } from "expo-router";
@@ -813,6 +814,9 @@ import { FlatList } from "react-native";
 import type { ChatMessage } from "../../src/features";
 import CallSystemMessage from "../../src/components/chat/CallSystemMessage";
 
+const messageKeyExtractor = (message: ChatMessage) =>
+  message.clientMsgId ?? String(message.id);
+
 function ChatList({
   c,
   styles,
@@ -827,7 +831,25 @@ function ChatList({
   // floating chevron fades in; tapping it smooth-scrolls back to the newest
   // message.
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const showScrollBtnRef = useRef(false);
   const scrollReadyRef = useRef(false);
+  const lastOlderEdgeCheckRef = useRef(0);
+  // Read changing pagination values through a ref so the native scroll callback
+  // keeps one identity while pages/receipts/selections update around it.
+  const scrollModelRef = useRef({
+    hasMore: c.hasMore,
+    loadingOlder: c.loadingOlder,
+    loadOlder: c.loadOlder,
+    onListScroll: c.onListScroll,
+    prependingRef: c.prependingRef,
+  });
+  scrollModelRef.current = {
+    hasMore: c.hasMore,
+    loadingOlder: c.loadingOlder,
+    loadOlder: c.loadOlder,
+    onListScroll: c.onListScroll,
+    prependingRef: c.prependingRef,
+  };
 
   useEffect(() => {
     scrollReadyRef.current = false;
@@ -872,7 +894,7 @@ function ChatList({
   // per row (two `new Date(...)` parses each) is now precomputed ONCE per page in
   // the hook (`c.rowMeta`) and looked up here in O(1) — mirroring how Signal's
   // ConversationAdapter resolves presentation when a page is built, not on bind.
-  const { rowMeta, messagesReversed, user, starredIds } = c;
+  const { rowMeta, deliveryPhaseByKey, messagesReversed, user, starredIds } = c;
   // Identity of the NEWEST message (index 0 of the inverted list). Only this row
   // is allowed to play the FadeIn enter animation — see the comment in
   // MessageBubble. Gating on the newest id (instead of a global `entryAnimReady`
@@ -883,6 +905,47 @@ function ChatList({
     messagesReversed.length > 0
       ? (messagesReversed[0].clientMsgId ?? String(messagesReversed[0].id))
       : null;
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      const y = contentOffset.y;
+      const model = scrollModelRef.current;
+
+      // This ref-only write is the only work required every frame.
+      model.onListScroll(y);
+
+      const shouldShow = y > 400;
+      if (shouldShow !== showScrollBtnRef.current) {
+        showScrollBtnRef.current = shouldShow;
+        setShowScrollBtn(shouldShow);
+      }
+
+      // Edge detection does not need 60 Hz precision. Limiting it to ~8 Hz
+      // removes repeated content-size arithmetic and pagination calls during
+      // fast flings while still prefetching well before the user reaches history.
+      const now = Date.now();
+      if (now - lastOlderEdgeCheckRef.current < 120) return;
+      lastOlderEdgeCheckRef.current = now;
+      const distanceToOlderEdge =
+        contentSize.height - layoutMeasurement.height - y;
+      if (
+        scrollReadyRef.current &&
+        distanceToOlderEdge < 700 &&
+        model.hasMore &&
+        !model.loadingOlder &&
+        !model.prependingRef.current
+      ) {
+        void model.loadOlder();
+      }
+    },
+    [],
+  );
+
+  const handleEndReached = useCallback(() => {
+    const model = scrollModelRef.current;
+    if (!model.prependingRef.current) void model.loadOlder();
+  }, []);
+
   const renderItem = useCallback(
     ({ item }: { item: ChatMessage }) => {
       const mine = Number(item.sender_id) === Number(user?.id);
@@ -948,8 +1011,7 @@ function ChatList({
             deleted={!!item.deleted_at}
             starred={starredIds.has(item.id)}
             pinned={!!item.pinned_at}
-            participantCount={c.participantCount}
-            readReceiptTimes={c.readReceiptTimes}
+            deliveryPhase={deliveryPhaseByKey.get(key) ?? "sent"}
             userId={user?.id}
             firstInGroup={firstInGroup}
             lastInGroup={lastInGroup}
@@ -985,12 +1047,11 @@ function ChatList({
     // still updating when selection/highlight/receipt state changes.
     [
       rowMeta,
+      deliveryPhaseByKey,
       newestKey,
       user?.id,
       starredIds,
       entryAnimReady,
-      c.participantCount,
-      c.readReceiptTimes,
       c.highlightedId,
       c.selectedIds,
       c.selectionMode,
@@ -1037,7 +1098,7 @@ function ChatList({
         // keeps the same `clientMsgId`, so keying by it first keeps ONE row
         // instance that updates in place — no remount, no second animation
         // (Signal keeps a single view from "sending" through "sent").
-        keyExtractor={(m) => m.clientMsgId ?? String(m.id)}
+        keyExtractor={messageKeyExtractor}
         // `flex: 1` is load-bearing: without it the FlatList doesn't claim the
         // available column height.
         style={styles.listFlex}
@@ -1045,33 +1106,7 @@ function ChatList({
         // Track scroll distance from the visual bottom (offset 0 in an inverted
         // list). Show the "scroll to bottom" pill once the user has scrolled up
         // past ~1.5 screens of history.
-        onScroll={(e) => {
-          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-          const y = contentOffset.y;
-          // Feed the raw offset to the hook so it can track whether the list is
-          // near the visual bottom (inverted list → offset 0 is the bottom).
-          // This gates the incoming-message auto-scroll so a new message never
-          // yanks the user down while they're reading history.
-          c.onListScroll(y);
-          const next = y > 400;
-          if (next !== showScrollBtn) setShowScrollBtn(next);
-
-          // In an inverted FlatList the older-history edge is the END of the
-          // scroll range. `onEndReached` can miss after clipping/recycling or
-          // after the background latest-page reconcile, so also trigger from a
-          // direct distance-to-edge check (RecyclerView/Signal-style threshold).
-          const distanceToOlderEdge =
-            contentSize.height - layoutMeasurement.height - y;
-          if (
-            scrollReadyRef.current &&
-            distanceToOlderEdge < 700 &&
-            c.hasMore &&
-            !c.loadingOlder &&
-            !c.prependingRef.current
-          ) {
-            c.loadOlder();
-          }
-        }}
+        onScroll={handleScroll}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
         onScrollToIndexFailed={() => {
@@ -1081,16 +1116,14 @@ function ChatList({
         // END of the scroll range — so `onEndReached` is the "scrolled up to the
         // top" trigger. Load the previous page there (replaces the old header
         // button + onContentSizeChange stick-to-bottom hack).
-        onEndReached={() => {
-          if (!c.prependingRef.current) c.loadOlder();
-        }}
+        onEndReached={handleEndReached}
         onEndReachedThreshold={0.4}
         // Android clips off-screen subviews by default; when a reaction is
         // toggled the bubble's height GROWS (a new chip row appears). With
         // clipping on, the freshly-grown region wasn't repainted until the
         // row scrolled — making the reaction look delayed. Disabling it
         // forces the chip to paint instantly (matches the web).
-        removeClippedSubviews={Platform.OS === "android"}
+        removeClippedSubviews={false}
         // Windowing tuned for a SNAPPY open + smooth scrolling (Signal-Android
         // feel). Each MessageBubble is relatively heavy to mount (a Pan gesture,
         // several reanimated shared values / animated styles, a GestureDetector),

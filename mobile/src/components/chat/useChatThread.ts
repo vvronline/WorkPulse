@@ -105,6 +105,7 @@ import {
   type OutboxMessage,
 } from "../../storage/chatOutbox";
 import { STATUS_LABEL, isSameDay, type HeaderSheet } from "./chatUtils";
+import type { MessageDeliveryPhase } from "./MsgTicks";
 
 // Keep the first synchronous thread paint bounded. A cached thread can contain
 // hundreds of messages after paging; processing all of them on route mount is
@@ -318,6 +319,21 @@ function messagesEquivalentForThread(a: ChatMessage, b: ChatMessage): boolean {
     a.file_type === b.file_type &&
     a.file_name === b.file_name &&
     a.file_size === b.file_size &&
+    a.sender_name === b.sender_name &&
+    a.format_type === b.format_type &&
+    a.reply_to_id === b.reply_to_id &&
+    a.reply_to_content === b.reply_to_content &&
+    a.reply_to_sender_name === b.reply_to_sender_name &&
+    a.reply_to_file_url === b.reply_to_file_url &&
+    a.reply_to_file_type === b.reply_to_file_type &&
+    a.reply_to_file_name === b.reply_to_file_name &&
+    a.metadata?.viewOnce === b.metadata?.viewOnce &&
+    a.metadata?.width === b.metadata?.width &&
+    a.metadata?.height === b.metadata?.height &&
+    a.metadata?.type === b.metadata?.type &&
+    a.metadata?.status === b.metadata?.status &&
+    a.metadata?.duration === b.metadata?.duration &&
+    deliveredSigForDiff(a) === deliveredSigForDiff(b) &&
     a.media_state === b.media_state &&
     a.media_stage === b.media_stage &&
     a.media_progress === b.media_progress &&
@@ -327,6 +343,11 @@ function messagesEquivalentForThread(a: ChatMessage, b: ChatMessage): boolean {
     a._mediaProgress === b._mediaProgress &&
     reactionsSigForDiff(a) === reactionsSigForDiff(b)
   );
+}
+
+function deliveredSigForDiff(message: ChatMessage): string {
+  const delivered = message.delivered_to;
+  return delivered?.length ? delivered.join(",") : "";
 }
 
 function messageArraysEquivalentForThread(
@@ -710,6 +731,10 @@ export function useChatThread() {
   // scroll-to-end on content-size change doesn't yank the list to the
   // bottom and defeat pagination.
   const prependingRef = useRef(false);
+  // Synchronous pagination lock. React state is not updated until the next
+  // render, so onScroll and onEndReached could previously both observe
+  // loadingOlder=false and issue the same cursor request in one frame.
+  const olderRequestCursorRef = useRef<number | null>(null);
   // TextInput handle so we can blur/focus when switching between the system
   // keyboard and the in-app emoji keyboard.
   const inputRef = useRef<TextInput>(null);
@@ -1066,10 +1091,13 @@ export function useChatThread() {
   // cursor (mirrors the web loadMore). Triggered by the "load earlier"
   // header button / top-reach.
   const loadOlder = useCallback(async () => {
-    if (loadingOlder || !hasMore) return;
+    if (loadingOlder || !hasMore || olderRequestCursorRef.current != null) return;
     // Oldest REAL (server-assigned) id — skip optimistic negative ids.
     const oldest = messages.find((m) => m.id > 0);
     if (!oldest) return;
+    // Acquire before setState so two edge callbacks in the same JS turn cannot
+    // race. The cursor also makes the guard explicit in profiler traces.
+    olderRequestCursorRef.current = oldest.id;
     setLoadingOlder(true);
     prependingRef.current = true;
     try {
@@ -1103,6 +1131,7 @@ export function useChatThread() {
     } catch {
       /* ignore */
     } finally {
+      olderRequestCursorRef.current = null;
       setLoadingOlder(false);
       // Give the list a beat to settle before re-enabling stick-to-end.
       setTimeout(() => {
@@ -3339,6 +3368,58 @@ export function useChatThread() {
     [readReceipts],
   );
 
+  // Signal's adapter binds a compact delivery payload, not the complete receipt
+  // model, to every row. Build the same primitive phase once per receipt/message
+  // update. Reader timestamps are sorted once and binary-searched, avoiding the
+  // old Array.filter() in every mounted MsgTicks render.
+  const deliveryPhaseByKey = useMemo(() => {
+    const otherReadTimes = readReceiptTimes
+      .filter(([uid]) => uid !== user?.id)
+      .map(([, timestamp]) => timestamp)
+      .sort((a, b) => a - b);
+    const others = (participantCount || 2) - 1;
+    const phases = new Map<string, MessageDeliveryPhase>();
+
+    const readersAtOrAfter = (timestamp: number) => {
+      let low = 0;
+      let high = otherReadTimes.length;
+      while (low < high) {
+        const mid = (low + high) >>> 1;
+        if (otherReadTimes[mid] < timestamp) low = mid + 1;
+        else high = mid;
+      }
+      return otherReadTimes.length - low;
+    };
+
+    for (const message of messagesReversed) {
+      const key = message.clientMsgId ?? String(message.id);
+      let phase: MessageDeliveryPhase;
+      if (message._pending || message.id < 0) {
+        phase = "sending";
+      } else if (others <= 0) {
+        phase = "hidden";
+      } else {
+        const deliveredCount = message.delivered_to?.length ?? 0;
+        const messageTime = new Date(message.created_at).getTime();
+        const readerCount = Number.isFinite(messageTime)
+          ? readersAtOrAfter(messageTime)
+          : 0;
+        if (
+          readerCount >= others ||
+          (readerCount > 0 && deliveredCount >= others)
+        ) {
+          phase = "read";
+        } else if (deliveredCount > 0) {
+          phase = "delivered";
+        } else {
+          phase = "sent";
+        }
+      }
+      phases.set(key, phase);
+    }
+    return phases;
+  }, [messagesReversed, participantCount, readReceiptTimes, user?.id]);
+
   // FlatList extraData. Keep this Signal-style targeted and O(1): message
   // content/reaction/pin/delete changes already arrive through immutable
   // `messages` updates (the FlatList `data` prop). extraData is only for
@@ -3350,8 +3431,7 @@ export function useChatThread() {
       starredIds,
       selectedIds,
       highlightedId,
-      readReceiptTimes,
-      participantCount,
+      deliveryPhaseByKey,
       selectionMode,
       userId: user?.id,
     }),
@@ -3359,8 +3439,7 @@ export function useChatThread() {
       starredIds,
       selectedIds,
       highlightedId,
-      readReceiptTimes,
-      participantCount,
+      deliveryPhaseByKey,
       selectionMode,
       user?.id,
     ],
@@ -3417,6 +3496,7 @@ export function useChatThread() {
     messages,
     messagesReversed,
     rowMeta,
+    deliveryPhaseByKey,
     listRef,
     listExtraData,
     scrollToEnd,

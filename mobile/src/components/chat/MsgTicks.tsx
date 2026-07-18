@@ -33,20 +33,28 @@ import type { ChatMessage } from "../../features";
  * The icon sits in a FIXED, slightly oversized box with centered alignment so
  * the rings are never cropped by the bubble's bottom edge.
  */
+export type MessageDeliveryPhase =
+  | "sending"
+  | "sent"
+  | "delivered"
+  | "read"
+  | "hidden";
+
 export default function MsgTicks({
   mine,
   msg,
-  participantCount,
-  readReceiptTimes,
-  userId,
+  phase,
   onMedia,
   onRetry,
 }: {
   mine: boolean;
   msg: ChatMessage;
-  participantCount: number;
-  readReceiptTimes: readonly (readonly [number, number])[];
-  userId?: number;
+  /**
+   * Precomputed once by the thread presentation model. Keeping receipt arrays
+   * out of each row prevents one receipt pulse from invalidating every bubble
+   * and avoids O(visible messages × participants) work during reconciliation.
+   */
+  phase: MessageDeliveryPhase;
   // When the ticks sit OVER media (an image/video) inside the translucent dark
   // meta pill, force white glyphs and a dark punch-out for the read check so it
   // stays visible against the photo (web parity — see MessageBubble.module.css
@@ -66,8 +74,6 @@ export default function MsgTicks({
   // live-updates on `branding_changed`.
   const readColor = onMedia ? "#fff" : theme.primary;
   const readCheckColor = onMedia ? "rgba(0,0,0,0.6)" : "#fff";
-
-  const phase = resolvePhase(msg, participantCount, readReceiptTimes, userId);
 
   // Pop-in animation on each delivery-state transition (sent→delivered→read).
   const scale = useSharedValue(1);
@@ -161,33 +167,6 @@ export default function MsgTicks({
   );
 }
 
-type Phase = "sending" | "sent" | "delivered" | "read" | "hidden";
-
-function resolvePhase(
-  msg: ChatMessage,
-  participantCount: number,
-  readReceiptTimes: readonly (readonly [number, number])[],
-  userId?: number,
-): Phase {
-  if (msg._pending || msg.id < 0) return "sending";
-  const others = (participantCount || 2) - 1;
-  if (others <= 0) return "hidden";
-
-  const delivered = msg.delivered_to || [];
-  const msgTime = new Date(msg.created_at).getTime();
-  const otherReaders = readReceiptTimes.filter(
-    ([uid, readAtMs]) => uid !== userId && readAtMs >= msgTime,
-  );
-
-  // Read by everyone (or read + delivered to all) → ringed double ticks.
-  if (otherReaders.length >= others) return "read";
-  if (otherReaders.length > 0 && delivered.length >= others) return "read";
-  // Delivered to all/some → two ticks.
-  if (delivered.length > 0) return "delivered";
-  // Sent only → one tick.
-  return "sent";
-}
-
 /**
  * Web-parity delivery glyphs (mirrors the web DeliveryStatus.tsx SVGs):
  *   sent      → a single bare check
@@ -201,7 +180,7 @@ function TickGlyph({
   readColor,
   readCheckColor,
 }: {
-  phase: Phase;
+  phase: MessageDeliveryPhase;
   mutedColor: string;
   readColor: string;
   readCheckColor: string;

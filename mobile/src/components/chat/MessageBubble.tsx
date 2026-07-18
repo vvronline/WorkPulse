@@ -14,7 +14,7 @@ import { Check, CornerUpLeft, Pin, Star } from "../../icons";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 import type { ChatMessage } from "../../features";
-import MsgTicks from "./MsgTicks";
+import MsgTicks, { type MessageDeliveryPhase } from "./MsgTicks";
 import ReplyQuote from "./ReplyQuote";
 import FilePreview from "./FilePreview";
 import MessageContent from "./MessageContent";
@@ -47,8 +47,7 @@ type MessageBubbleProps = {
   deleted: boolean;
   starred: boolean;
   pinned: boolean;
-  participantCount: number;
-  readReceiptTimes: readonly (readonly [number, number])[];
+  deliveryPhase: MessageDeliveryPhase;
   userId?: number;
   // Consecutive-message grouping (see docs/CHAT_DESIGN_SPEC.md §4). The sender
   // name shows on the first of a group; Signal tightens the sender-side corners
@@ -94,8 +93,7 @@ function MessageBubbleImpl({
   deleted,
   starred,
   pinned,
-  participantCount,
-  readReceiptTimes,
+  deliveryPhase,
   userId,
   firstInGroup = true,
   lastInGroup = true,
@@ -385,9 +383,7 @@ function MessageBubbleImpl({
                       <MsgTicks
                         mine={mine}
                         msg={message}
-                        participantCount={participantCount}
-                        readReceiptTimes={readReceiptTimes}
-                        userId={userId}
+                        phase={deliveryPhase}
                         onMedia
                         onRetry={mine ? () => onRetry?.(message) : undefined}
                       />
@@ -421,9 +417,7 @@ function MessageBubbleImpl({
                       <MsgTicks
                         mine={mine}
                         msg={message}
-                        participantCount={participantCount}
-                        readReceiptTimes={readReceiptTimes}
-                        userId={userId}
+                        phase={deliveryPhase}
                         onRetry={mine ? () => onRetry?.(message) : undefined}
                       />
                     )}
@@ -628,24 +622,40 @@ function areEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
     a.file_url === b.file_url &&
     a.file_type === b.file_type &&
     a.file_name === b.file_name &&
+    a.file_size === b.file_size &&
+    a.sender_name === b.sender_name &&
+    a.reply_to_id === b.reply_to_id &&
+    a.reply_to_content === b.reply_to_content &&
+    a.reply_to_sender_name === b.reply_to_sender_name &&
+    a.reply_to_file_url === b.reply_to_file_url &&
+    a.reply_to_file_type === b.reply_to_file_type &&
+    a.reply_to_file_name === b.reply_to_file_name &&
+    a.metadata?.viewOnce === b.metadata?.viewOnce &&
+    a.metadata?.width === b.metadata?.width &&
+    a.metadata?.height === b.metadata?.height &&
     a.media_state === b.media_state &&
+    a.media_stage === b.media_stage &&
+    a.media_progress === b.media_progress &&
+    a.media_failure_reason === b.media_failure_reason &&
     a._pending === b._pending &&
     a._failed === b._failed &&
+    a._failureReason === b._failureReason &&
     a._mediaState === b._mediaState &&
     a._mediaProgress === b._mediaProgress &&
+    a._uploadSpeed === b._uploadSpeed &&
     reactionsSig(a) === reactionsSig(b) &&
     prev.mine === next.mine &&
     prev.deleted === next.deleted &&
     prev.starred === next.starred &&
     prev.pinned === next.pinned &&
-    prev.participantCount === next.participantCount &&
-    prev.readReceiptTimes === next.readReceiptTimes &&
+    prev.deliveryPhase === next.deliveryPhase &&
     prev.userId === next.userId &&
     prev.firstInGroup === next.firstInGroup &&
     prev.lastInGroup === next.lastInGroup &&
     prev.highlighted === next.highlighted &&
     prev.selected === next.selected &&
-    prev.selectionActive === next.selectionActive
+    prev.selectionActive === next.selectionActive &&
+    prev.animateEntry === next.animateEntry
   );
 }
 
