@@ -166,6 +166,7 @@ export default function ChatScreen() {
   // Re-entrancy guard for openConv — prevents a rapid double-tap from pushing
   // two stacked chat/[id] screens for the same conversation (see openConv).
   const openingConvRef = useRef(false);
+  const openingGuardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prefetchTaskRef = useRef<{ cancel: () => void } | null>(null);
   const prefetchGenerationRef = useRef(0);
 
@@ -201,9 +202,6 @@ export default function ChatScreen() {
   const [allCallsSelected, setAllCallsSelected] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [openingConversationId, setOpeningConversationId] = useState<number | null>(
-    null,
-  );
 
   // Live presence map for 1:1 conversation peers (userId → effective status).
   // Mirrors the web `userStatusMap` so chat avatars show a status badge.
@@ -322,6 +320,9 @@ export default function ChatScreen() {
   useEffect(
     () => () => {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      if (openingGuardTimerRef.current) {
+        clearTimeout(openingGuardTimerRef.current);
+      }
       cancelRecentPrefetch();
     },
     [cancelRecentPrefetch],
@@ -356,14 +357,13 @@ export default function ChatScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      // Clear the "opening" row highlight when the list regains focus. The
-      // pressed style is applied to the tapped row (openingConversationId) for
-      // instant open feedback; without this reset the row stayed highlighted
-      // after returning to the list via the back gesture.
-      setOpeningConversationId(null);
       // Re-arm the open re-entrancy guard (see openConv) now that we're back on
       // the list, so the next tap opens normally.
       openingConvRef.current = false;
+      if (openingGuardTimerRef.current) {
+        clearTimeout(openingGuardTimerRef.current);
+        openingGuardTimerRef.current = null;
+      }
       load();
       const off = socket.subscribe((msg) => {
         // Debounced refresh instead of a full fetch per message.
@@ -432,9 +432,9 @@ export default function ChatScreen() {
     // Safety re-arm: if the push is somehow aborted (navigation cancelled) the
     // focus-effect re-arm may not fire, so clear the guard after a short window
     // to avoid wedging the row permanently un-openable.
-    setTimeout(() => {
+    openingGuardTimerRef.current = setTimeout(() => {
       openingConvRef.current = false;
-      setOpeningConversationId(null);
+      openingGuardTimerRef.current = null;
     }, 500);
     // Only pass params that have a real value. Sending empty strings ("") for a
     // missing avatar / peerId / group flag is a foot-gun: any consumer that does
@@ -455,10 +455,9 @@ export default function ChatScreen() {
         params.groupMemberAvatars = JSON.stringify(c.group_member_avatars);
       }
     }
-    setOpeningConversationId(c.id);
-    // Push immediately. Deferring this through requestAnimationFrame left the
-    // tapped row highlighted while the JS thread was busy, making chat open feel
-    // stuck for ~1–2 seconds before navigation started.
+    // Push immediately. Pressable's transient native `pressed` style supplies
+    // touch feedback; no React state is held during navigation, so a busy JS
+    // frame cannot leave the source row looking highlighted/stuck.
     router.push({ pathname: "/chat/[id]", params });
   }
 
@@ -996,7 +995,6 @@ export default function ChatScreen() {
   function renderConv(item: Conversation) {
     const name = convName(item);
     const selected = selectedIds.has(item.id);
-    const opening = openingConversationId === item.id;
     // Signal-style attachment preview: a type-specific icon + label instead of a
     // generic "Attachment". Falls back to the text message / "No messages yet".
     const attachment = item.last_file_url
@@ -1017,7 +1015,6 @@ export default function ChatScreen() {
         style={({ pressed }) => [
           styles.row,
           selected && styles.rowSelected,
-          opening && styles.rowPressed,
           pressed && styles.rowPressed,
         ]}
         // In selection mode a tap toggles the row; otherwise it opens the chat.
