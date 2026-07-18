@@ -41,6 +41,34 @@ describe("chat media metadata", () => {
       expect(buildUploadedMediaMetadata(input)).toBeNull();
     });
 
+    test.each(["standard", "hd"] as const)(
+      "persists a valid %s quality selection",
+      (quality) => {
+        expect(buildUploadedMediaMetadata({ quality })).toEqual({ quality });
+      },
+    );
+
+    test("merges quality, dimensions, and view-once metadata", () => {
+      expect(
+        buildUploadedMediaMetadata({
+          viewOnce: "true",
+          width: "2560",
+          height: "1440",
+          quality: "hd",
+        }),
+      ).toEqual({
+        viewOnce: true,
+        viewedBy: [],
+        width: 2560,
+        height: 1440,
+        quality: "hd",
+      });
+    });
+
+    test("rejects unknown quality values", () => {
+      expect(buildUploadedMediaMetadata({ quality: "original" })).toBeNull();
+    });
+
     test("keeps view-once metadata when dimensions are invalid", () => {
       expect(
         buildUploadedMediaMetadata({

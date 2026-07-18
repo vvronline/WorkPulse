@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Image,
   Modal,
   Pressable,
@@ -26,6 +27,7 @@ import { uploadUrl } from "../../config";
 import { markMessageViewed } from "../../features";
 import { getToken } from "../../auth/tokenStore";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import VoicePlayer from "../VoicePlayer";
 import { AuthedImage } from "../AuthedImage";
 import ZoomableImage from "./ZoomableImage";
@@ -101,6 +103,7 @@ export default function FilePreview({
   const [viewer, setViewer] = useState<string | null>(null);
   const [consumed, setConsumed] = useState(false);
   const [loadingView, setLoadingView] = useState(false);
+  const [viewError, setViewError] = useState<string | null>(null);
   const [openingFile, setOpeningFile] = useState(false);
   // Measured intrinsic dimensions for images whose metadata lacks them (the
   // common case for received images and many sent ones). Without this the
@@ -205,6 +208,7 @@ export default function FilePreview({
 
   const openViewOnce = async () => {
     if (loadingView) return;
+    setViewError(null);
     if (isMine) {
       setViewer(uploadUrl(message.file_url) || null);
       return;
@@ -220,14 +224,18 @@ export default function FilePreview({
         setConsumed(true);
       }
     } catch {
-      /* ignore */
+      setViewError("This media could not be opened. Tap to retry.");
     } finally {
       setLoadingView(false);
     }
   };
 
-  // ─── View-once image: "tap to view" pill ───
-  if (viewOnce && isImageFile(message)) {
+  // ─── View-once image/video: one protected entry point ───
+  // Never mount the normal inline renderer before the consume endpoint grants
+  // access. This keeps videos from bypassing view-once by appearing as regular
+  // playable bubbles.
+  if (viewOnce && (isImageFile(message) || isVideoFile(message))) {
+    const isVideo = isVideoFile(message);
     const viewedState = alreadyViewed && !isMine;
     return (
       <View>
@@ -237,6 +245,16 @@ export default function FilePreview({
           onLongPress={onLongPress}
           delayLongPress={250}
           disabled={viewedState || loadingView}
+          accessibilityRole="button"
+          accessibilityLabel={
+            viewedState
+              ? `${isVideo ? "Video" : "Photo"} already viewed`
+              : `Open view-once ${isVideo ? "video" : "photo"}`
+          }
+          accessibilityHint={
+            viewedState ? undefined : "This media can only be opened once"
+          }
+          accessibilityState={{ disabled: viewedState || loadingView }}
         >
           <View style={styles.viewOnceIcon}>
             {viewedState ? (
@@ -251,15 +269,37 @@ export default function FilePreview({
               viewedState && styles.viewOnceLabelDone,
             ]}
           >
-            {viewedState ? "Viewed" : loadingView ? "Opening…" : "Photo"}
+            {viewedState
+              ? "Viewed"
+              : loadingView
+                ? "Opening…"
+                : isVideo
+                  ? "View video"
+                  : "View photo"}
           </Text>
           {!viewedState ? <Eye size={14} color={theme.textMuted} /> : null}
         </Pressable>
-        <ImageViewerModal
-          uri={viewer}
-          viewOnce
-          onClose={() => setViewer(null)}
-        />
+        {isVideo && viewer && VIDEO_AVAILABLE ? (
+          <InlineVideo
+            uri={viewer}
+            isLocal={/^(file|content|data):/i.test(viewer)}
+            style={styles.hiddenViewOnceVideo}
+            openInitially
+            viewOnce
+            onViewerClose={() => setViewer(null)}
+          />
+        ) : (
+          <ImageViewerModal
+            uri={viewer}
+            viewOnce
+            onClose={() => setViewer(null)}
+          />
+        )}
+        {viewError ? (
+          <Text style={styles.viewOnceError} accessibilityRole="alert">
+            {viewError}
+          </Text>
+        ) : null}
         {mediaPending ? (
           <UploadState
             mediaState={mediaState}
@@ -469,6 +509,16 @@ function ImageViewerModal({
   viewOnce?: boolean;
   onClose: () => void;
 }) {
+  const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    if (!uri || !viewOnce) return;
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") onClose();
+    });
+    return () => subscription.remove();
+  }, [uri, viewOnce, onClose]);
+
   if (!uri) return null;
   // Pinch-to-zoom / pan / double-tap zoom (Signal MediaPreview parity). Tap at
   // 1× to dismiss; the close button is always available.
@@ -481,7 +531,13 @@ function ImageViewerModal({
           the modal body in its own GestureHandlerRootView restores the zoom
           gestures. */}
       <GestureHandlerRootView style={viewerStyles.backdrop}>
-        <Pressable style={viewerStyles.closeBtn} onPress={onClose} hitSlop={10}>
+        <Pressable
+          style={[viewerStyles.closeBtn, { top: insets.top + 8 }]}
+          onPress={onClose}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel="Close image"
+        >
           <X size={22} color="#fff" />
         </Pressable>
         <ZoomableImage uri={uri} isLocal={isLocal} onTap={onClose} />
@@ -505,7 +561,6 @@ const viewerStyles = StyleSheet.create({
   image: { width: "100%", height: "85%" },
   closeBtn: {
     position: "absolute",
-    top: 48,
     right: 20,
     zIndex: 2,
     width: 40,
@@ -699,6 +754,18 @@ const makeStyles = (theme: Theme) =>
       marginBottom: 4,
     },
     viewOnceDone: { opacity: 0.7 },
+    hiddenViewOnceVideo: {
+      position: "absolute",
+      width: 1,
+      height: 1,
+      opacity: 0,
+    },
+    viewOnceError: {
+      maxWidth: 260,
+      paddingTop: 6,
+      color: theme.danger,
+      fontSize: 12,
+    },
     viewOnceIcon: {
       width: 26,
       height: 26,

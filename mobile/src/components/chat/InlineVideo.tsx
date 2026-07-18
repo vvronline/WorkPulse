@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   Image,
   Modal,
   Pressable,
@@ -112,10 +113,12 @@ function FullscreenVideoPlayer({
   source,
   poster,
   onClose,
+  viewOnce = false,
 }: {
   source: VideoSource;
   poster?: string | null;
   onClose: () => void;
+  viewOnce?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const [firstFrame, setFirstFrame] = useState(false);
@@ -134,6 +137,14 @@ function FullscreenVideoPlayer({
     }
   });
 
+  useEffect(() => {
+    if (!viewOnce) return;
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") onClose();
+    });
+    return () => subscription.remove();
+  }, [onClose, viewOnce]);
+
   return (
     <Modal visible animationType="none" transparent onRequestClose={onClose}>
       <View style={fsStyles.backdrop}>
@@ -141,6 +152,8 @@ function FullscreenVideoPlayer({
           style={[fsStyles.closeBtn, { top: insets.top + 8 }]}
           onPress={onClose}
           hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel="Close video"
         >
           <X size={22} color="#fff" />
         </Pressable>
@@ -150,7 +163,7 @@ function FullscreenVideoPlayer({
           nativeControls
           contentFit="contain"
           allowsFullscreen
-          allowsPictureInPicture
+          allowsPictureInPicture={!viewOnce}
           // Drop Android's default black ExoPlayer shutter so our poster shows
           // through until the first frame is ready (matches iOS).
           useExoShutter={false}
@@ -202,6 +215,9 @@ export default function InlineVideo({
   durationMs,
   onLongPress,
   onPosterSize,
+  openInitially = false,
+  onViewerClose,
+  viewOnce = false,
 }: {
   uri: string;
   isLocal: boolean;
@@ -211,6 +227,9 @@ export default function InlineVideo({
   // Bubbles toward FilePreview so the box can be sized by the real (poster)
   // aspect ratio — fixes portrait videos rendering as wide landscape boxes.
   onPosterSize?: (size: { width: number; height: number }) => void;
+  openInitially?: boolean;
+  onViewerClose?: () => void;
+  viewOnce?: boolean;
 }) {
   const [source, setSource] = useState<VideoSource | null>(
     isLocal ? { uri } : null,
@@ -218,8 +237,12 @@ export default function InlineVideo({
   const [poster, setPoster] = useState<string | null>(
     posterGet(uri)?.uri ?? null,
   );
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(openInitially);
   const reportedRef = useRef(false);
+
+  useEffect(() => {
+    if (openInitially) setOpen(true);
+  }, [openInitially]);
 
   // Resolve the source (attach Bearer token for remote uploads).
   useEffect(() => {
@@ -305,6 +328,8 @@ export default function InlineVideo({
         onLongPress={onLongPress}
         delayLongPress={250}
         style={[styles.wrap, style]}
+        accessibilityRole="button"
+        accessibilityLabel={viewOnce ? "Play view-once video" : "Play video"}
       >
         {poster ? (
           <Image
@@ -330,7 +355,11 @@ export default function InlineVideo({
         <FullscreenVideoPlayer
           source={source}
           poster={poster}
-          onClose={() => setOpen(false)}
+          viewOnce={viewOnce}
+          onClose={() => {
+            setOpen(false);
+            onViewerClose?.();
+          }}
         />
       ) : null}
     </>

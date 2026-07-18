@@ -549,6 +549,9 @@ export type ChatMessage = {
     // Intrinsic media dimensions (Signal-style aspect-ratio sizing of images).
     width?: number;
     height?: number;
+    // Sender-selected image export policy. Standard = max 1280px / JPEG 0.80;
+    // HD = max 2560px / JPEG 0.92.
+    quality?: "standard" | "hd";
     // System call-history row (metadata.type === "call").
     type?: string;
     callType?: "voice" | "video";
@@ -744,6 +747,7 @@ export function uploadChatFile(
     caption?: string;
     width?: number;
     height?: number;
+    quality?: "standard" | "hd";
   },
 ) {
   const name = fileName || uri.split("/").pop() || "file";
@@ -792,6 +796,9 @@ export function uploadChatFile(
   }
   if (Number.isFinite(opts?.height) && Number(opts?.height) > 0) {
     form.append("height", String(Math.round(Number(opts?.height))));
+  }
+  if (opts?.quality === "standard" || opts?.quality === "hd") {
+    form.append("quality", opts.quality);
   }
   return api.post<ChatMessage>(`/chat/conversations/${convId}/files`, form, {
     headers: { "Content-Type": "multipart/form-data" },

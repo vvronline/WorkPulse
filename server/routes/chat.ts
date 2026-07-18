@@ -3526,42 +3526,53 @@ router.post("/messages/:id/view", auth, async (req: Request, res: Response) => {
       return res.json({ fileUrl: msg.file_url });
     }
 
-    const viewedBy: number[] = Array.isArray(metadata.viewedBy)
-      ? metadata.viewedBy
-      : [];
     // The sender can always re-open their own view-once media.
     const isSender = msg.sender_id === req.userId;
+    if (isSender) return res.json({ fileUrl: msg.file_url });
 
-    if (!isSender && viewedBy.includes(req.userId as number)) {
-      return res.json({ viewed: true });
+    // Atomically claim the recipient's one allowed view. The previous
+    // read-then-write sequence allowed two concurrent requests to both observe
+    // "not viewed" and both receive the URL. This conditional JSONB update lets
+    // exactly one request append the viewer id and return the protected URL.
+    const claimed = (
+      await req.db!.query(
+        `UPDATE messages
+            SET metadata = jsonb_set(
+              COALESCE(metadata, '{}'::jsonb),
+              '{viewedBy}',
+              COALESCE(metadata->'viewedBy', '[]'::jsonb) || to_jsonb($2::int),
+              true
+            )
+          WHERE id = $1
+            AND COALESCE((metadata->>'viewOnce')::boolean, false) = true
+            AND NOT (
+              COALESCE(metadata->'viewedBy', '[]'::jsonb)
+              @> to_jsonb(ARRAY[$2::int])
+            )
+          RETURNING file_url`,
+        [msgId, req.userId],
+      )
+    ).rows[0];
+
+    if (!claimed) return res.json({ viewed: true });
+
+    // Tell the other participants this viewer has consumed the media so their
+    // UI can collapse to "Viewed".
+    const participants = (
+      await req.db!.query(
+        "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
+        [msg.conversation_id],
+      )
+    ).rows;
+    for (const p of participants) {
+      sendToUser(req.tenantId, p.user_id, "chat_view_once", {
+        messageId: msgId,
+        conversationId: msg.conversation_id,
+        viewerId: req.userId,
+      });
     }
 
-    if (!isSender) {
-      const nextViewedBy = [...viewedBy, req.userId as number];
-      const nextMeta = { ...metadata, viewedBy: nextViewedBy };
-      await req.db!.query("UPDATE messages SET metadata = $1 WHERE id = $2", [
-        JSON.stringify(nextMeta),
-        msgId,
-      ]);
-
-      // Tell the other participants this viewer has consumed the media so
-      // their UI can collapse to "Viewed".
-      const participants = (
-        await req.db!.query(
-          "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
-          [msg.conversation_id],
-        )
-      ).rows;
-      for (const p of participants) {
-        sendToUser(req.tenantId, p.user_id, "chat_view_once", {
-          messageId: msgId,
-          conversationId: msg.conversation_id,
-          viewerId: req.userId,
-        });
-      }
-    }
-
-    res.json({ fileUrl: msg.file_url });
+    res.json({ fileUrl: claimed.file_url });
   } catch (err) {
     req.log.error({ err }, "View-once consume error");
     res.status(500).json({ error: "Failed to view media" });

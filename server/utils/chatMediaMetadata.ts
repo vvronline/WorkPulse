@@ -3,6 +3,7 @@ export type ChatMediaMetadata = Record<string, unknown> & {
   viewedBy?: number[];
   width?: number;
   height?: number;
+  quality?: "standard" | "hd";
 };
 
 const MAX_MEDIA_DIMENSION = 100_000;
@@ -31,14 +32,20 @@ export function buildUploadedMediaMetadata(input: {
   viewOnce?: unknown;
   width?: unknown;
   height?: unknown;
+  quality?: unknown;
 }): ChatMediaMetadata | null {
   const viewOnce = String(input.viewOnce || "") === "true";
   const dimensions = validDimensionPair(input.width, input.height);
-  if (!viewOnce && !dimensions) return null;
+  const quality =
+    input.quality === "standard" || input.quality === "hd"
+      ? input.quality
+      : null;
+  if (!viewOnce && !dimensions && !quality) return null;
 
   return {
     ...(viewOnce ? { viewOnce: true, viewedBy: [] as number[] } : {}),
     ...(dimensions || {}),
+    ...(quality ? { quality } : {}),
   };
 }
 

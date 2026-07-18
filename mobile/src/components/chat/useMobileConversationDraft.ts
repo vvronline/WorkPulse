@@ -11,6 +11,7 @@ export type PendingMediaSource = {
   caption?: string;
   width?: number;
   height?: number;
+  quality?: "standard" | "hd";
 };
 
 type ConversationDraft = {

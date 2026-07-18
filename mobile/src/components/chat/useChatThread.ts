@@ -1449,6 +1449,7 @@ export function useChatThread() {
           caption: source.caption,
           width: source.width,
           height: source.height,
+          quality: source.quality,
           onUploadProgress: (evt) => {
             const total = evt.total || 0;
             const progress =
@@ -1685,6 +1686,7 @@ export function useChatThread() {
             caption: source.caption,
             width: source.width,
             height: source.height,
+            quality: source.quality,
             signal: controller.signal,
             onUploadProgress: (evt) => {
               const total = evt.total || 0;
@@ -1770,6 +1772,10 @@ export function useChatThread() {
         source.width && source.height
           ? { width: source.width, height: source.height }
           : {};
+      const mediaMeta = {
+        ...dimMeta,
+        ...(source.quality ? { quality: source.quality } : {}),
+      };
       setMessages((prev) => [
         ...prev,
         {
@@ -1783,9 +1789,9 @@ export function useChatThread() {
           file_type: source.mimeType || null,
           file_size: null,
           metadata: source.viewOnce
-            ? { viewOnce: true, viewedBy: [], ...dimMeta }
-            : Object.keys(dimMeta).length
-              ? dimMeta
+            ? { viewOnce: true, viewedBy: [], ...mediaMeta }
+            : Object.keys(mediaMeta).length
+              ? mediaMeta
               : null,
           reactions: [],
           _pending: true,
@@ -1955,6 +1961,7 @@ export function useChatThread() {
         caption?: string;
         width: number;
         height: number;
+        quality: "standard" | "hd";
       }[],
     ) => {
       results.forEach((r, i) => {
@@ -1965,6 +1972,7 @@ export function useChatThread() {
           viewOnce: r.viewOnce,
           width: r.width,
           height: r.height,
+          quality: r.quality,
           // Attach the caption to the first item only (matches Signal/web).
           caption: i === 0 ? r.caption : undefined,
         });

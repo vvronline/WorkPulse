@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -24,6 +24,7 @@ import Svg, { Path } from "react-native-svg";
 import ViewShot, { captureRef } from "react-native-view-shot";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Theme } from "../../theme";
 import { useTheme } from "../../theme/ThemeProvider";
 
@@ -35,6 +36,7 @@ export type MediaEditorResult = {
   caption?: string;
   width: number;
   height: number;
+  quality: "standard" | "hd";
 };
 
 type EditItem = {
@@ -65,7 +67,8 @@ export default function MediaEditor({
   onClose: () => void;
 }) {
   const theme = useTheme();
-  const styles = makeStyles(theme);
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
 
   const [items, setItems] = useState<EditItem[]>(() =>
     initialItems.map((it, i) => ({
@@ -233,6 +236,7 @@ export default function MediaEditor({
         caption,
         width: res.width,
         height: res.height,
+        quality,
       };
     },
     [quality, viewOnce, caption],
@@ -258,21 +262,42 @@ export default function MediaEditor({
     <Modal visible animationType="fade" onRequestClose={onClose} transparent={false}>
       <View style={styles.container}>
         {/* Top bar */}
-        <View style={styles.topBar}>
-          <Pressable style={styles.iconBtn} onPress={onClose} hitSlop={8}>
+        <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
+          <Pressable
+            style={styles.iconBtn}
+            onPress={onClose}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Close media editor"
+          >
             <X size={22} color="#fff" />
           </Pressable>
           <View style={styles.topRight}>
-            <Pressable style={styles.toolBtn} onPress={cropSquare} hitSlop={8}>
+            <Pressable
+              style={styles.toolBtn}
+              onPress={cropSquare}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Crop photo to square"
+            >
               <CropIcon size={20} color="#fff" />
             </Pressable>
-            <Pressable style={styles.toolBtn} onPress={rotate} hitSlop={8}>
+            <Pressable
+              style={styles.toolBtn}
+              onPress={rotate}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Rotate photo"
+            >
               <RotateCw size={20} color="#fff" />
             </Pressable>
             <Pressable
               style={[styles.toolBtn, penMode && styles.toolActive]}
               onPress={() => setPenMode((v) => !v)}
               hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Draw on photo"
+              accessibilityState={{ selected: penMode }}
             >
               <Pencil size={20} color={penMode ? "#0b0b0d" : "#fff"} />
             </Pressable>
@@ -377,6 +402,10 @@ export default function MediaEditor({
           <Pressable
             style={[styles.optionPill, quality === "standard" && styles.optionActive]}
             onPress={() => setQuality("standard")}
+            accessibilityRole="radio"
+            accessibilityLabel="Standard image quality"
+            accessibilityHint="Sends images up to 1280 pixels"
+            accessibilityState={{ selected: quality === "standard" }}
           >
             <Text
               style={[
@@ -390,6 +419,10 @@ export default function MediaEditor({
           <Pressable
             style={[styles.optionPill, quality === "hd" && styles.optionActive]}
             onPress={() => setQuality("hd")}
+            accessibilityRole="radio"
+            accessibilityLabel="HD image quality"
+            accessibilityHint="Sends sharper images up to 2560 pixels"
+            accessibilityState={{ selected: quality === "hd" }}
           >
             <Text
               style={[styles.optionText, quality === "hd" && styles.optionTextActive]}
@@ -400,6 +433,10 @@ export default function MediaEditor({
           <Pressable
             style={[styles.optionPill, viewOnce && styles.optionActive]}
             onPress={() => setViewOnce((v) => !v)}
+            accessibilityRole="switch"
+            accessibilityLabel="View once"
+            accessibilityHint="Recipients can open this media one time"
+            accessibilityState={{ checked: viewOnce }}
           >
             <Timer size={14} color={viewOnce ? "#0b0b0d" : "rgba(255,255,255,0.85)"} />
             <Text style={[styles.optionText, viewOnce && styles.optionTextActive]}>
@@ -409,7 +446,7 @@ export default function MediaEditor({
         </View>
 
         {/* Caption + send */}
-        <View style={styles.bottomBar}>
+        <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 10 }]}>
           <TextInput
             style={styles.caption}
             placeholder="Add a caption..."
@@ -417,7 +454,14 @@ export default function MediaEditor({
             value={caption}
             onChangeText={setCaption}
           />
-          <Pressable style={styles.sendBtn} onPress={handleSend} disabled={busy}>
+          <Pressable
+            style={styles.sendBtn}
+            onPress={handleSend}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel={`Send ${items.length === 1 ? "photo" : `${items.length} photos`} in ${quality === "hd" ? "HD" : "standard"} quality`}
+            accessibilityState={{ disabled: busy }}
+          >
             {busy ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
@@ -438,7 +482,6 @@ const makeStyles = (theme: Theme) =>
       alignItems: "center",
       justifyContent: "space-between",
       paddingHorizontal: 14,
-      paddingTop: 48,
       paddingBottom: 10,
     },
     topRight: { flexDirection: "row", alignItems: "center", gap: 8 },
@@ -551,7 +594,7 @@ const makeStyles = (theme: Theme) =>
       gap: 10,
       paddingHorizontal: 14,
       paddingTop: 8,
-      paddingBottom: 28,
+      paddingBottom: 10,
     },
     caption: {
       flex: 1,

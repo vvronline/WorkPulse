@@ -2,6 +2,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -88,6 +89,14 @@ export default function CameraCapture({
   const cameraRef = useRef<any>(null);
   const [facing, setFacing] = useState<"back" | "front">("back");
   const [flash, setFlash] = useState<"off" | "on">("off");
+  // On iPhones with a virtual multi-camera device, leaving the physical lens
+  // implicit can start at the virtual device's minimum field of view (0.5/0.6×).
+  // Expo exposes physical-lens selection on iOS, so pin the rear camera to the
+  // normal wide-angle lens. Android's CameraX implementation already clamps its
+  // default zoom ratio to optical 1× and does not expose physical lens names.
+  const [selectedLens, setSelectedLens] = useState<string | undefined>(
+    Platform.OS === "ios" ? "builtInWideAngleCamera" : undefined,
+  );
   // The CameraView's native capture mode. expo-camera REQUIRES the view to
   // already be in "video" mode before `recordAsync()` is called — flipping it
   // synchronously alongside `recordAsync` (the old `mode={isRecording ? ...}`
@@ -122,8 +131,29 @@ export default function CameraCapture({
   }, []);
 
   const flipFacing = useCallback(() => {
-    setFacing((f) => (f === "back" ? "front" : "back"));
+    setFacing((f) => {
+      const next = f === "back" ? "front" : "back";
+      setSelectedLens(
+        Platform.OS === "ios" && next === "back"
+          ? "builtInWideAngleCamera"
+          : undefined,
+      );
+      return next;
+    });
   }, []);
+
+  const handleAvailableLensesChanged = useCallback(
+    (event: { lenses?: string[] }) => {
+      const lenses = Array.isArray(event?.lenses) ? event.lenses : [];
+      if (
+        facing === "back" &&
+        lenses.includes("builtInWideAngleCamera")
+      ) {
+        setSelectedLens("builtInWideAngleCamera");
+      }
+    },
+    [facing],
+  );
 
   const toggleFlash = useCallback(() => {
     setFlash((f) => (f === "off" ? "on" : "off"));
@@ -284,6 +314,13 @@ export default function CameraCapture({
         style={StyleSheet.absoluteFill}
         facing={facing}
         flash={flash}
+        zoom={0}
+        {...(Platform.OS === "ios"
+          ? {
+              selectedLens,
+              onAvailableLensesChanged: handleAvailableLensesChanged,
+            }
+          : {})}
         // Mirror the front-camera output so RECORDED videos match the mirrored
         // live preview (selfie behaviour). Scoped to "video" mode ONLY so it
         // never affects `takePictureAsync` — still photos are mirrored
@@ -298,7 +335,13 @@ export default function CameraCapture({
 
       {/* Top bar: close + flash + recording timer */}
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <Pressable style={styles.topBtn} onPress={onClose} hitSlop={8}>
+        <Pressable
+          style={styles.topBtn}
+          onPress={onClose}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Close camera"
+        >
           <X size={26} color="#fff" />
         </Pressable>
         {isRecording ? (
@@ -309,7 +352,13 @@ export default function CameraCapture({
         ) : (
           <View style={{ flex: 1 }} />
         )}
-        <Pressable style={styles.topBtn} onPress={toggleFlash} hitSlop={8}>
+        <Pressable
+          style={styles.topBtn}
+          onPress={toggleFlash}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={flash === "on" ? "Turn flash off" : "Turn flash on"}
+        >
           {flash === "on" ? (
             <Zap size={24} color="#fff" />
           ) : (
@@ -336,6 +385,16 @@ export default function CameraCapture({
           {isRecording ? "Release to stop" : "Tap for photo · Hold for video"}
         </Text>
 
+        {!isRecording && facing === "back" ? (
+          <View
+            style={styles.zoomBadge}
+            accessibilityRole="text"
+            accessibilityLabel="Camera zoom, 1 times"
+          >
+            <Text style={styles.zoomBadgeText}>1×</Text>
+          </View>
+        ) : null}
+
         <View style={styles.controlsRow}>
           <View style={styles.sideSlot} />
 
@@ -346,6 +405,10 @@ export default function CameraCapture({
             onPressOut={stopRecording}
             delayLongPress={250}
             style={styles.shutterOuter}
+            accessibilityRole="button"
+            accessibilityLabel="Camera shutter"
+            accessibilityHint="Tap for a photo or hold to record a video"
+            disabled={busy}
           >
             <View
               style={[
@@ -363,6 +426,8 @@ export default function CameraCapture({
               onPress={flipFacing}
               hitSlop={8}
               disabled={isRecording}
+              accessibilityRole="button"
+              accessibilityLabel="Switch camera"
             >
               <RotateCcw size={26} color="#fff" />
             </Pressable>
@@ -458,6 +523,24 @@ const makeStyles = (theme: Theme) =>
       fontSize: 13,
       textAlign: "center",
       fontFamily: theme.fontMedium,
+    },
+    zoomBadge: {
+      alignSelf: "center",
+      minWidth: 44,
+      height: 32,
+      paddingHorizontal: 12,
+      borderRadius: 16,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "rgba(0,0,0,0.58)",
+      borderWidth: 1,
+      borderColor: "rgba(255,255,255,0.28)",
+    },
+    zoomBadgeText: {
+      color: "#fff",
+      fontSize: 14,
+      fontFamily: theme.fontSemiBold,
+      fontVariant: ["tabular-nums"],
     },
     controlsRow: {
       flexDirection: "row",
