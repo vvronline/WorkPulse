@@ -89,13 +89,15 @@ export default function CameraCapture({
   const cameraRef = useRef<any>(null);
   const [facing, setFacing] = useState<"back" | "front">("back");
   const [flash, setFlash] = useState<"off" | "on">("off");
-  // On iPhones with a virtual multi-camera device, leaving the physical lens
-  // implicit can start at the virtual device's minimum field of view (0.5/0.6×).
-  // Expo exposes physical-lens selection on iOS, so pin the rear camera to the
-  // normal wide-angle lens. Android's CameraX implementation already clamps its
-  // default zoom ratio to optical 1× and does not expose physical lens names.
-  const [selectedLens, setSelectedLens] = useState<string | undefined>(
-    Platform.OS === "ios" ? "builtInWideAngleCamera" : undefined,
+  // Expo Camera's iOS `selectedLens` expects a LOCALIZED device name returned by
+  // onAvailableLensesChanged (for example "Back Camera"), not AVFoundation's
+  // device-type key ("builtInWideAngleCamera"). Its native discovery list puts
+  // the physical standard-wide camera first, ahead of ultra-wide/virtual devices.
+  // Keep the 1× badge hidden until that physical lens has actually been selected.
+  // Android CameraX clamps zoom={0} to a minimum optical ratio of 1×.
+  const [selectedLens, setSelectedLens] = useState<string | undefined>();
+  const [standardLensReady, setStandardLensReady] = useState(
+    Platform.OS !== "ios",
   );
   // The CameraView's native capture mode. expo-camera REQUIRES the view to
   // already be in "video" mode before `recordAsync()` is called — flipping it
@@ -132,25 +134,28 @@ export default function CameraCapture({
 
   const flipFacing = useCallback(() => {
     setFacing((f) => {
-      const next = f === "back" ? "front" : "back";
-      setSelectedLens(
-        Platform.OS === "ios" && next === "back"
-          ? "builtInWideAngleCamera"
-          : undefined,
-      );
-      return next;
+      setSelectedLens(undefined);
+      setStandardLensReady(Platform.OS !== "ios");
+      return f === "back" ? "front" : "back";
     });
   }, []);
 
   const handleAvailableLensesChanged = useCallback(
     (event: { lenses?: string[] }) => {
       const lenses = Array.isArray(event?.lenses) ? event.lenses : [];
-      if (
-        facing === "back" &&
-        lenses.includes("builtInWideAngleCamera")
-      ) {
-        setSelectedLens("builtInWideAngleCamera");
+      if (facing !== "back" || lenses.length === 0) {
+        setStandardLensReady(false);
+        return;
       }
+
+      // Do not infer a name ("Wide", "1x", etc.): lens names are localized.
+      // Expo Camera's native DeviceDiscovery deliberately orders the standard
+      // physical wide-angle camera first, so use the API-provided first value.
+      const standardWideLens = lenses[0];
+      setSelectedLens((current) =>
+        current === standardWideLens ? current : standardWideLens,
+      );
+      setStandardLensReady(true);
     },
     [facing],
   );
@@ -385,7 +390,7 @@ export default function CameraCapture({
           {isRecording ? "Release to stop" : "Tap for photo · Hold for video"}
         </Text>
 
-        {!isRecording && facing === "back" ? (
+        {!isRecording && facing === "back" && standardLensReady ? (
           <View
             style={styles.zoomBadge}
             accessibilityRole="text"

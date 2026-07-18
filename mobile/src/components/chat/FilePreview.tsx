@@ -11,14 +11,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import {
-  FileText,
-  Timer,
-  Eye,
-  EyeOff,
-  X,
-  RefreshCw,
-} from "../../icons";
+import { FileText, X, RefreshCw } from "../../icons";
 import Svg, { Circle } from "react-native-svg";
 import { useAuth } from "../../auth/AuthContext";
 import type { Theme } from "../../theme";
@@ -256,11 +249,23 @@ export default function FilePreview({
           }
           accessibilityState={{ disabled: viewedState || loadingView }}
         >
-          <View style={styles.viewOnceIcon}>
-            {viewedState ? (
-              <EyeOff size={15} color={theme.textMuted} />
+          <View
+            style={[
+              styles.viewOnceIcon,
+              viewedState && styles.viewOnceIconDone,
+            ]}
+          >
+            {loadingView ? (
+              <ActivityIndicator size="small" color={theme.primary} />
             ) : (
-              <Timer size={15} color={theme.text} />
+              <Text
+                style={[
+                  styles.viewOnceOne,
+                  viewedState && styles.viewOnceOneDone,
+                ]}
+              >
+                1
+              </Text>
             )}
           </View>
           <Text
@@ -270,14 +275,13 @@ export default function FilePreview({
             ]}
           >
             {viewedState
-              ? "Viewed"
+              ? "Opened"
               : loadingView
                 ? "Opening…"
                 : isVideo
-                  ? "View video"
-                  : "View photo"}
+                  ? "Video"
+                  : "Photo"}
           </Text>
-          {!viewedState ? <Eye size={14} color={theme.textMuted} /> : null}
         </Pressable>
         {isVideo && viewer && VIDEO_AVAILABLE ? (
           <InlineVideo
@@ -740,20 +744,18 @@ const makeStyles = (theme: Theme) =>
       marginBottom: 4,
       backgroundColor: theme.surface,
     },
+    // WhatsApp-style view-once row. The parent MessageBubble already supplies
+    // the bubble surface and padding, so this must not draw a second nested pill.
     viewOnceCard: {
       flexDirection: "row",
       alignItems: "center",
-      gap: 8,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: theme.glassBorder,
-      backgroundColor: theme.surface,
+      gap: 9,
+      minWidth: 124,
+      minHeight: 32,
+      paddingVertical: 1,
       alignSelf: "flex-start",
-      marginBottom: 4,
     },
-    viewOnceDone: { opacity: 0.7 },
+    viewOnceDone: { opacity: 0.72 },
     hiddenViewOnceVideo: {
       position: "absolute",
       width: 1,
@@ -767,16 +769,30 @@ const makeStyles = (theme: Theme) =>
       fontSize: 12,
     },
     viewOnceIcon: {
-      width: 26,
-      height: 26,
-      borderRadius: 13,
+      width: 27,
+      height: 27,
+      borderRadius: 14,
       borderWidth: 1.5,
-      borderColor: theme.text,
+      borderColor: theme.primary,
       alignItems: "center",
       justifyContent: "center",
     },
-    viewOnceLabel: { fontSize: 14, color: theme.text, fontWeight: "500" },
-    viewOnceLabelDone: { color: theme.textMuted, fontStyle: "italic" },
+    viewOnceIconDone: { borderColor: theme.textMuted },
+    viewOnceOne: {
+      fontSize: 15,
+      lineHeight: 18,
+      color: theme.primary,
+      fontFamily: theme.fontSemiBold,
+      fontVariant: ["tabular-nums"],
+    },
+    viewOnceOneDone: { color: theme.textMuted },
+    viewOnceLabel: {
+      flexShrink: 1,
+      fontSize: 15,
+      color: theme.text,
+      fontFamily: theme.fontMedium,
+    },
+    viewOnceLabelDone: { color: theme.textMuted },
     uploadWrap: {
       marginBottom: 4,
       paddingHorizontal: 2,

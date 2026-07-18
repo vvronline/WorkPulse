@@ -442,20 +442,56 @@ class NotifeeService {
     return this.resolve() != null;
   }
 
+  private avatarCacheTarget(absoluteUrl: string): string {
+    const dir = `${FileSystem.cacheDirectory}msg_avatars/`;
+    // Stable filename keyed by the URL so repeated messages from the same
+    // sender reuse the cached file instead of re-downloading.
+    const key = absoluteUrl.replace(/[^a-zA-Z0-9]/g, "_").slice(-120);
+    return `${dir}${key}.img`;
+  }
+
+  /**
+   * Resolve only an already-downloaded avatar. This deliberately performs no
+   * auth lookup or network request, so displayMessage can put a repeat sender's
+   * avatar on the FIRST notification update instead of briefly replacing it
+   * with Android's placeholder and then repainting it (the visible flicker).
+   */
+  private async getCachedAvatarFile(
+    absoluteUrl: string,
+  ): Promise<string | null> {
+    if (Platform.OS !== "android" || !absoluteUrl) return null;
+    try {
+      const info = await FileSystem.getInfoAsync(
+        this.avatarCacheTarget(absoluteUrl),
+      );
+      const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+      if (
+        info.exists &&
+        typeof info.modificationTime === "number" &&
+        Date.now() - info.modificationTime * 1000 < ONE_DAY_MS
+      ) {
+        return info.uri;
+      }
+    } catch {
+      // A cache miss is expected for a sender whose avatar has not been seen.
+    }
+    return null;
+  }
+
   /**
    * Download a protected avatar to a LOCAL cache file so Notifee can render it
    * as a `largeIcon`. Notifee fetches `largeIcon` URLs itself but CANNOT attach
    * request headers, and our avatars live behind the server's `/uploads` auth
    * middleware (401 without a Bearer token) — so a remote URL silently shows no
-   * avatar. We instead download it here WITH the Authorization header (mirroring
-   * the in-app AuthedImage component) and hand Notifee the resulting `file://`
-   * URI. Returns the local file URI, or null on any failure. Cached by a hash of
-   * the URL with a short TTL so a repeat sender doesn't re-download every message.
+   * avatar. Network work stays outside the notification's delivery-critical
+   * path. Returns the local file URI, or null on any failure.
    */
   private async fetchAvatarToFile(absoluteUrl: string): Promise<string | null> {
-    if (Platform.OS !== "android") return null;
-    if (!absoluteUrl) return null;
+    if (Platform.OS !== "android" || !absoluteUrl) return null;
     try {
+      const cached = await this.getCachedAvatarFile(absoluteUrl);
+      if (cached) return cached;
+
       let token = "";
       try {
         token = (await getToken()) || "";
@@ -469,29 +505,14 @@ class NotifeeService {
       } catch {
         // already exists / best-effort
       }
-      // Stable filename keyed by the URL so repeated messages from the same
-      // sender reuse the cached file instead of re-downloading.
-      const key = absoluteUrl.replace(/[^a-zA-Z0-9]/g, "_").slice(-120);
-      const target = `${dir}${key}.img`;
 
-      // Reuse a fresh cache entry (< 24h) to avoid a network round-trip per push.
-      try {
-        const info = await FileSystem.getInfoAsync(target);
-        const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-        if (
-          info.exists &&
-          typeof info.modificationTime === "number" &&
-          Date.now() - info.modificationTime * 1000 < ONE_DAY_MS
-        ) {
-          return info.uri;
-        }
-      } catch {
-        // fall through to a fresh download
-      }
-
-      const res = await FileSystem.downloadAsync(absoluteUrl, target, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
+      const res = await FileSystem.downloadAsync(
+        absoluteUrl,
+        this.avatarCacheTarget(absoluteUrl),
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        },
+      );
       if (res.status >= 200 && res.status < 300 && res.uri) {
         return res.uri;
       }
@@ -1286,20 +1307,14 @@ class NotifeeService {
    * Displays a standard status-bar message notification. Reliable in
    * background/terminated state, unlike expo-notifications from a headless task.
    *
-   * DELIVERY-FIRST, AVATAR-SECOND (Signal-Android parity / regression fix):
-   * The notification is POSTED IMMEDIATELY with NO avatar so it ALWAYS surfaces
-   * in every app state. The sender's circular avatar largeIcon is then fetched
-   * BEST-EFFORT with a hard timeout and, when it resolves, re-applied via a
-   * second `displayNotification` reusing the SAME notification id (Notifee
-   * updates the existing notification in place). This fixes "message push stopped
-   * working" — the previous implementation `await`-ed a network avatar download
-   * (SecureStore read + FileSystem.downloadAsync, NO timeout) in the CRITICAL
-   * path BEFORE posting. In the background/terminated state the FCM headless JS
-   * task has a very short OS-enforced lifetime; a slow/stalled download (or the
-   * task being killed mid-await) meant `displayNotification` never ran and the
-   * push was silently dropped. Signal-Android encodes the same lesson: post the
-   * notification synchronously, load the contact photo separately, never let the
-   * avatar block the notification from appearing.
+   * DELIVERY-FIRST, CACHE-FIRST AVATAR:
+   * A fresh LOCAL avatar-cache hit is attached to the FIRST post so repeated
+   * messages retain the existing photo without placeholder/avatar flicker. On a
+   * cache miss, the notification is posted immediately without waiting for auth
+   * or network access; a successful best-effort download is then attached with
+   * one quiet update using the SAME notification id. This keeps the prior
+   * reliability fix: a slow/stalled protected-avatar download can never consume
+   * the short-lived FCM headless task before `displayNotification` runs.
    */
   async displayMessage(payload: NotificationPayload): Promise<void> {
     const notifee = this.resolve();
@@ -1365,6 +1380,18 @@ class NotifeeService {
     const isGroupThread = isExplicitGroup || distinctSenders.size > 1;
     const messagingTitle = groupTitle || title;
 
+    // A LOCAL cache lookup is safe in the delivery path: unlike auth/network
+    // work, it completes immediately and lets repeat messages retain the avatar
+    // on their FIRST update. Without this, every message replaced the existing
+    // avatar with a placeholder before a second post restored it.
+    const largeIconUrl = uploadUrl(data.senderAvatar || data.avatar || "");
+    const cachedLargeIcon = largeIconUrl
+      ? await this.getCachedAvatarFile(largeIconUrl)
+      : null;
+    const initialLargeIconOpts: Record<string, unknown> = cachedLargeIcon
+      ? { largeIcon: cachedLargeIcon, circularLargeIcon: true }
+      : {};
+
     // Register this chat as a native Android conversation before posting. On
     // Android 11+ this returns a child channel linked to a long-lived dynamic
     // shortcut; Notifee's compiled Android core accepts shortcutId even though
@@ -1377,13 +1404,14 @@ class NotifeeService {
         title: messagingTitle,
         senderId: data.senderId,
         senderName,
+        ...(cachedLargeIcon ? { avatarUri: cachedLargeIcon } : {}),
         parentChannelId: MESSAGE_CHANNEL_ID,
       });
     }
 
-    // Build the MessagingStyle from the accumulated history. `personIcon` (the
-    // locally-cached sender avatar) is attached on the SECOND post once the
-    // avatar download completes; the first post renders without it.
+    // Build the MessagingStyle from the accumulated history. A cached sender
+    // avatar is attached on the first post; a newly-downloaded avatar is attached
+    // by one quiet follow-up post.
     const buildMessagingStyle = (personIcon?: string) => ({
       type: this.AndroidStyle.MESSAGING ?? 3,
       // Top-level person is the device user (the recipient of these messages).
@@ -1414,8 +1442,8 @@ class NotifeeService {
         : {}),
     });
 
-    // Build the base Android options ONCE so the initial (no-avatar) post and the
-    // later avatar-update post stay perfectly in sync.
+    // Build the base Android options once so the cache-hit first post and the
+    // optional cache-miss follow-up stay perfectly in sync.
     const baseAndroid = (
       largeIconOpts: Record<string, unknown>,
       quietUpdate = false,
@@ -1479,8 +1507,9 @@ class NotifeeService {
         : {}),
     });
 
-    // ── STEP 1: post the notification IMMEDIATELY (no avatar) ──────────────
-    // This is the actual delivery and must never be blocked by the network.
+    // ── STEP 1: post the notification immediately ─────────────────────────
+    // This is the actual delivery and is never blocked by auth/network work.
+    // A fresh local cache hit is included now so repeat messages do not flicker.
     const postNotification = async (
       largeIconOpts: Record<string, unknown>,
       quietUpdate = false,
@@ -1529,8 +1558,7 @@ class NotifeeService {
       }
     };
 
-    // Post NOW without the avatar so the message is guaranteed to appear.
-    await postNotification({});
+    await postNotification(initialLargeIconOpts);
     // Record that a notification was just displayed so a subsequent KILLED-state
     // cold start (where this notification may be auto-dismissed on tap, leaving
     // getDisplayedNotifications() empty) still knows to keep re-polling
@@ -1572,9 +1600,10 @@ class NotifeeService {
     // logo occupy the large-avatar position. With no sender photo, MessagingStyle
     // generates a person placeholder from the sender's name.
     const LARGE_ICON_TIMEOUT_MS = 3500;
-    const largeIconUrl = uploadUrl(data.senderAvatar || data.avatar || "");
 
-    if (largeIconUrl) {
+    // Only a cache MISS needs a second post. A cache hit was already included in
+    // the first post, so posting it again would still make System UI redraw.
+    if (largeIconUrl && !cachedLargeIcon) {
       try {
         const localUri = await Promise.race<string | null>([
           this.fetchAvatarToFile(largeIconUrl),
