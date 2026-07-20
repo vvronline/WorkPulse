@@ -831,32 +831,20 @@ function ChatList({
   // message.
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const showScrollBtnRef = useRef(false);
-  const scrollReadyRef = useRef(false);
-  const lastOlderEdgeCheckRef = useRef(0);
   // Read changing pagination values through a ref so the native scroll callback
-  // keeps one identity while pages/receipts/selections update around it.
+  // and start-reached callback keep one identity while pages update around them.
   const scrollModelRef = useRef({
     hasMore: c.hasMore,
     loadingOlder: c.loadingOlder,
     loadOlder: c.loadOlder,
     onListScroll: c.onListScroll,
-    prependingRef: c.prependingRef,
   });
   scrollModelRef.current = {
     hasMore: c.hasMore,
     loadingOlder: c.loadingOlder,
     loadOlder: c.loadOlder,
     onListScroll: c.onListScroll,
-    prependingRef: c.prependingRef,
   };
-
-  useEffect(() => {
-    scrollReadyRef.current = false;
-    const timer = setTimeout(() => {
-      scrollReadyRef.current = true;
-    }, 450);
-    return () => clearTimeout(timer);
-  }, [c.convId]);
 
   // Gate the per-bubble FadeIn/LinearTransition animations. They stay OFF for
   // the initial render so opening the conversation paints the whole visible
@@ -908,12 +896,11 @@ function ChatList({
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-      const y = contentOffset.y;
       const model = scrollModelRef.current;
 
       const distanceFromBottom = Math.max(
         0,
-        contentSize.height - layoutMeasurement.height - y,
+        contentSize.height - layoutMeasurement.height - contentOffset.y,
       );
       // This ref-only write is the only work required every frame.
       model.onListScroll(distanceFromBottom);
@@ -923,30 +910,13 @@ function ChatList({
         showScrollBtnRef.current = shouldShow;
         setShowScrollBtn(shouldShow);
       }
-
-      // Edge detection does not need 60 Hz precision. Limiting it to ~8 Hz
-      // removes repeated content-size arithmetic and pagination calls during
-      // fast flings while still prefetching well before the user reaches history.
-      const now = Date.now();
-      if (now - lastOlderEdgeCheckRef.current < 120) return;
-      lastOlderEdgeCheckRef.current = now;
-      const distanceToOlderEdge = y;
-      if (
-        scrollReadyRef.current &&
-        distanceToOlderEdge < 700 &&
-        model.hasMore &&
-        !model.loadingOlder &&
-        !model.prependingRef.current
-      ) {
-        void model.loadOlder();
-      }
     },
     [],
   );
 
   const handleStartReached = useCallback(() => {
     const model = scrollModelRef.current;
-    if (!model.prependingRef.current) void model.loadOlder();
+    if (model.hasMore && !model.loadingOlder) void model.loadOlder();
   }, []);
 
   const maintainVisiblePosition = useMemo(
@@ -1116,7 +1086,6 @@ function ChatList({
         onStartReached={handleStartReached}
         onStartReachedThreshold={0.4}
         drawDistance={500}
-        maxItemsInRecyclePool={24}
         maintainVisibleContentPosition={maintainVisiblePosition}
         getItemType={getMessageType}
         ListHeaderComponent={

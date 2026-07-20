@@ -113,18 +113,6 @@ import type { MessageDeliveryPhase } from "./MsgTicks";
 // loads a page first and pages older history on demand, so we mirror that here.
 const INITIAL_THREAD_PAGE_SIZE = 50;
 
-// Hard upper bound on how many messages stay MOUNTED in React state for a
-// single thread. A long-lived thread (left open while messages keep arriving,
-// or after paging up a lot) otherwise grows this array without limit — every
-// visible-message recompute, grouping pass and list extraData diff then
-// scales with total history, and the heap climbs for as long as the thread is
-// alive. Signal keeps a bounded sliding window of rows in memory and pages the
-// rest from disk. We cap the NEWEST-message (append) growth here; older history
-// is still reachable via `loadOlder` (cursor pagination) / the on-disk cache,
-// which re-fetches when the user scrolls back up. Chosen comfortably above a
-// full screen of bubbles so trimming is never visible at the bottom.
-const MAX_MOUNTED_MESSAGES = 120;
-
 // Skip repaying a full messages/read-receipts/pins reconcile when the same
 // conversation is reopened quickly. With single-active route replacement the
 // hook remounts on every list→thread open, so per-instance refs cannot remember
@@ -133,47 +121,6 @@ const MAX_MOUNTED_MESSAGES = 120;
 // reconcile during repeated quick open/exit cycles.
 const THREAD_RECONCILE_TTL_MS = 10_000;
 const __LAST_THREAD_RECONCILE_AT = new Map<number, number>();
-
-// Trim a message array (oldest-first) to the newest MAX_MOUNTED_MESSAGES when
-// it grows past the bound. Only ever DROPS from the head (oldest), so the
-// visible bottom of the (inverted) list is untouched and `loadOlder`'s
-// oldest-real-id cursor still resolves. Returns the same reference when no trim
-// is needed so it never forces an extra re-render.
-function capNewestWindow(msgs: ChatMessage[]): ChatMessage[] {
-  if (msgs.length <= MAX_MOUNTED_MESSAGES) return msgs;
-  return msgs.slice(msgs.length - MAX_MOUNTED_MESSAGES);
-}
-
-/**
- * Keep the oldest side of a loaded window while the user pages backwards.
- * The complementary newer rows are retained outside React state and restored
- * when the user jumps back to the latest messages.
- */
-function capOldestWindow(msgs: ChatMessage[]): ChatMessage[] {
-  if (msgs.length <= MAX_MOUNTED_MESSAGES) return msgs;
-  return msgs.slice(0, MAX_MOUNTED_MESSAGES);
-}
-
-function messageIdentity(message: ChatMessage): string {
-  return message.clientMsgId ? `c:${message.clientMsgId}` : `i:${message.id}`;
-}
-
-function mergeMessagesChronologically(
-  ...groups: ChatMessage[][]
-): ChatMessage[] {
-  const byIdentity = new Map<string, ChatMessage>();
-  for (const group of groups) {
-    for (const message of group) {
-      byIdentity.set(messageIdentity(message), message);
-    }
-  }
-  return [...byIdentity.values()].sort((a, b) => {
-    const timeDiff =
-      new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-    if (Number.isFinite(timeDiff) && timeDiff !== 0) return timeDiff;
-    return Number(a.id) - Number(b.id);
-  });
-}
 
 /**
  * Normalize the server's file-upload response into a snake_case ChatMessage.
@@ -489,24 +436,17 @@ export function useChatThread() {
   // into the seed so they reappear as pending bubbles after exiting and
   // reopening the chat — see mergeOutboxIntoMessages.
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
-    capNewestWindow(
-      mergeOutboxIntoMessages(
-        initialCachedMessages || [],
-        convId,
-        user?.id,
-        user?.full_name,
-      ),
+    mergeOutboxIntoMessages(
+      initialCachedMessages || [],
+      convId,
+      user?.id,
+      user?.full_name,
     ),
   );
   // Pagination reads the latest window without making loadOlder depend on the
   // entire array (and therefore change callback identity after every page).
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-  // When paging beyond the bounded React window, keep the displaced NEWER rows
-  // in a ref. Refs do not participate in rendering/grouping/FlatList diffs, so
-  // the JS cost remains bounded while "scroll to latest" can restore the newest
-  // window without another network round trip.
-  const newerMessagesRef = useRef<ChatMessage[]>([]);
   const [loading, setLoading] = useState(
     () => !initialCachedMessages || initialCachedMessages.length === 0,
   );
@@ -725,12 +665,8 @@ export function useChatThread() {
   );
   const typingSentAt = useRef(0);
   const typingClear = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // True while older messages are being prepended, so the auto
-  // scroll-to-end on content-size change doesn't yank the list to the
-  // bottom and defeat pagination.
-  const prependingRef = useRef(false);
   // Synchronous pagination lock. React state is not updated until the next
-  // render, so onScroll and onEndReached could previously both observe
+  // render, so repeated start-reached events could otherwise observe
   // loadingOlder=false and issue the same cursor request in one frame.
   const olderRequestCursorRef = useRef<number | null>(null);
   // TextInput handle so we can blur/focus when switching between the system
@@ -831,22 +767,6 @@ export function useChatThread() {
   // the bottom and preserves the visible position when history is prepended.
   const scrollToEnd = useCallback((animated = false) => {
     atBottomRef.current = true;
-    if (newerMessagesRef.current.length > 0) {
-      const displacedNewer = newerMessagesRef.current;
-      newerMessagesRef.current = [];
-      setMessages((current) => {
-        const restored = capNewestWindow(
-          mergeMessagesChronologically(current, displacedNewer),
-        );
-        return restored;
-      });
-      // The restored rows do not exist in the recycler until the state commit.
-      // Waiting two frames makes scrollToEnd target the new content extent.
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated })),
-      );
-      return;
-    }
     listRef.current?.scrollToEnd({ animated });
   }, []);
 
@@ -963,18 +883,11 @@ export function useChatThread() {
         user?.full_name,
       );
       setMessages((prev) => {
-        // A newest-page reconcile must not replace the historical window the
-        // user is currently reading. Refresh the off-screen newer window instead
-        // and leave React/FlatList untouched until "scroll to latest".
-        if (newerMessagesRef.current.length > 0) {
-          newerMessagesRef.current = capNewestWindow(
-            mergeMessagesChronologically(newerMessagesRef.current, refreshed),
-          );
-          return prev;
-        }
-        const merged = capNewestWindow(
-          mergeNewestPageIntoLoadedThread(prev, refreshed),
-        );
+        // Keep already-loaded history and reconcile the newest server page into
+        // the same continuous oldest-first collection. FlashList virtualizes the
+        // native cells; removing rows from the opposite edge here would make the
+        // latest messages unreachable by manual scrolling.
+        const merged = mergeNewestPageIntoLoadedThread(prev, refreshed);
         return messageArraysEquivalentForThread(prev, merged) ? prev : merged;
       });
       // Persist the freshest page so the next open paints instantly from disk.
@@ -1092,7 +1005,6 @@ export function useChatThread() {
     // race. The cursor also makes the guard explicit in profiler traces.
     olderRequestCursorRef.current = oldest.id;
     setLoadingOlder(true);
-    prependingRef.current = true;
     try {
       const { data } = await getMessages(convId, oldest.id);
       // Same reply-alias normalization as load() so prepended history keeps its
@@ -1102,23 +1014,10 @@ export function useChatThread() {
       if (older.length > 0) {
         setMessages((prev) => {
           const have = new Set(prev.map((m) => m.id));
-          const merged = [
+          return [
             ...older.filter((m) => !have.has(m.id)),
             ...prev,
           ];
-          if (merged.length <= MAX_MOUNTED_MESSAGES) return merged;
-
-          // Paging backwards shifts the bounded render window towards history.
-          // Retain rows displaced from its NEWER edge in a non-rendering ref so
-          // repeated pagination never grows React state without bound.
-          const displacedNewer = merged.slice(MAX_MOUNTED_MESSAGES);
-          newerMessagesRef.current = capNewestWindow(
-            mergeMessagesChronologically(
-              displacedNewer,
-              newerMessagesRef.current,
-            ),
-          );
-          return capOldestWindow(merged);
         });
       }
     } catch {
@@ -1126,10 +1025,6 @@ export function useChatThread() {
     } finally {
       olderRequestCursorRef.current = null;
       setLoadingOlder(false);
-      // Give the list a beat to settle before re-enabling stick-to-end.
-      setTimeout(() => {
-        prependingRef.current = false;
-      }, 350);
     }
   }, [convId, hasMore, loadingOlder]);
 
@@ -1385,7 +1280,6 @@ export function useChatThread() {
       // Conversation cleared by a peer — empty the list (mirrors web).
       if (msg.type === "chat_cleared") {
         if (Number(d.conversationId) !== convId) return;
-        newerMessagesRef.current = [];
         setMessages([]);
         setPinnedMsgs([]);
         setHasMore(false);
@@ -1420,27 +1314,6 @@ export function useChatThread() {
       if (!isFocusedRef.current) return;
       setMessages((prev) => {
         const realtimeMessage = mapRealtimeChatMessage(d);
-        // While reading a displaced historical window, append/reconcile live
-        // traffic in the off-screen NEWER window. Publishing it into `prev`
-        // would either jump the viewport or mix non-contiguous history.
-        if (newerMessagesRef.current.length > 0) {
-          const idx = newerMessagesRef.current.findIndex(
-            (m) =>
-              (d.clientMsgId && m.clientMsgId === d.clientMsgId) ||
-              m.id === d.id,
-          );
-          if (idx >= 0) {
-            const copy = [...newerMessagesRef.current];
-            copy[idx] = realtimeMessage;
-            newerMessagesRef.current = copy;
-          } else {
-            newerMessagesRef.current = capNewestWindow([
-              ...newerMessagesRef.current,
-              realtimeMessage,
-            ]);
-          }
-          return prev;
-        }
         if (d.clientMsgId) {
           const idx = prev.findIndex((m) => m.clientMsgId === d.clientMsgId);
           if (idx >= 0) {
@@ -1450,15 +1323,7 @@ export function useChatThread() {
           }
         }
         if (prev.some((m) => m.id === d.id)) return prev;
-        // Append the new message, then TRIM the oldest so a long-lived focused
-        // thread's in-memory array can't grow without bound (see
-        // capNewestWindow / MAX_MOUNTED_MESSAGES). Dropping only from the head
-        // keeps the newest end of the list intact; older history
-        // remains reachable via loadOlder / the on-disk cache.
-        return capNewestWindow([
-          ...prev,
-          realtimeMessage,
-        ]);
+        return [...prev, realtimeMessage];
       });
       markReadAndSync();
       // Acknowledge delivery so the sender sees "✓✓ delivered" (mirrors the
@@ -1503,32 +1368,26 @@ export function useChatThread() {
       createdAt,
       attempts: 0,
     });
-    // Optimistic append.
-    // Sending always returns to the newest window. Capture displaced rows before
-    // clearing the ref: React may execute functional state updaters later, after
-    // this event handler returns.
-    const displacedNewer = newerMessagesRef.current;
-    newerMessagesRef.current = [];
-    setMessages((prev) =>
-      capNewestWindow([
-        ...mergeMessagesChronologically(prev, displacedNewer),
-        {
-          id: -Date.now(),
-          sender_id: user.id,
-          sender_name: user.full_name,
-          content,
-          created_at: createdAt,
-          reply_to_id: replyToId ?? null,
-          reply_to_content: replyTo?.content ?? null,
-          reply_to_sender_name: replyTo?.sender_name ?? null,
-          reply_to_file_url: replyTo?.file_url ?? null,
-          reply_to_file_type: replyTo?.file_type ?? null,
-          reply_to_file_name: replyTo?.file_name ?? null,
-          _pending: true,
-          clientMsgId,
-        },
-      ]),
-    );
+    // Optimistic append. Keep the loaded history intact; sending and scrolling
+    // must never swap the list's data window underneath FlashList.
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: -Date.now(),
+        sender_id: user.id,
+        sender_name: user.full_name,
+        content,
+        created_at: createdAt,
+        reply_to_id: replyToId ?? null,
+        reply_to_content: replyTo?.content ?? null,
+        reply_to_sender_name: replyTo?.sender_name ?? null,
+        reply_to_file_url: replyTo?.file_url ?? null,
+        reply_to_file_type: replyTo?.file_type ?? null,
+        reply_to_file_name: replyTo?.file_name ?? null,
+        _pending: true,
+        clientMsgId,
+      },
+    ]);
     const sentNow = socket.send("chat_message", {
       conversationId: convId,
       content,
@@ -2655,7 +2514,6 @@ export function useChatThread() {
         isDanger: true,
         onConfirm: () => {
           setClearedAt(convId);
-          newerMessagesRef.current = [];
           setMessages([]);
           setPinnedMsgs([]);
           setHasMore(false);
@@ -3487,7 +3345,6 @@ export function useChatThread() {
     listExtraData,
     scrollToEnd,
     onListScroll,
-    prependingRef,
     hasMore,
     loadOlder,
     loadingOlder,
