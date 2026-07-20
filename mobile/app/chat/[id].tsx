@@ -1132,9 +1132,16 @@ function ChatList({
         // on open). A smaller initial batch + tighter window mounts far fewer
         // rows during the transition while still keeping ~5 screens of history
         // mounted each way so fast flings don't reveal blank gaps.
+        //
+        // The window is also kept tight because each row can carry a downsampled
+        // photo/video (see AuthedImage -> expo-image). Bounding how many media
+        // rows mount/decode at once during a fling — together with expo-image's
+        // memory-evicting cache — is what keeps media-thread scroll smooth and
+        // prevents the out-of-memory crash; expo-image's fast placeholder means
+        // the smaller window never reveals blank gaps.
         initialNumToRender={10}
-        maxToRenderPerBatch={8}
-        windowSize={5}
+        maxToRenderPerBatch={5}
+        windowSize={3}
         updateCellsBatchingPeriod={32}
         // In an inverted list the FOOTER renders at the visual TOP, so the
         // "load earlier" spinner/button belongs here (not the header).

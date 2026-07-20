@@ -101,6 +101,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   plugins: [
     "expo-router",
+    // expo-image powers the chat media bubbles (see src/components/AuthedImage).
+    // Its native decoder DOWNSAMPLES large photos to the display size instead of
+    // decoding them at full resolution the way the stock RN <Image> did — this
+    // is the fix for the chat-scroll jank/freeze and the out-of-memory crashes
+    // when scrolling back through media-heavy history.
+    "expo-image",
+
     // Signal-style launch splash: the brand mark centered (small) on a solid
     // brand-navy background, matching Signal-Android's Android-12 SplashScreen
     // (windowSplashScreenBackground = brand color, windowSplashScreenAnimatedIcon

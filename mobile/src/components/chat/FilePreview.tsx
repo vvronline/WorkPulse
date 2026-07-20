@@ -363,6 +363,10 @@ export default function FilePreview({
               uri={resolved}
               style={[styles.fileImage, box]}
               resizeMode="cover"
+              // Recycle the underlying expo-image view/bitmap by the stable file
+              // url as FlatList reuses this cell — so scrolling a media thread
+              // never holds two full decodes for one row (scroll-memory budget).
+              recyclingKey={resolved}
             />
           )}
           {/* Single upload indicator overlaid INSIDE the media card (a circular
