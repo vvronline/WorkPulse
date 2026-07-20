@@ -5,10 +5,10 @@ import {
   Keyboard,
   Vibration,
   View,
-  type FlatList,
   type TextInput,
   useWindowDimensions,
 } from "react-native";
+import type { FlashListRef } from "@shopify/flash-list";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
@@ -116,14 +116,14 @@ const INITIAL_THREAD_PAGE_SIZE = 50;
 // Hard upper bound on how many messages stay MOUNTED in React state for a
 // single thread. A long-lived thread (left open while messages keep arriving,
 // or after paging up a lot) otherwise grows this array without limit — every
-// `messagesReversed` recompute, grouping pass and FlatList extraData diff then
+// visible-message recompute, grouping pass and list extraData diff then
 // scales with total history, and the heap climbs for as long as the thread is
 // alive. Signal keeps a bounded sliding window of rows in memory and pages the
 // rest from disk. We cap the NEWEST-message (append) growth here; older history
 // is still reachable via `loadOlder` (cursor pagination) / the on-disk cache,
 // which re-fetches when the user scrolls back up. Chosen comfortably above a
 // full screen of bubbles so trimming is never visible at the bottom.
-const MAX_MOUNTED_MESSAGES = 200;
+const MAX_MOUNTED_MESSAGES = 120;
 
 // Skip repaying a full messages/read-receipts/pins reconcile when the same
 // conversation is reopened quickly. With single-active route replacement the
@@ -498,6 +498,10 @@ export function useChatThread() {
       ),
     ),
   );
+  // Pagination reads the latest window without making loadOlder depend on the
+  // entire array (and therefore change callback identity after every page).
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   // When paging beyond the bounded React window, keep the displaced NEWER rows
   // in a ref. Refs do not participate in rendering/grouping/FlatList diffs, so
   // the JS cost remains bounded while "scroll to latest" can restore the newest
@@ -508,7 +512,7 @@ export function useChatThread() {
   );
   // "Delete for me" hidden ids (local-only, persisted per conversation). The
   // source `messages` array stays intact for server reconciliation; the
-  // rendered list filters these out (see `messagesReversed`).
+  // rendered list filters these out (see `visibleMessages`).
   const [locallyDeleted, setLocallyDeleted] = useState<Set<number>>(
     () => new Set(getLocalDeletedIds(convId)),
   );
@@ -681,19 +685,13 @@ export function useChatThread() {
   // Ref mirror of isRecordingActive — guards against double-start re-entrancy
   // in the recording handlers without depending on the stale polled value.
   const recordingRef = useRef(false);
-  const listRef = useRef<FlatList<ChatMessage>>(null);
-  // Whether the (inverted) list is currently near the visual bottom (newest
-  // message). In an inverted list offset 0 IS the bottom, so "near bottom" means
-  // a small contentOffset.y. We only auto-scroll to the newest message on an
+  const listRef = useRef<FlashListRef<ChatMessage>>(null);
+  // Whether the list is currently near the visual bottom (newest message).
+  // We only auto-scroll to the newest message on an
   // INCOMING message when the user is already at the bottom — otherwise we keep
   // their scroll position (Signal-style) and let the floating "scroll to latest"
   // pill surface instead of yanking them down mid-read.
   const atBottomRef = useRef(true);
-  // One-shot guard so we only force a jump-to-bottom on the very FIRST cold
-  // paint of a conversation. The inverted list is already structurally
-  // bottom-pinned, so re-scrolling on every background `load()` reconcile just
-  // caused a visible "settle"/jump on open.
-  const didInitialScrollRef = useRef(false);
   // Whether THIS thread screen is the one currently focused. Expo Router keeps
   // previously-visited `chat/[id]` screens mounted in the stack, so without this
   // gate every backgrounded thread's socket handler would still run the full
@@ -829,42 +827,42 @@ export function useChatThread() {
     }
   }, [kbInset, emojiKeyboardOpen]);
 
-  // Scroll to the newest message. The message list is an INVERTED FlatList
-  // (Signal-Android model: newest row pinned to the visual bottom), so the
-  // "bottom" is offset 0. With an inverted list the newest message is already
-  // structurally at the bottom — the keyboard opening/closing or sending a new
-  // message can NEVER push it under the composer — so this is just a nicety for
-  // explicit "jump to latest" cases (send, incoming, typing-indicator appears).
+  // Scroll to the newest message. FlashList renders the oldest-first data from
+  // the bottom and preserves the visible position when history is prepended.
   const scrollToEnd = useCallback((animated = false) => {
     atBottomRef.current = true;
     if (newerMessagesRef.current.length > 0) {
+      const displacedNewer = newerMessagesRef.current;
+      newerMessagesRef.current = [];
       setMessages((current) => {
         const restored = capNewestWindow(
-          mergeMessagesChronologically(current, newerMessagesRef.current),
+          mergeMessagesChronologically(current, displacedNewer),
         );
-        newerMessagesRef.current = [];
         return restored;
       });
+      // The restored rows do not exist in the recycler until the state commit.
+      // Waiting two frames makes scrollToEnd target the new content extent.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated })),
+      );
+      return;
     }
-    listRef.current?.scrollToOffset({ offset: 0, animated });
+    listRef.current?.scrollToEnd({ animated });
   }, []);
 
-  // Track whether the (inverted) list is near the visual bottom. The chat
-  // screen forwards the FlatList's onScroll here. In an inverted list offset 0
-  // is the bottom (newest), so "near bottom" is a small contentOffset.y. This
+  // Track whether the list is near the visual bottom. The chat screen forwards
+  // the already-computed distance from the bottom here. This
   // gates the incoming-message auto-scroll so a new message never yanks the
   // user down while they're reading history (Signal keeps the position and
   // surfaces the "scroll to latest" pill instead).
-  const onListScroll = useCallback((y: number) => {
-    atBottomRef.current = y <= 80;
+  const onListScroll = useCallback((distanceFromBottom: number) => {
+    atBottomRef.current = distanceFromBottom <= 80;
   }, []);
 
-  // When the peer STARTS typing, the typing-indicator row appears below the
-  // list and shrinks the FlatList — which can crop/hide the newest bubble.
-  // Re-anchor to the bottom so the last message stays fully visible above the
-  // typing indicator (mirrors the web auto-scroll on typing).
+  // When the peer starts typing, keep the newest bubble visible only if the user
+  // is already near latest. Never restore/jump away from a historical window.
   useEffect(() => {
-    if (peerTyping) scrollToEnd(true);
+    if (peerTyping && atBottomRef.current) scrollToEnd(true);
   }, [peerTyping, scrollToEnd]);
 
   // Register/unregister a bubble's host node so the reaction bar can measure
@@ -1012,11 +1010,6 @@ export function useChatThread() {
       const loadedAt = Date.now();
       lastLoadedAtRef.current = loadedAt;
       __LAST_THREAD_RECONCILE_AT.set(convId, loadedAt);
-      // Inverted FlatList is structurally bottom-pinned: index 0 is already the
-      // visual bottom/newest message. Do not force scrollToEnd() on open/reconcile
-      // because even non-animated native offset writes make the scrollbar flash
-      // and look like the chat is auto-scrolling while it opens.
-      didInitialScrollRef.current = true;
     } catch {
       /* ignore */
     } finally {
@@ -1093,7 +1086,7 @@ export function useChatThread() {
   const loadOlder = useCallback(async () => {
     if (loadingOlder || !hasMore || olderRequestCursorRef.current != null) return;
     // Oldest REAL (server-assigned) id — skip optimistic negative ids.
-    const oldest = messages.find((m) => m.id > 0);
+    const oldest = messagesRef.current.find((m) => m.id > 0);
     if (!oldest) return;
     // Acquire before setState so two edge callbacks in the same JS turn cannot
     // race. The cursor also makes the guard explicit in profiler traces.
@@ -1138,7 +1131,7 @@ export function useChatThread() {
         prependingRef.current = false;
       }, 350);
     }
-  }, [convId, hasMore, loadingOlder, messages]);
+  }, [convId, hasMore, loadingOlder]);
 
   // Resolve the 1:1 peer's status for the header badge.
   //
@@ -1460,7 +1453,7 @@ export function useChatThread() {
         // Append the new message, then TRIM the oldest so a long-lived focused
         // thread's in-memory array can't grow without bound (see
         // capNewestWindow / MAX_MOUNTED_MESSAGES). Dropping only from the head
-        // keeps the newest bottom of the inverted list intact; older history
+        // keeps the newest end of the list intact; older history
         // remains reachable via loadOlder / the on-disk cache.
         return capNewestWindow([
           ...prev,
@@ -2368,14 +2361,11 @@ export function useChatThread() {
   }
 
   function jumpToMessage(messageId: number) {
-    // The list is INVERTED, so it is fed the reversed messages array — convert
-    // the natural index to the reversed index before scrolling.
     const idx = messages.findIndex((m) => m.id === messageId);
     if (idx < 0) return;
-    const invertedIdx = messages.length - 1 - idx;
     try {
-      listRef.current?.scrollToIndex({
-        index: invertedIdx,
+      void listRef.current?.scrollToIndex({
+        index: idx,
         animated: true,
         viewPosition: 0.3,
       });
@@ -2459,7 +2449,7 @@ export function useChatThread() {
     }, [handleThreadBack]),
   );
 
-  // Scroll the (inverted) list to a matched message and flash its highlight.
+  // Scroll the list to a matched message and flash its highlight.
   // Re-applies highlightedId even for the same id by briefly clearing it so the
   // bubble's highlight effect re-fires when stepping onto the same match twice.
   function focusMatch(messageId: number) {
@@ -3278,12 +3268,9 @@ export function useChatThread() {
     }
   }
 
-  // Newest-first copy for the INVERTED FlatList (Signal-Android model). The
-  // source `messages` stays oldest-first (server order) for all the existing
-  // logic; the list renders this reversed view so index 0 is the newest message
-  // pinned to the visual bottom — the keyboard or a new message can never push
-  // it under the composer, and no scroll math is needed to "stick to bottom".
-  const messagesReversed = useMemo(() => {
+  // Oldest-first visible page for FlashList. Keeping server order avoids the
+  // transform-heavy inverted-list path and lets FlashList recycle native cells.
+  const visibleMessages = useMemo(() => {
     // PERF: resolve the "clear chat" cutoff ONCE per recompute instead of
     // calling isBeforeClearedAt() per message. isBeforeClearedAt() does a
     // synchronous MMKV read + a Date parse of the cutoff EVERY call, so on a
@@ -3298,7 +3285,7 @@ export function useChatThread() {
     const cutoffMs = cutoffIso ? new Date(cutoffIso).getTime() : NaN;
     const hasCutoff = !Number.isNaN(cutoffMs);
     const out: ChatMessage[] = [];
-    for (let i = messages.length - 1; i >= 0; i--) {
+    for (let i = 0; i < messages.length; i++) {
       const m = messages[i];
       // "Delete for me" — hidden message ids on this device.
       if (locallyDeleted.has(Number(m.id))) continue;
@@ -3320,7 +3307,7 @@ export function useChatThread() {
   // EVERY visible row on EVERY render — each row parsing two `new Date(...)`
   // timestamps. On a busy thread that is hundreds of Date parses per render pass
   // (scroll, typing pulse, receipt update…), all on the JS thread. We compute it
-  // ONCE per `messagesReversed` change and let `renderItem` do an O(1) lookup,
+  // ONCE per `visibleMessages` change and let `renderItem` do an O(1) lookup,
   // keyed by the same stable id the list keys by (clientMsgId ?? id). Because
   // the memoized MessageBubble's inputs are unchanged, this also stops rows from
   // re-binding when unrelated state changes.
@@ -3337,11 +3324,10 @@ export function useChatThread() {
       string,
       { firstInGroup: boolean; lastInGroup: boolean; showDaySeparator: boolean }
     >();
-    for (let index = 0; index < messagesReversed.length; index++) {
-      const item = messagesReversed[index];
-      // INVERTED list: older (above) is index+1, newer (below) is index-1.
-      const prev = messagesReversed[index + 1]; // older, above
-      const next = messagesReversed[index - 1]; // newer, below
+    for (let index = 0; index < visibleMessages.length; index++) {
+      const item = visibleMessages[index];
+      const prev = visibleMessages[index - 1]; // older, above
+      const next = visibleMessages[index + 1]; // newer, below
       const key = item.clientMsgId ?? String(item.id);
       map.set(key, {
         firstInGroup: !within(prev, item),
@@ -3350,7 +3336,7 @@ export function useChatThread() {
       });
     }
     return map;
-  }, [messagesReversed]);
+  }, [visibleMessages]);
 
   const latestPin = pinnedMsgs[0];
 
@@ -3391,7 +3377,7 @@ export function useChatThread() {
       return otherReadTimes.length - low;
     };
 
-    for (const message of messagesReversed) {
+    for (const message of visibleMessages) {
       const key = message.clientMsgId ?? String(message.id);
       let phase: MessageDeliveryPhase;
       if (message._pending || message.id < 0) {
@@ -3418,7 +3404,7 @@ export function useChatThread() {
       phases.set(key, phase);
     }
     return phases;
-  }, [messagesReversed, participantCount, readReceiptTimes, user?.id]);
+  }, [visibleMessages, participantCount, readReceiptTimes, user?.id]);
 
   // FlatList extraData. Keep this Signal-style targeted and O(1): message
   // content/reaction/pin/delete changes already arrive through immutable
@@ -3494,7 +3480,7 @@ export function useChatThread() {
     // list
     loading,
     messages,
-    messagesReversed,
+    visibleMessages,
     rowMeta,
     deliveryPhaseByKey,
     listRef,

@@ -137,6 +137,14 @@ function MessageBubbleImpl({
   const messageRef = useRef(message);
   const swipeEnabledRef = useRef(swipeEnabled);
 
+  // FlashList recycles the component instance for a different message. Shared
+  // values belong to that instance, so clear any unfinished swipe immediately
+  // when its row identity changes instead of leaking the old transform.
+  useEffect(() => {
+    translateX.value = 0;
+    iconProgress.value = 0;
+  }, [message.id, message.clientMsgId, iconProgress, translateX]);
+
   useEffect(() => {
     replyRef.current = onReply;
     messageRef.current = message;
@@ -194,8 +202,10 @@ function MessageBubbleImpl({
         withTiming(1, { duration: 220 }),
         withTiming(0, { duration: 900 }),
       );
+    } else {
+      highlight.value = 0;
     }
-  }, [highlighted, highlight]);
+  }, [message.id, message.clientMsgId, highlighted, highlight]);
   const highlightAnim = useAnimatedStyle(() => ({
     backgroundColor: interpolateColor(
       highlight.value,

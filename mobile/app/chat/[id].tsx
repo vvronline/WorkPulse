@@ -44,6 +44,7 @@ import Animated, {
   FadeOut,
   FadeOutLeft,
 } from "react-native-reanimated";
+import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import ChatAvatar from "../../src/components/ChatAvatar";
 import GroupCompositeAvatar from "../../src/components/GroupCompositeAvatar";
 import ReplyPreview from "../../src/components/chat/ReplyPreview";
@@ -197,7 +198,7 @@ function ConversationBody() {
     };
   }, [c.convId]);
 
-  const hasCachedRows = c.messagesReversed.length > 0;
+  const hasCachedRows = c.visibleMessages.length > 0;
   const showInitialSpinner = c.loading && !hasCachedRows;
   const canRenderThread = hasCachedRows || threadBodyReady || !c.loading;
 
@@ -810,7 +811,6 @@ function ConversationBody() {
  * `extraData`, `removeClippedSubviews={false}` and `maintainVisibleContentPosition`
  * settings are load-bearing — see the inline comments.
  */
-import { FlatList } from "react-native";
 import type { ChatMessage } from "../../src/features";
 import CallSystemMessage from "../../src/components/chat/CallSystemMessage";
 
@@ -826,8 +826,7 @@ function ChatList({
   styles: ReturnType<typeof makeStyles>;
   theme: Theme;
 }) {
-  // Signal-style "scroll to bottom" pill. In the INVERTED list, offset 0 is the
-  // visual bottom (newest message). Once the user scrolls up past a threshold a
+  // Signal-style "scroll to bottom" pill. Once the user scrolls up past a threshold a
   // floating chevron fades in; tapping it smooth-scrolls back to the newest
   // message.
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -894,16 +893,17 @@ function ChatList({
   // per row (two `new Date(...)` parses each) is now precomputed ONCE per page in
   // the hook (`c.rowMeta`) and looked up here in O(1) — mirroring how Signal's
   // ConversationAdapter resolves presentation when a page is built, not on bind.
-  const { rowMeta, deliveryPhaseByKey, messagesReversed, user, starredIds } = c;
-  // Identity of the NEWEST message (index 0 of the inverted list). Only this row
+  const { rowMeta, deliveryPhaseByKey, visibleMessages, user, starredIds } = c;
+  // Identity of the NEWEST message. Only this row
   // is allowed to play the FadeIn enter animation — see the comment in
   // MessageBubble. Gating on the newest id (instead of a global `entryAnimReady`
   // flag applied to every row) means recycled rows scrolling into the FlatList
   // window never replay their fade, which — combined with removing the per-row
   // LinearTransition spring — kills the recursive Reanimated frame flood.
   const newestKey =
-    messagesReversed.length > 0
-      ? (messagesReversed[0].clientMsgId ?? String(messagesReversed[0].id))
+    visibleMessages.length > 0
+      ? (visibleMessages[visibleMessages.length - 1].clientMsgId ??
+        String(visibleMessages[visibleMessages.length - 1].id))
       : null;
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -911,10 +911,14 @@ function ChatList({
       const y = contentOffset.y;
       const model = scrollModelRef.current;
 
+      const distanceFromBottom = Math.max(
+        0,
+        contentSize.height - layoutMeasurement.height - y,
+      );
       // This ref-only write is the only work required every frame.
-      model.onListScroll(y);
+      model.onListScroll(distanceFromBottom);
 
-      const shouldShow = y > 400;
+      const shouldShow = distanceFromBottom > 400;
       if (shouldShow !== showScrollBtnRef.current) {
         showScrollBtnRef.current = shouldShow;
         setShowScrollBtn(shouldShow);
@@ -926,8 +930,7 @@ function ChatList({
       const now = Date.now();
       if (now - lastOlderEdgeCheckRef.current < 120) return;
       lastOlderEdgeCheckRef.current = now;
-      const distanceToOlderEdge =
-        contentSize.height - layoutMeasurement.height - y;
+      const distanceToOlderEdge = y;
       if (
         scrollReadyRef.current &&
         distanceToOlderEdge < 700 &&
@@ -941,9 +944,25 @@ function ChatList({
     [],
   );
 
-  const handleEndReached = useCallback(() => {
+  const handleStartReached = useCallback(() => {
     const model = scrollModelRef.current;
     if (!model.prependingRef.current) void model.loadOlder();
+  }, []);
+
+  const maintainVisiblePosition = useMemo(
+    () => ({
+      startRenderingFromBottom: true,
+      autoscrollToBottomThreshold: 80,
+      animateAutoScrollToBottom: false,
+    }),
+    [],
+  );
+  const getMessageType = useCallback((item: ChatMessage) => {
+    if (item.format_type === "system") {
+      return item.metadata?.type === "call" ? "call" : "system";
+    }
+    if (item.file_url) return "media";
+    return "text";
   }, []);
 
   const renderItem = useCallback(
@@ -964,11 +983,6 @@ function ChatList({
       if (item.format_type === "system" && item.metadata?.type === "call") {
         return (
           <View>
-            <CallSystemMessage
-              message={item}
-              userId={user?.id}
-              onCallBack={c.startCall}
-            />
             {showDaySeparator ? (
               <View style={styles.daySeparator}>
                 <View style={styles.dayPill}>
@@ -978,6 +992,11 @@ function ChatList({
                 </View>
               </View>
             ) : null}
+            <CallSystemMessage
+              message={item}
+              userId={user?.id}
+              onCallBack={c.startCall}
+            />
           </View>
         );
       }
@@ -988,9 +1007,6 @@ function ChatList({
         const label = (item.metadata?.text as string) || item.content || "";
         return (
           <View>
-            <View style={styles.sysWrap}>
-              <Text style={styles.sysText}>{label}</Text>
-            </View>
             {showDaySeparator ? (
               <View style={styles.daySeparator}>
                 <View style={styles.dayPill}>
@@ -1000,11 +1016,23 @@ function ChatList({
                 </View>
               </View>
             ) : null}
+            <View style={styles.sysWrap}>
+              <Text style={styles.sysText}>{label}</Text>
+            </View>
           </View>
         );
       }
       return (
         <View>
+          {showDaySeparator ? (
+            <View style={styles.daySeparator}>
+              <View style={styles.dayPill}>
+                <Text style={styles.dayPillText}>
+                  {fmtDaySeparator(item.created_at)}
+                </Text>
+              </View>
+            </View>
+          ) : null}
           <MessageBubble
             message={item}
             mine={mine}
@@ -1030,15 +1058,6 @@ function ChatList({
             onJumpToReply={c.jumpToReply}
             animateEntry={entryAnimReady && isNewest}
           />
-          {showDaySeparator ? (
-            <View style={styles.daySeparator}>
-              <View style={styles.dayPill}>
-                <Text style={styles.dayPillText}>
-                  {fmtDaySeparator(item.created_at)}
-                </Text>
-              </View>
-            </View>
-          ) : null}
         </View>
       );
     },
@@ -1070,24 +1089,10 @@ function ChatList({
   );
 
   return (
-    // NOTE: this list stays on the stock FlatList because it is INVERTED — the
-    // Signal-Android bottom-pinned model below depends on `inverted`, which
-    // FlashList v2 dropped. The big perf win here comes from the memoized
-    // MessageBubble (see src/components/chat/MessageBubble.tsx) plus the
-    // windowing props below; the conversation LIST (non-inverted) uses
-    // FlashList instead. See app/(tabs)/chat.tsx.
     <View style={styles.listWrap}>
-      <FlatList
-        ref={c.listRef as React.RefObject<FlatList<ChatMessage>>}
-        // INVERTED list (Signal-Android model). The data is newest-first
-        // (`messagesReversed`) and `inverted` flips the visual axis so index 0
-        // sits at the visual BOTTOM. This pins the newest message to the bottom
-        // STRUCTURALLY — opening/closing the keyboard or sending a message can
-        // never push it under the composer, and no scroll math is needed to stick
-        // to the bottom (fixes "last message hides during typing / I have to
-        // scroll down to see my sent message").
-        inverted
-        data={c.messagesReversed}
+      <FlashList
+        ref={c.listRef as React.RefObject<FlashListRef<ChatMessage>>}
+        data={c.visibleMessages}
         extraData={c.listExtraData}
         // Stable row identity across the optimistic→confirmed swap. An optimistic
         // message starts with a temporary NEGATIVE id; when the server confirms it
@@ -1103,49 +1108,18 @@ function ChatList({
         // available column height.
         style={styles.listFlex}
         contentContainerStyle={styles.list}
-        // Track scroll distance from the visual bottom (offset 0 in an inverted
-        // list). Show the "scroll to bottom" pill once the user has scrolled up
+        // Track scroll distance from the visual bottom. Show the button once the user has scrolled up
         // past ~1.5 screens of history.
         onScroll={handleScroll}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
-        onScrollToIndexFailed={() => {
-          setTimeout(() => c.scrollToEnd(false), 200);
-        }}
-        // Older history lives at the visual TOP — which in an inverted list is the
-        // END of the scroll range — so `onEndReached` is the "scrolled up to the
-        // top" trigger. Load the previous page there (replaces the old header
-        // button + onContentSizeChange stick-to-bottom hack).
-        onEndReached={handleEndReached}
-        onEndReachedThreshold={0.4}
-        // Android clips off-screen subviews by default; when a reaction is
-        // toggled the bubble's height GROWS (a new chip row appears). With
-        // clipping on, the freshly-grown region wasn't repainted until the
-        // row scrolled — making the reaction look delayed. Disabling it
-        // forces the chip to paint instantly (matches the web).
-        removeClippedSubviews={false}
-        // Windowing tuned for a SNAPPY open + smooth scrolling (Signal-Android
-        // feel). Each MessageBubble is relatively heavy to mount (a Pan gesture,
-        // several reanimated shared values / animated styles, a GestureDetector),
-        // so mounting a big batch DURING the native slide-in starved the JS
-        // thread and made the destination paint late/half-rendered (the "freeze"
-        // on open). A smaller initial batch + tighter window mounts far fewer
-        // rows during the transition while still keeping ~5 screens of history
-        // mounted each way so fast flings don't reveal blank gaps.
-        //
-        // The window is also kept tight because each row can carry a downsampled
-        // photo/video (see AuthedImage -> expo-image). Bounding how many media
-        // rows mount/decode at once during a fling — together with expo-image's
-        // memory-evicting cache — is what keeps media-thread scroll smooth and
-        // prevents the out-of-memory crash; expo-image's fast placeholder means
-        // the smaller window never reveals blank gaps.
-        initialNumToRender={10}
-        maxToRenderPerBatch={5}
-        windowSize={3}
-        updateCellsBatchingPeriod={32}
-        // In an inverted list the FOOTER renders at the visual TOP, so the
-        // "load earlier" spinner/button belongs here (not the header).
-        ListFooterComponent={
+        onStartReached={handleStartReached}
+        onStartReachedThreshold={0.4}
+        drawDistance={500}
+        maxItemsInRecyclePool={24}
+        maintainVisibleContentPosition={maintainVisiblePosition}
+        getItemType={getMessageType}
+        ListHeaderComponent={
           c.hasMore ? (
             <Pressable
               style={styles.loadOlderBtn}
@@ -1290,8 +1264,7 @@ const makeStyles = (theme: Theme) =>
       fontSize: 10,
       fontFamily: theme.fontMedium,
     },
-    // Wraps the FlatList so the floating scroll-to-bottom pill can be absolutely
-    // positioned over the visual bottom of the (inverted) list.
+    // Wraps the list so the floating scroll-to-bottom pill can be positioned over it.
     listWrap: {
       flex: 1,
       width: "100%",
@@ -1322,16 +1295,10 @@ const makeStyles = (theme: Theme) =>
       shadowOffset: { width: 0, height: 2 },
       elevation: 4,
     },
-    // Signal-style message list padding. NOTE: the list is INVERTED (rotated
-    // 180°), so contentContainerStyle padding is applied in the flipped space —
-    // `paddingTop` here appears at the VISUAL BOTTOM (above the composer) and
-    // `paddingBottom` appears at the VISUAL TOP. We therefore put the larger
-    // breathing-room gap on `paddingTop` so the newest bubble always clears the
-    // composer / typing indicator with a consistent gap.
-    list: { paddingHorizontal: 10, paddingTop: 24, paddingBottom: 8 },
-    // Signal-style centered day-divider pill rendered between messages on a
-    // day boundary. In the INVERTED list this sits visually ABOVE the first
-    // message of each day.
+    // Signal-style message-list padding. The larger bottom gap keeps the newest
+    // bubble comfortably clear of the composer and typing indicator.
+    list: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 24 },
+    // Signal-style centered day-divider pill above the first message of each day.
     daySeparator: {
       alignItems: "center",
       marginVertical: 10,
