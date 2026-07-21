@@ -1079,6 +1079,13 @@ function ChatList({
       <FlashList
         ref={c.listRef as React.RefObject<FlashListRef<ChatMessage>>}
         data={c.visibleMessages}
+        // Messages are oldest-first, so FlashList's default index 0 opens a long
+        // conversation at its oldest loaded row. `startRenderingFromBottom`
+        // bottom-aligns short content but does not select the tail of a
+        // scrollable variable-height list. Start at the final visible row on
+        // mount; FlashList clamps it to the bottom, making the latest message
+        // visible immediately while leaving later history prepends untouched.
+        initialScrollIndex={Math.max(0, c.visibleMessages.length - 1)}
         extraData={c.listExtraData}
         // Stable row identity across the optimistic→confirmed swap. An optimistic
         // message starts with a temporary NEGATIVE id; when the server confirms it
