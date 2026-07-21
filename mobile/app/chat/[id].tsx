@@ -58,6 +58,9 @@ import VoiceRecorderController from "../../src/components/chat/VoiceRecorderCont
 import { useChatThread } from "../../src/components/chat/useChatThread";
 import {
   fmtDaySeparator,
+  isAudioFile,
+  isImageFile,
+  isVideoFile,
   WORK_MODE_LABEL,
 } from "../../src/components/chat/chatUtils";
 
@@ -836,12 +839,14 @@ function ChatList({
   const scrollModelRef = useRef({
     hasMore: c.hasMore,
     loadingOlder: c.loadingOlder,
+    loadOlderError: c.loadOlderError,
     loadOlder: c.loadOlder,
     onListScroll: c.onListScroll,
   });
   scrollModelRef.current = {
     hasMore: c.hasMore,
     loadingOlder: c.loadingOlder,
+    loadOlderError: c.loadOlderError,
     loadOlder: c.loadOlder,
     onListScroll: c.onListScroll,
   };
@@ -916,14 +921,16 @@ function ChatList({
 
   const handleStartReached = useCallback(() => {
     const model = scrollModelRef.current;
-    if (model.hasMore && !model.loadingOlder) void model.loadOlder();
+    // After a network error, avoid an automatic retry loop while the list stays
+    // at the edge. The header remains a deliberate tap-to-retry control.
+    if (model.hasMore && !model.loadingOlder && !model.loadOlderError) {
+      void model.loadOlder();
+    }
   }, []);
 
   const maintainVisiblePosition = useMemo(
     () => ({
       startRenderingFromBottom: true,
-      autoscrollToBottomThreshold: 80,
-      animateAutoScrollToBottom: false,
     }),
     [],
   );
@@ -931,7 +938,16 @@ function ChatList({
     if (item.format_type === "system") {
       return item.metadata?.type === "call" ? "call" : "system";
     }
-    if (item.file_url) return "media";
+    // Separate structurally different attachment trees into their own recycling
+    // pools. Rebinding a video/player cell as a tiny document/text row causes
+    // avoidable layout churn and visible blanking during fast flings.
+    if (item.file_url) {
+      if (item.metadata?.viewOnce) return "view-once";
+      if (isImageFile(item)) return "image";
+      if (isVideoFile(item)) return "video";
+      if (isAudioFile(item)) return "audio";
+      return "file";
+    }
     return "text";
   }, []);
 
@@ -1084,8 +1100,11 @@ function ChatList({
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
         onStartReached={handleStartReached}
-        onStartReachedThreshold={0.4}
-        drawDistance={500}
+        // Start fetching before a fast upward fling reaches the loaded boundary.
+        onStartReachedThreshold={0.8}
+        // Media/reply/reaction rows are expensive and highly variable in height;
+        // render roughly 1–2 phone screens ahead to avoid outrunning the recycler.
+        drawDistance={1000}
         maintainVisibleContentPosition={maintainVisiblePosition}
         getItemType={getMessageType}
         ListHeaderComponent={
@@ -1098,7 +1117,18 @@ function ChatList({
               {c.loadingOlder ? (
                 <ActivityIndicator size="small" color={theme.primary} />
               ) : (
-                <Text style={styles.loadOlderText}>Load earlier messages</Text>
+                <View style={styles.loadOlderContent}>
+                  <Text style={styles.loadOlderText}>
+                    {c.loadOlderError
+                      ? "Retry loading earlier messages"
+                      : "Load earlier messages"}
+                  </Text>
+                  {c.loadOlderError ? (
+                    <Text style={styles.loadOlderError}>
+                      {c.loadOlderError}
+                    </Text>
+                  ) : null}
+                </View>
               )}
             </Pressable>
           ) : null
@@ -1318,5 +1348,14 @@ const makeStyles = (theme: Theme) =>
       fontSize: 12,
       color: theme.primaryLight,
       fontFamily: theme.fontSemiBold,
+    },
+    loadOlderContent: {
+      alignItems: "center",
+      gap: 2,
+    },
+    loadOlderError: {
+      fontSize: 10,
+      color: theme.textSecondary,
+      fontFamily: theme.fontMedium,
     },
   });

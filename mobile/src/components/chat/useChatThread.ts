@@ -333,7 +333,11 @@ function mergeNewestPageIntoLoadedThread(
   current: ChatMessage[],
   newestPage: ChatMessage[],
 ): ChatMessage[] {
-  if (current.length === 0 || newestPage.length === 0) return newestPage;
+  if (current.length === 0) return newestPage;
+  // A transient empty refresh must not erase already-loaded history. An empty
+  // conversation is handled by explicit clear/delete events; the newest-page
+  // reconcile is only allowed to add/update a window it actually received.
+  if (newestPage.length === 0) return current;
   if (current.length <= newestPage.length) return newestPage;
 
   const firstNewest = newestPage[0];
@@ -344,7 +348,11 @@ function mergeNewestPageIntoLoadedThread(
     return m.id === firstNewest.id;
   });
 
-  if (firstIdx <= 0) return newestPage;
+  if (firstIdx === 0) return newestPage;
+  // No overlap means this response cannot safely identify the boundary between
+  // older history and the refreshed tail. Keep the continuous loaded thread;
+  // realtime delivery/cache sync will add genuinely new tail rows separately.
+  if (firstIdx < 0) return current;
 
   const olderHistory = current.slice(0, firstIdx);
   const seen = new Set<string>();
@@ -464,6 +472,7 @@ export function useChatThread() {
     () => (initialCachedMessages?.length || 0) >= INITIAL_THREAD_PAGE_SIZE,
   );
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [loadOlderError, setLoadOlderError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [peerTyping, setPeerTyping] = useState(false);
   const [reactTarget, setReactTarget] = useState<ChatMessage | null>(null);
@@ -632,6 +641,14 @@ export function useChatThread() {
   // their scroll position (Signal-style) and let the floating "scroll to latest"
   // pill surface instead of yanking them down mid-read.
   const atBottomRef = useRef(true);
+  // Tail appends are committed asynchronously. Record scroll intent and execute
+  // it after the new last row is in FlashList; calling scrollToEnd immediately
+  // after setMessages can only reach the old measured end.
+  const pendingTailScrollRef = useRef<{ animated: boolean } | null>(null);
+  // Invalidates async page/reconcile responses after a destructive dataset
+  // change (for example chat_cleared), preventing stale history resurrection.
+  const messageGenerationRef = useRef(0);
+  const latestLoadRequestRef = useRef(0);
   // Whether THIS thread screen is the one currently focused. Expo Router keeps
   // previously-visited `chat/[id]` screens mounted in the stack, so without this
   // gate every backgrounded thread's socket handler would still run the full
@@ -770,6 +787,30 @@ export function useChatThread() {
     listRef.current?.scrollToEnd({ animated });
   }, []);
 
+  const requestTailScroll = useCallback((animated = true) => {
+    pendingTailScrollRef.current = { animated };
+  }, []);
+
+  const newestMessageKey =
+    messages.length > 0
+      ? (messages[messages.length - 1].clientMsgId ??
+        String(messages[messages.length - 1].id))
+      : null;
+
+  // FlashList's old autoscroll threshold treated `80` as 80 VIEWPORTS, not
+  // pixels, and could jump from nearly anywhere on every prepend. Tail scrolling
+  // is now explicit and only armed by a genuine append/send.
+  useEffect(() => {
+    const pending = pendingTailScrollRef.current;
+    if (!pending || newestMessageKey == null) return;
+    pendingTailScrollRef.current = null;
+    const frame = requestAnimationFrame(() => {
+      if (!mountedRef.current) return;
+      scrollToEnd(pending.animated);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [newestMessageKey, scrollToEnd]);
+
   // Track whether the list is near the visual bottom. The chat screen forwards
   // the already-computed distance from the bottom here. This
   // gates the incoming-message auto-scroll so a new message never yanks the
@@ -865,14 +906,23 @@ export function useChatThread() {
       return;
     }
 
+    const requestId = ++latestLoadRequestRef.current;
+    const generation = messageGenerationRef.current;
     try {
       const { data } = await getMessages(convId);
-      if (!mountedRef.current) return;
+      if (
+        !mountedRef.current ||
+        requestId !== latestLoadRequestRef.current ||
+        generation !== messageGenerationRef.current
+      )
+        return;
       // Map the REST reply aliases (reply_content / reply_sender_name /
       // reply_file_*) to the canonical reply_to_* shape so the in-bubble quote
       // doesn't collapse to the generic "Message" when this refresh replaces
       // the optimistic / WS rows (see normalizeFetchedMessage).
-      const normalized = (data || []).map(normalizeFetchedMessage);
+      const normalized = (Array.isArray(data) ? data : []).map(
+        normalizeFetchedMessage,
+      );
       // Re-append any still-pending outbox messages — the server obviously
       // doesn't have them yet, and wholesale-replacing the list without them
       // would make an unsent (offline) message vanish mid-session.
@@ -902,7 +952,12 @@ export function useChatThread() {
       // read colour on the first frame (no delivered→read flip).
       getReadStatus(convId)
         .then((r) => {
-          if (!mountedRef.current) return;
+          if (
+            !mountedRef.current ||
+            requestId !== latestLoadRequestRef.current ||
+            generation !== messageGenerationRef.current
+          )
+            return;
           const map: Record<number, string> = {};
           for (const row of r.data || []) {
             if (row.user_id != null && row.last_read_at) {
@@ -926,7 +981,8 @@ export function useChatThread() {
     } catch {
       /* ignore */
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current && requestId === latestLoadRequestRef.current)
+        setLoading(false);
     }
   }, [
     convId,
@@ -1004,27 +1060,49 @@ export function useChatThread() {
     // Acquire before setState so two edge callbacks in the same JS turn cannot
     // race. The cursor also makes the guard explicit in profiler traces.
     olderRequestCursorRef.current = oldest.id;
+    const generation = messageGenerationRef.current;
     setLoadingOlder(true);
+    setLoadOlderError(null);
     try {
       const { data } = await getMessages(convId, oldest.id);
+      if (!mountedRef.current || generation !== messageGenerationRef.current)
+        return;
       // Same reply-alias normalization as load() so prepended history keeps its
       // quoted-message text instead of collapsing to "Message".
-      const older = (data || []).map(normalizeFetchedMessage);
+      const older = (Array.isArray(data) ? data : []).map(
+        normalizeFetchedMessage,
+      );
       setHasMore(older.length >= 50);
       if (older.length > 0) {
         setMessages((prev) => {
-          const have = new Set(prev.map((m) => m.id));
+          const serverIds = new Set(
+            prev.filter((m) => m.id > 0).map((m) => m.id),
+          );
+          const clientIds = new Set(
+            prev.map((m) => m.clientMsgId).filter(Boolean) as string[],
+          );
           return [
-            ...older.filter((m) => !have.has(m.id)),
+            ...older.filter(
+              (m) =>
+                !serverIds.has(m.id) &&
+                (!m.clientMsgId || !clientIds.has(m.clientMsgId)),
+            ),
             ...prev,
           ];
         });
       }
     } catch {
-      /* ignore */
+      if (mountedRef.current && generation === messageGenerationRef.current) {
+        // Keep hasMore intact: a network failure is not proof that history ended.
+        setLoadOlderError("Could not load earlier messages. Tap to retry.");
+      }
     } finally {
-      olderRequestCursorRef.current = null;
-      setLoadingOlder(false);
+      if (olderRequestCursorRef.current === oldest.id) {
+        olderRequestCursorRef.current = null;
+      }
+      if (mountedRef.current && generation === messageGenerationRef.current) {
+        setLoadingOlder(false);
+      }
     }
   }, [convId, hasMore, loadingOlder]);
 
@@ -1280,9 +1358,15 @@ export function useChatThread() {
       // Conversation cleared by a peer — empty the list (mirrors web).
       if (msg.type === "chat_cleared") {
         if (Number(d.conversationId) !== convId) return;
+        messageGenerationRef.current += 1;
+        latestLoadRequestRef.current += 1;
+        olderRequestCursorRef.current = null;
+        pendingTailScrollRef.current = null;
         setMessages([]);
         setPinnedMsgs([]);
         setHasMore(false);
+        setLoadingOlder(false);
+        setLoadOlderError(null);
         // Drop the on-disk cache too so reopening doesn't resurrect the cleared
         // messages from the instant-render seed.
         clearCachedMessages(convId);
@@ -1339,10 +1423,17 @@ export function useChatThread() {
       // Signal-Android. This removes the "a new message yanks me to the bottom
       // mid-read" jump.
       const isOwn = d.senderId === user?.id;
-      if (isOwn || atBottomRef.current) scrollToEnd(true);
+      if (isOwn || atBottomRef.current) requestTailScroll(true);
     });
     return off;
-  }, [convId, user?.id, loadPinned, markReadAndSync, scrollToEnd, router]);
+  }, [
+    convId,
+    user?.id,
+    loadPinned,
+    markReadAndSync,
+    requestTailScroll,
+    router,
+  ]);
 
   const send = useCallback(() => {
     const content = text.trim();
@@ -1402,8 +1493,8 @@ export function useChatThread() {
     }
     setText("");
     setReplyTo(null);
-    scrollToEnd(true);
-  }, [text, user, convId, replyTo, scrollToEnd]);
+    requestTailScroll(true);
+  }, [text, user, convId, replyTo, requestTailScroll]);
 
   const retryFailedMessage = useCallback(
     (message: ChatMessage) => {
@@ -1461,7 +1552,6 @@ export function useChatThread() {
             mediaUploadControllers.current.delete(id);
             mediaUploadSources.current.delete(id);
             if (mediaUploadControllers.current.size === 0) setUploading(false);
-            scrollToEnd(true);
           })
           .catch((e: any) => {
             mediaUploadControllers.current.delete(id);
@@ -1718,7 +1808,6 @@ export function useChatThread() {
         mediaUploadControllers.current.delete(tempId);
         mediaUploadSources.current.delete(tempId);
         if (mediaUploadControllers.current.size === 0) setUploading(false);
-        scrollToEnd(true);
       } catch (e: any) {
         mediaUploadControllers.current.delete(tempId);
         if (mediaUploadControllers.current.size === 0) setUploading(false);
@@ -1743,7 +1832,7 @@ export function useChatThread() {
         );
       }
     },
-    [convId, scrollToEnd],
+    [convId],
   );
 
   const enqueueMediaUpload = useCallback(
@@ -1787,9 +1876,9 @@ export function useChatThread() {
         },
       ]);
       uploadSingleMedia(tempId, source);
-      scrollToEnd(true);
+      requestTailScroll(true);
     },
-    [scrollToEnd, uploadSingleMedia, user?.full_name, user?.id],
+    [requestTailScroll, uploadSingleMedia, user?.full_name, user?.id],
   );
 
   useMobileConversationDraft({
@@ -2513,10 +2602,16 @@ export function useChatThread() {
         confirmText: "Clear",
         isDanger: true,
         onConfirm: () => {
+          messageGenerationRef.current += 1;
+          latestLoadRequestRef.current += 1;
+          olderRequestCursorRef.current = null;
+          pendingTailScrollRef.current = null;
           setClearedAt(convId);
           setMessages([]);
           setPinnedMsgs([]);
           setHasMore(false);
+          setLoadingOlder(false);
+          setLoadOlderError(null);
           clearCachedMessages(convId);
         },
       });
@@ -3348,6 +3443,7 @@ export function useChatThread() {
     hasMore,
     loadOlder,
     loadingOlder,
+    loadOlderError,
     // bubble
     user,
     starredIds,
