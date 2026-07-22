@@ -834,6 +834,12 @@ function ChatList({
   // message.
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const showScrollBtnRef = useRef(false);
+  // Hide the provisional `initialScrollIndex` paint until FlashList has measured
+  // variable-height rows and the hook has corrected the true tail. This keeps the
+  // latest message visible without restoring the old opening blink.
+  const [initialPositionReady, setInitialPositionReady] = useState(
+    c.visibleMessages.length === 0,
+  );
   // Read changing pagination values through a ref so the native scroll callback
   // and start-reached callback keep one identity while pages update around them.
   const scrollModelRef = useRef({
@@ -889,6 +895,10 @@ function ChatList({
       void model.loadOlder();
     }
   }, []);
+
+  const handleListLoad = useCallback(() => {
+    c.onListLoad(() => setInitialPositionReady(true));
+  }, [c.onListLoad]);
 
   const maintainVisiblePosition = useMemo(
     () => ({
@@ -1054,7 +1064,9 @@ function ChatList({
         keyExtractor={messageKeyExtractor}
         // `flex: 1` is load-bearing: without it the FlatList doesn't claim the
         // available column height.
-        style={styles.listFlex}
+        style={
+          initialPositionReady ? styles.listFlex : styles.listPositioning
+        }
         contentContainerStyle={styles.list}
         // Track scroll distance from the visual bottom. Show the button once the user has scrolled up
         // past ~1.5 screens of history.
@@ -1062,10 +1074,9 @@ function ChatList({
         // Once the user deliberately moves the list, a delayed stale-cache
         // reconcile must preserve that viewport instead of following its tail.
         onScrollBeginDrag={c.onListInteraction}
-        // Do not imperatively call scrollToEnd from `onLoad`: onLoad fires after
-        // the first rows are drawn, so even a non-animated offset write visibly
-        // repaints variable-height threads. Initial positioning is declarative
-        // via initialScrollIndex + startRenderingFromBottom above.
+        // Correct the measured tail once before revealing the list. The initial
+        // index alone can stop early when message rows have variable heights.
+        onLoad={handleListLoad}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
         onStartReached={handleStartReached}
@@ -1241,6 +1252,12 @@ const makeStyles = (theme: Theme) =>
       overflow: "hidden",
     },
     listFlex: { flex: 1, width: "100%", backgroundColor: theme.bg },
+    listPositioning: {
+      flex: 1,
+      width: "100%",
+      backgroundColor: theme.bg,
+      opacity: 0,
+    },
     // Floating "scroll to latest" pill anchored to the bottom-right, above the
     // composer.
     scrollBtnWrap: {

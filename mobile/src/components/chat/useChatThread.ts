@@ -677,6 +677,10 @@ export function useChatThread() {
     animated: boolean;
     requireUntouchedOpen?: boolean;
   } | null>(null);
+  // `initialScrollIndex` is only an estimate until FlashList has measured the
+  // variable-height message rows. Keep one frame handle for the measurement-aware
+  // correction triggered by FlashList's first `onLoad`.
+  const initialTailScrollFrameRef = useRef<number | null>(null);
   // Invalidates async page/reconcile responses after a destructive dataset
   // change (for example chat_cleared), preventing stale history resurrection.
   const messageGenerationRef = useRef(0);
@@ -762,6 +766,10 @@ export function useChatThread() {
       mediaUploadControllers.current.clear();
       mediaUploadSources.current.clear();
       uploadProgressTs.current.clear();
+      if (initialTailScrollFrameRef.current != null) {
+        cancelAnimationFrame(initialTailScrollFrameRef.current);
+        initialTailScrollFrameRef.current = null;
+      }
     };
   }, []);
 
@@ -818,6 +826,33 @@ export function useChatThread() {
     atBottomRef.current = true;
     listRef.current?.scrollToEnd({ animated });
   }, []);
+
+  // FlashList applies `initialScrollIndex` before variable-height bubbles have
+  // their final measurements, which can leave a normal chat open above the true
+  // tail. `onLoad` runs after the first layout; wait one more frame, then correct
+  // using the measured content size. Targeted opens and user interaction disable
+  // this through the same guard used by the stale-cache reconcile.
+  const onListLoad = useCallback(
+    (onPositioned?: () => void) => {
+      if (
+        !initialReconcileTailAllowedRef.current ||
+        messagesRef.current.length === 0
+      ) {
+        onPositioned?.();
+        return;
+      }
+      if (initialTailScrollFrameRef.current != null) {
+        cancelAnimationFrame(initialTailScrollFrameRef.current);
+      }
+      initialTailScrollFrameRef.current = requestAnimationFrame(() => {
+        initialTailScrollFrameRef.current = null;
+        if (!mountedRef.current) return;
+        if (initialReconcileTailAllowedRef.current) scrollToEnd(false);
+        onPositioned?.();
+      });
+    },
+    [scrollToEnd],
+  );
 
   const requestTailScroll = useCallback((animated = true) => {
     pendingTailScrollRef.current = { animated };
@@ -3492,6 +3527,7 @@ export function useChatThread() {
     listRef,
     listExtraData,
     scrollToEnd,
+    onListLoad,
     onListInteraction,
     onListScroll,
     hasMore,
