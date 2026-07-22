@@ -78,13 +78,6 @@ type MessageBubbleProps = {
   // Signal-style: tapping the in-bubble quoted reply scrolls to + flashes the
   // original message it is replying to.
   onJumpToReply?: (message: ChatMessage) => void;
-  // Whether this bubble may play its FadeIn enter / LinearTransition layout
-  // animation. The list keeps this FALSE for the initial batch so opening a
-  // conversation slides in as a complete, static screen (no per-row fade
-  // flicker competing with the navigation transition); it flips TRUE after the
-  // open settles so genuinely new incoming/sent messages still fade into place
-  // (Signal-Android behaviour).
-  animateEntry?: boolean;
 };
 
 function MessageBubbleImpl({
@@ -110,7 +103,6 @@ function MessageBubbleImpl({
   onCancelUpload,
   onRetryUpload,
   onJumpToReply,
-  animateEntry = true,
 }: MessageBubbleProps) {
   const theme = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
@@ -268,8 +260,7 @@ function MessageBubbleImpl({
       // lines that saturate the UI thread). WhatsApp/Signal/Telegram animate
       // recycled rows via the RecyclerView item-animator, NOT per-row JS layout
       // animations — new messages just appear. So ALL layout animations are
-      // removed from the row; `animateEntry` is now unused (kept in the prop
-      // type for call-site compatibility). This Animated.View remains ONLY for
+      // removed from the row. This Animated.View remains ONLY for
       // the `highlightAnim` value-style (a shared-value background tint on the
       // stable mounted view — safe, not a layout animation).
       style={[
@@ -664,8 +655,7 @@ function areEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
     prev.lastInGroup === next.lastInGroup &&
     prev.highlighted === next.highlighted &&
     prev.selected === next.selected &&
-    prev.selectionActive === next.selectionActive &&
-    prev.animateEntry === next.animateEntry
+    prev.selectionActive === next.selectionActive
   );
 }
 

@@ -851,33 +851,6 @@ function ChatList({
     onListScroll: c.onListScroll,
   };
 
-  // Gate the per-bubble FadeIn/LinearTransition animations. They stay OFF for
-  // the initial render so opening the conversation paints the whole visible
-  // thread at once and slides in cleanly (no per-row fade flicker fighting the
-  // navigation transition — the old cause of the laggy/flickery open). Once the
-  // open transition settles we flip this ON so genuinely new messages still
-  // fade into place, matching Signal-Android.
-  const [entryAnimReady, setEntryAnimReady] = useState(false);
-  useEffect(() => {
-    // Flip the per-bubble layout/enter animations ON only AFTER the open
-    // transition has fully settled AND one extra frame past the first idle
-    // frame. The hook's `load()` network reconcile also runs on that first idle
-    // frame (via its own InteractionManager); if `LinearTransition` were enabled
-    // in the SAME frame the reconcile's `setMessages` commits, every visible row
-    // would animate its layout at once — the "settle"/stutter right after the
-    // chat opens. Waiting an extra rAF lets the reconcile paint statically first,
-    // then we arm the animations so only genuinely new incoming/sent messages
-    // animate (Signal-Android feel).
-    let raf = 0;
-    const task = InteractionManager.runAfterInteractions(() => {
-      raf = requestAnimationFrame(() => setEntryAnimReady(true));
-    });
-    return () => {
-      task.cancel();
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, []);
-
   // Signal-Android parity: a STABLE, memoized row renderer. Defining renderItem
   // inline created a NEW function identity on every ChatList render, which
   // defeated FlatList's ability to skip re-rendering unchanged cells and forced
@@ -887,17 +860,6 @@ function ChatList({
   // the hook (`c.rowMeta`) and looked up here in O(1) — mirroring how Signal's
   // ConversationAdapter resolves presentation when a page is built, not on bind.
   const { rowMeta, deliveryPhaseByKey, visibleMessages, user, starredIds } = c;
-  // Identity of the NEWEST message. Only this row
-  // is allowed to play the FadeIn enter animation — see the comment in
-  // MessageBubble. Gating on the newest id (instead of a global `entryAnimReady`
-  // flag applied to every row) means recycled rows scrolling into the FlatList
-  // window never replay their fade, which — combined with removing the per-row
-  // LinearTransition spring — kills the recursive Reanimated frame flood.
-  const newestKey =
-    visibleMessages.length > 0
-      ? (visibleMessages[visibleMessages.length - 1].clientMsgId ??
-        String(visibleMessages[visibleMessages.length - 1].id))
-      : null;
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -959,10 +921,6 @@ function ChatList({
       const firstInGroup = meta?.firstInGroup ?? true;
       const lastInGroup = meta?.lastInGroup ?? true;
       const showDaySeparator = meta?.showDaySeparator ?? false;
-      // Only the newest message animates its entrance (Signal/WhatsApp: only the
-      // just-arrived item animates, never every visible row).
-      const isNewest = key === newestKey;
-
       // Inline call-history row (Signal parity): a `system` message whose
       // metadata describes a call renders as a centred call event instead
       // of a chat bubble.
@@ -1042,7 +1000,6 @@ function ChatList({
             onCancelUpload={c.cancelMediaUpload}
             onRetryUpload={c.retryMediaUpload}
             onJumpToReply={c.jumpToReply}
-            animateEntry={entryAnimReady && isNewest}
           />
         </View>
       );
@@ -1053,10 +1010,8 @@ function ChatList({
     [
       rowMeta,
       deliveryPhaseByKey,
-      newestKey,
       user?.id,
       starredIds,
-      entryAnimReady,
       c.highlightedId,
       c.selectedIds,
       c.selectionMode,
@@ -1104,13 +1059,13 @@ function ChatList({
         // Track scroll distance from the visual bottom. Show the button once the user has scrolled up
         // past ~1.5 screens of history.
         onScroll={handleScroll}
-        // `initialScrollIndex` can run before variable-height rows are measured.
-        // Once FlashList reports its first draw, the hook performs the reliable
-        // non-animated tail correction for a normal chat open.
-        onLoad={c.onListLoad}
-        // Respect immediate user intent: if they drag during opening, neither the
-        // first-layout nor background-reconcile correction may pull them down.
-        onScrollBeginDrag={c.cancelInitialTailScroll}
+        // Once the user deliberately moves the list, a delayed stale-cache
+        // reconcile must preserve that viewport instead of following its tail.
+        onScrollBeginDrag={c.onListInteraction}
+        // Do not imperatively call scrollToEnd from `onLoad`: onLoad fires after
+        // the first rows are drawn, so even a non-animated offset write visibly
+        // repaints variable-height threads. Initial positioning is declarative
+        // via initialScrollIndex + startRenderingFromBottom above.
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
         onStartReached={handleStartReached}

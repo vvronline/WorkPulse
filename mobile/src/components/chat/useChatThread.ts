@@ -368,6 +368,31 @@ function mergeNewestPageIntoLoadedThread(
   return [...olderHistory, ...newestPage, ...localOnlyTail];
 }
 
+function messageIdentity(message: ChatMessage): string {
+  return message.clientMsgId ? `c:${message.clientMsgId}` : `i:${message.id}`;
+}
+
+/** True only when reconciliation adds a server row after the existing tail. */
+function appendsNewerServerTail(
+  current: ChatMessage[],
+  newestPage: ChatMessage[],
+): boolean {
+  if (current.length === 0 || newestPage.length === 0) return false;
+
+  const currentKeys = new Set(current.map(messageIdentity));
+  let lastOverlapIndex = -1;
+  for (let index = 0; index < newestPage.length; index += 1) {
+    if (currentKeys.has(messageIdentity(newestPage[index]))) {
+      lastOverlapIndex = index;
+    }
+  }
+  if (lastOverlapIndex < 0) return false;
+
+  return newestPage
+    .slice(lastOverlapIndex + 1)
+    .some((message) => message.id > 0 && !currentKeys.has(messageIdentity(message)));
+}
+
 /**
  * All state, side-effects and handlers for the chat thread screen. Extracted
  * from `app/chat/[id].tsx` so the screen is a thin presentational orchestrator
@@ -635,27 +660,23 @@ export function useChatThread() {
   // in the recording handlers without depending on the stale polled value.
   const recordingRef = useRef(false);
   const listRef = useRef<FlashListRef<ChatMessage>>(null);
-  // A normal thread open must settle on the newest message. `initialScrollIndex`
-  // alone is not reliable for variable-height FlashList rows because it is
-  // applied before the first layout/measurement pass. Keep a short-lived intent
-  // that is fulfilled from FlashList's `onLoad`, and retain it through the first
-  // REST reconcile in case the disk cache was behind the server. Targeted opens
-  // (notification/search/pinned jumps) opt out so their requested row wins.
-  const initialTailScrollRef = useRef(notificationMessageId == null);
-  const initialTailScrollFrameRef = useRef<number | null>(null);
-  const initialListLoadedRef = useRef(false);
-  const initialTailAppliedRef = useRef(false);
-  const initialReconcileCompleteRef = useRef(false);
   // Whether the list is currently near the visual bottom (newest message).
   // We only auto-scroll to the newest message on an
   // INCOMING message when the user is already at the bottom — otherwise we keep
   // their scroll position (Signal-style) and let the floating "scroll to latest"
   // pill surface instead of yanking them down mid-read.
   const atBottomRef = useRef(true);
+  // A stale warm cache may receive a genuinely newer server tail during the
+  // first REST reconcile. Follow that tail only while this remains an untouched
+  // normal open; a drag or any targeted jump permanently takes precedence.
+  const initialReconcileTailAllowedRef = useRef(notificationMessageId == null);
   // Tail appends are committed asynchronously. Record scroll intent and execute
   // it after the new last row is in FlashList; calling scrollToEnd immediately
   // after setMessages can only reach the old measured end.
-  const pendingTailScrollRef = useRef<{ animated: boolean } | null>(null);
+  const pendingTailScrollRef = useRef<{
+    animated: boolean;
+    requireUntouchedOpen?: boolean;
+  } | null>(null);
   // Invalidates async page/reconcile responses after a destructive dataset
   // change (for example chat_cleared), preventing stale history resurrection.
   const messageGenerationRef = useRef(0);
@@ -730,10 +751,6 @@ export function useChatThread() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (initialTailScrollFrameRef.current != null) {
-        cancelAnimationFrame(initialTailScrollFrameRef.current);
-        initialTailScrollFrameRef.current = null;
-      }
       if (typingClear.current) clearTimeout(typingClear.current);
       for (const controller of mediaUploadControllers.current.values()) {
         try {
@@ -802,34 +819,6 @@ export function useChatThread() {
     listRef.current?.scrollToEnd({ animated });
   }, []);
 
-  const cancelInitialTailScroll = useCallback(() => {
-    initialTailScrollRef.current = false;
-    if (initialTailScrollFrameRef.current != null) {
-      cancelAnimationFrame(initialTailScrollFrameRef.current);
-      initialTailScrollFrameRef.current = null;
-    }
-  }, []);
-
-  // FlashList fires `onLoad` only after its first items have been drawn. Defer
-  // one additional frame so `scrollToEnd` sees the committed variable row
-  // measurements rather than the provisional initialScrollIndex layout.
-  const onListLoad = useCallback(() => {
-    initialListLoadedRef.current = true;
-    if (!initialTailScrollRef.current || messagesRef.current.length === 0) return;
-    if (initialTailScrollFrameRef.current != null) {
-      cancelAnimationFrame(initialTailScrollFrameRef.current);
-    }
-    initialTailScrollFrameRef.current = requestAnimationFrame(() => {
-      initialTailScrollFrameRef.current = null;
-      if (!mountedRef.current || !initialTailScrollRef.current) return;
-      scrollToEnd(false);
-      initialTailAppliedRef.current = true;
-      if (initialReconcileCompleteRef.current) {
-        initialTailScrollRef.current = false;
-      }
-    });
-  }, [scrollToEnd]);
-
   const requestTailScroll = useCallback((animated = true) => {
     pendingTailScrollRef.current = { animated };
   }, []);
@@ -849,7 +838,15 @@ export function useChatThread() {
     pendingTailScrollRef.current = null;
     const frame = requestAnimationFrame(() => {
       if (!mountedRef.current) return;
+      if (
+        pending.requireUntouchedOpen &&
+        !initialReconcileTailAllowedRef.current
+      )
+        return;
       scrollToEnd(pending.animated);
+      if (pending.requireUntouchedOpen) {
+        initialReconcileTailAllowedRef.current = false;
+      }
     });
     return () => cancelAnimationFrame(frame);
   }, [newestMessageKey, scrollToEnd]);
@@ -861,6 +858,10 @@ export function useChatThread() {
   // surfaces the "scroll to latest" pill instead).
   const onListScroll = useCallback((distanceFromBottom: number) => {
     atBottomRef.current = distanceFromBottom <= 80;
+  }, []);
+
+  const onListInteraction = useCallback(() => {
+    initialReconcileTailAllowedRef.current = false;
   }, []);
 
   // When the peer starts typing, keep the newest bubble visible only if the user
@@ -946,8 +947,6 @@ export function useChatThread() {
       // global cache sync keeps incoming messages current while the thread is
       // closed; the next open after the TTL will reconcile normally.
       setLoading(false);
-      initialReconcileCompleteRef.current = true;
-      if (initialTailAppliedRef.current) initialTailScrollRef.current = false;
       return;
     }
 
@@ -977,6 +976,15 @@ export function useChatThread() {
         user?.id,
         user?.full_name,
       );
+      if (
+        initialReconcileTailAllowedRef.current &&
+        appendsNewerServerTail(messagesRef.current, refreshed)
+      ) {
+        pendingTailScrollRef.current = {
+          animated: false,
+          requireUntouchedOpen: true,
+        };
+      }
       setMessages((prev) => {
         // Keep already-loaded history and reconcile the newest server page into
         // the same continuous oldest-first collection. FlashList virtualizes the
@@ -985,26 +993,6 @@ export function useChatThread() {
         const merged = mergeNewestPageIntoLoadedThread(prev, refreshed);
         return messageArraysEquivalentForThread(prev, merged) ? prev : merged;
       });
-      initialReconcileCompleteRef.current = true;
-      // A normal open remains pinned to latest through this first reconcile. If
-      // the cache was stale, the newly-appended server tail would otherwise leave
-      // FlashList preserving the older visible row. Wait for React to commit the
-      // merged data, then correct the tail once more without animation. Explicit
-      // jumps/user drags cancel the intent and are never overridden here.
-      if (initialTailScrollRef.current && notificationMessageId == null) {
-        if (initialTailScrollFrameRef.current != null) {
-          cancelAnimationFrame(initialTailScrollFrameRef.current);
-        }
-        initialTailScrollFrameRef.current = requestAnimationFrame(() => {
-          initialTailScrollFrameRef.current = null;
-          if (!mountedRef.current || !initialTailScrollRef.current) return;
-          scrollToEnd(false);
-          if (initialListLoadedRef.current) {
-            initialTailAppliedRef.current = true;
-            initialTailScrollRef.current = false;
-          }
-        });
-      }
       // Persist the freshest page so the next open paints instantly from disk.
       setCachedMessages(convId, normalized);
       // Do NOT set hasMore=false from this newest-page refresh. Only loadOlder()
@@ -1044,10 +1032,7 @@ export function useChatThread() {
       lastLoadedAtRef.current = loadedAt;
       __LAST_THREAD_RECONCILE_AT.set(convId, loadedAt);
     } catch {
-      // Cached content still received its onLoad correction; a failed refresh
-      // must not leave the one-shot intent armed across later refocuses.
-      initialReconcileCompleteRef.current = true;
-      if (initialTailAppliedRef.current) initialTailScrollRef.current = false;
+      /* keep the cached thread visible */
     } finally {
       if (mountedRef.current && requestId === latestLoadRequestRef.current)
         setLoading(false);
@@ -1056,8 +1041,6 @@ export function useChatThread() {
     convId,
     initialCachedMessages,
     markReadAndSync,
-    notificationMessageId,
-    scrollToEnd,
     user?.id,
     user?.full_name,
   ]);
@@ -1072,10 +1055,9 @@ export function useChatThread() {
   // force an immediate reconcile that bypasses both the animation delay and TTL.
   useEffect(() => {
     if (!notificationMessageId) return;
-    cancelInitialTailScroll();
     if (messages.some((m) => Number(m.id) === notificationMessageId)) return;
     void load({ force: true });
-  }, [cancelInitialTailScroll, load, messages, notificationMessageId]);
+  }, [load, messages, notificationMessageId]);
 
   // Defer the network refresh + its (large) setMessages re-render until AFTER
   // the screen's open transition has settled. The cached page is already on
@@ -2381,9 +2363,7 @@ export function useChatThread() {
   function jumpToMessage(messageId: number) {
     const idx = messages.findIndex((m) => m.id === messageId);
     if (idx < 0) return;
-    // A deliberate target always takes precedence over the normal-open tail
-    // correction, including notification/search/pinned/reply jumps.
-    cancelInitialTailScroll();
+    initialReconcileTailAllowedRef.current = false;
     try {
       void listRef.current?.scrollToIndex({
         index: idx,
@@ -3512,8 +3492,7 @@ export function useChatThread() {
     listRef,
     listExtraData,
     scrollToEnd,
-    onListLoad,
-    cancelInitialTailScroll,
+    onListInteraction,
     onListScroll,
     hasMore,
     loadOlder,
