@@ -678,9 +678,13 @@ export function useChatThread() {
     requireUntouchedOpen?: boolean;
   } | null>(null);
   // `initialScrollIndex` is only an estimate until FlashList has measured the
-  // variable-height message rows. Keep one frame handle for the measurement-aware
-  // correction triggered by FlashList's first `onLoad`.
+  // variable-height message rows. The measurement-aware correction triggered by
+  // FlashList's first `onLoad` runs a short, bounded settle loop (re-pinning to
+  // the tail each frame while content height is still growing); these refs hold
+  // the pending frame handle and the loop's start timestamp so it can be capped
+  // and cancelled on unmount.
   const initialTailScrollFrameRef = useRef<number | null>(null);
+  const initialTailSettleStartRef = useRef<number>(0);
   // Invalidates async page/reconcile responses after a destructive dataset
   // change (for example chat_cleared), preventing stale history resurrection.
   const messageGenerationRef = useRef(0);
@@ -828,10 +832,22 @@ export function useChatThread() {
   }, []);
 
   // FlashList applies `initialScrollIndex` before variable-height bubbles have
-  // their final measurements, which can leave a normal chat open above the true
-  // tail. `onLoad` runs after the first layout; wait one more frame, then correct
-  // using the measured content size. Targeted opens and user interaction disable
-  // this through the same guard used by the stale-cache reconcile.
+  // their final measurements, which can leave a normal chat open ABOVE the true
+  // tail (the reported "not at the latest message on open" bug). `onLoad` only
+  // fires after the FIRST layout — media / reply / reaction rows below the fold
+  // are often still expanding at that point, and this FlashList's `scrollToEnd`
+  // is itself async (scrollToIndex → setTimeout → scrollToEnd), so a single
+  // correction lands short and nothing re-pins after later growth.
+  //
+  // Fix: run a short, BOUNDED settle loop. Each animation frame we re-pin to the
+  // end and read the last row's measured bottom; while that keeps growing (rows
+  // still expanding) we scroll again, stopping as soon as it stabilises or a
+  // small cap (~8 frames / ~250ms) is reached. `onPositioned` is invoked only
+  // once the position has settled so the caller can reveal the list already at
+  // the newest message (no visible jump). Targeted opens (notification / search
+  // / pinned / reply) and any user interaction disable this through the same
+  // `initialReconcileTailAllowedRef` guard used by the stale-cache reconcile —
+  // in those cases we reveal immediately without forcing the tail.
   const onListLoad = useCallback(
     (onPositioned?: () => void) => {
       if (
@@ -843,13 +859,81 @@ export function useChatThread() {
       }
       if (initialTailScrollFrameRef.current != null) {
         cancelAnimationFrame(initialTailScrollFrameRef.current);
-      }
-      initialTailScrollFrameRef.current = requestAnimationFrame(() => {
         initialTailScrollFrameRef.current = null;
-        if (!mountedRef.current) return;
-        if (initialReconcileTailAllowedRef.current) scrollToEnd(false);
+      }
+
+      const MAX_SETTLE_MS = 250;
+      const MAX_SETTLE_FRAMES = 8;
+      initialTailSettleStartRef.current = Date.now();
+
+      // Reachable bottom of the last row. Prefer the measured layout; fall back
+      // to the child container height when a build doesn't expose getLayout.
+      const measureBottom = (): number => {
+        const list = listRef.current;
+        if (!list) return 0;
+        const lastIndex = messagesRef.current.length - 1;
+        try {
+          const layout = list.getLayout?.(lastIndex);
+          if (layout) return layout.y + layout.height;
+        } catch {
+          /* getLayout can throw before the row is measured — ignore */
+        }
+        try {
+          const dims = (
+            list as unknown as {
+              getChildContainerDimensions?: () => { height: number };
+            }
+          ).getChildContainerDimensions?.();
+          if (dims) return dims.height;
+        } catch {
+          /* optional API — ignore */
+        }
+        return 0;
+      };
+
+      // Guarantee the list is revealed exactly once even if the loop is aborted.
+      let revealed = false;
+      const reveal = () => {
+        if (revealed) return;
+        revealed = true;
         onPositioned?.();
-      });
+      };
+
+      let prevBottom = -1;
+      let frameCount = 0;
+
+      const step = () => {
+        initialTailScrollFrameRef.current = null;
+        // Component gone, or a drag / targeted jump took precedence: stop
+        // forcing the tail and reveal whatever the user is now looking at.
+        if (!mountedRef.current || !initialReconcileTailAllowedRef.current) {
+          reveal();
+          return;
+        }
+
+        scrollToEnd(false);
+
+        const bottom = measureBottom();
+        const grew = bottom > prevBottom + 0.5;
+        prevBottom = bottom;
+        frameCount += 1;
+
+        const elapsed = Date.now() - initialTailSettleStartRef.current;
+        const capped =
+          frameCount >= MAX_SETTLE_FRAMES || elapsed >= MAX_SETTLE_MS;
+
+        if (grew && !capped) {
+          // Rows still expanding — pin again next frame.
+          initialTailScrollFrameRef.current = requestAnimationFrame(step);
+          return;
+        }
+
+        // Height stabilised (or cap hit): one final pin, then reveal.
+        scrollToEnd(false);
+        reveal();
+      };
+
+      initialTailScrollFrameRef.current = requestAnimationFrame(step);
     },
     [scrollToEnd],
   );
