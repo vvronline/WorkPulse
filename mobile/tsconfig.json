@@ -2,7 +2,7 @@
   // Base config ships inside the `expo` package (node_modules/expo/tsconfig.base.json).
   // It sets module="preserve" + moduleResolution="bundler"; the options below only
   // layer strictness on top.
-  "extends": "expo/tsconfig.base",
+  "extends": "./node_modules/expo/tsconfig.base.json",
   "compilerOptions": {
     "strict": true,
     "jsx": "react-jsx",

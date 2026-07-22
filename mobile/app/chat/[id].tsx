@@ -1104,6 +1104,13 @@ function ChatList({
         // Track scroll distance from the visual bottom. Show the button once the user has scrolled up
         // past ~1.5 screens of history.
         onScroll={handleScroll}
+        // `initialScrollIndex` can run before variable-height rows are measured.
+        // Once FlashList reports its first draw, the hook performs the reliable
+        // non-animated tail correction for a normal chat open.
+        onLoad={c.onListLoad}
+        // Respect immediate user intent: if they drag during opening, neither the
+        // first-layout nor background-reconcile correction may pull them down.
+        onScrollBeginDrag={c.cancelInitialTailScroll}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
         onStartReached={handleStartReached}

@@ -635,6 +635,17 @@ export function useChatThread() {
   // in the recording handlers without depending on the stale polled value.
   const recordingRef = useRef(false);
   const listRef = useRef<FlashListRef<ChatMessage>>(null);
+  // A normal thread open must settle on the newest message. `initialScrollIndex`
+  // alone is not reliable for variable-height FlashList rows because it is
+  // applied before the first layout/measurement pass. Keep a short-lived intent
+  // that is fulfilled from FlashList's `onLoad`, and retain it through the first
+  // REST reconcile in case the disk cache was behind the server. Targeted opens
+  // (notification/search/pinned jumps) opt out so their requested row wins.
+  const initialTailScrollRef = useRef(notificationMessageId == null);
+  const initialTailScrollFrameRef = useRef<number | null>(null);
+  const initialListLoadedRef = useRef(false);
+  const initialTailAppliedRef = useRef(false);
+  const initialReconcileCompleteRef = useRef(false);
   // Whether the list is currently near the visual bottom (newest message).
   // We only auto-scroll to the newest message on an
   // INCOMING message when the user is already at the bottom — otherwise we keep
@@ -719,6 +730,10 @@ export function useChatThread() {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (initialTailScrollFrameRef.current != null) {
+        cancelAnimationFrame(initialTailScrollFrameRef.current);
+        initialTailScrollFrameRef.current = null;
+      }
       if (typingClear.current) clearTimeout(typingClear.current);
       for (const controller of mediaUploadControllers.current.values()) {
         try {
@@ -786,6 +801,34 @@ export function useChatThread() {
     atBottomRef.current = true;
     listRef.current?.scrollToEnd({ animated });
   }, []);
+
+  const cancelInitialTailScroll = useCallback(() => {
+    initialTailScrollRef.current = false;
+    if (initialTailScrollFrameRef.current != null) {
+      cancelAnimationFrame(initialTailScrollFrameRef.current);
+      initialTailScrollFrameRef.current = null;
+    }
+  }, []);
+
+  // FlashList fires `onLoad` only after its first items have been drawn. Defer
+  // one additional frame so `scrollToEnd` sees the committed variable row
+  // measurements rather than the provisional initialScrollIndex layout.
+  const onListLoad = useCallback(() => {
+    initialListLoadedRef.current = true;
+    if (!initialTailScrollRef.current || messagesRef.current.length === 0) return;
+    if (initialTailScrollFrameRef.current != null) {
+      cancelAnimationFrame(initialTailScrollFrameRef.current);
+    }
+    initialTailScrollFrameRef.current = requestAnimationFrame(() => {
+      initialTailScrollFrameRef.current = null;
+      if (!mountedRef.current || !initialTailScrollRef.current) return;
+      scrollToEnd(false);
+      initialTailAppliedRef.current = true;
+      if (initialReconcileCompleteRef.current) {
+        initialTailScrollRef.current = false;
+      }
+    });
+  }, [scrollToEnd]);
 
   const requestTailScroll = useCallback((animated = true) => {
     pendingTailScrollRef.current = { animated };
@@ -903,6 +946,8 @@ export function useChatThread() {
       // global cache sync keeps incoming messages current while the thread is
       // closed; the next open after the TTL will reconcile normally.
       setLoading(false);
+      initialReconcileCompleteRef.current = true;
+      if (initialTailAppliedRef.current) initialTailScrollRef.current = false;
       return;
     }
 
@@ -940,6 +985,26 @@ export function useChatThread() {
         const merged = mergeNewestPageIntoLoadedThread(prev, refreshed);
         return messageArraysEquivalentForThread(prev, merged) ? prev : merged;
       });
+      initialReconcileCompleteRef.current = true;
+      // A normal open remains pinned to latest through this first reconcile. If
+      // the cache was stale, the newly-appended server tail would otherwise leave
+      // FlashList preserving the older visible row. Wait for React to commit the
+      // merged data, then correct the tail once more without animation. Explicit
+      // jumps/user drags cancel the intent and are never overridden here.
+      if (initialTailScrollRef.current && notificationMessageId == null) {
+        if (initialTailScrollFrameRef.current != null) {
+          cancelAnimationFrame(initialTailScrollFrameRef.current);
+        }
+        initialTailScrollFrameRef.current = requestAnimationFrame(() => {
+          initialTailScrollFrameRef.current = null;
+          if (!mountedRef.current || !initialTailScrollRef.current) return;
+          scrollToEnd(false);
+          if (initialListLoadedRef.current) {
+            initialTailAppliedRef.current = true;
+            initialTailScrollRef.current = false;
+          }
+        });
+      }
       // Persist the freshest page so the next open paints instantly from disk.
       setCachedMessages(convId, normalized);
       // Do NOT set hasMore=false from this newest-page refresh. Only loadOlder()
@@ -979,7 +1044,10 @@ export function useChatThread() {
       lastLoadedAtRef.current = loadedAt;
       __LAST_THREAD_RECONCILE_AT.set(convId, loadedAt);
     } catch {
-      /* ignore */
+      // Cached content still received its onLoad correction; a failed refresh
+      // must not leave the one-shot intent armed across later refocuses.
+      initialReconcileCompleteRef.current = true;
+      if (initialTailAppliedRef.current) initialTailScrollRef.current = false;
     } finally {
       if (mountedRef.current && requestId === latestLoadRequestRef.current)
         setLoading(false);
@@ -988,6 +1056,7 @@ export function useChatThread() {
     convId,
     initialCachedMessages,
     markReadAndSync,
+    notificationMessageId,
     scrollToEnd,
     user?.id,
     user?.full_name,
@@ -1003,9 +1072,10 @@ export function useChatThread() {
   // force an immediate reconcile that bypasses both the animation delay and TTL.
   useEffect(() => {
     if (!notificationMessageId) return;
+    cancelInitialTailScroll();
     if (messages.some((m) => Number(m.id) === notificationMessageId)) return;
     void load({ force: true });
-  }, [load, messages, notificationMessageId]);
+  }, [cancelInitialTailScroll, load, messages, notificationMessageId]);
 
   // Defer the network refresh + its (large) setMessages re-render until AFTER
   // the screen's open transition has settled. The cached page is already on
@@ -2311,6 +2381,9 @@ export function useChatThread() {
   function jumpToMessage(messageId: number) {
     const idx = messages.findIndex((m) => m.id === messageId);
     if (idx < 0) return;
+    // A deliberate target always takes precedence over the normal-open tail
+    // correction, including notification/search/pinned/reply jumps.
+    cancelInitialTailScroll();
     try {
       void listRef.current?.scrollToIndex({
         index: idx,
@@ -3439,6 +3512,8 @@ export function useChatThread() {
     listRef,
     listExtraData,
     scrollToEnd,
+    onListLoad,
+    cancelInitialTailScroll,
     onListScroll,
     hasMore,
     loadOlder,
