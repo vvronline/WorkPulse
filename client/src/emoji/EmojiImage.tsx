@@ -7,11 +7,15 @@
 import { useEffect, useState } from "react";
 import type { EmojiVariant } from "./types";
 import { USING_BUNDLED } from "./emojiStore";
+import { SHEET_COLS } from "./generated";
 
-// The Apple datasource sprite is a 57×57 grid of 64px cells (Unicode 15-era).
-// background-size is set to (57*100)% so each cell maps to one emoji; position
-// is sheetX/(57-1) * 100%.
-const SHEET_COLS = 57;
+// The Apple datasource sprite is a square SHEET_COLS×SHEET_COLS grid of cells.
+// background-size is (SHEET_COLS*100)% so each cell maps to one emoji; position
+// is sheetX/(SHEET_COLS-1) * 100%.
+// SHEET_COLS is imported from ./generated (derived from the dataset at
+// generation time) so background math always matches the actual sprite grid,
+// even when the datasource changes its grid size between versions (57 in v14,
+// 62 in v16).
 
 // Whether the sprite PNG actually loaded. A CSS `background-image` failure on a
 // <span> cannot fire React's onError, so in environments where the sprite asset
