@@ -25,16 +25,18 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+*.log
 
 # macOS
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
-google-services.json
+# local env files - ignore ALL .env variants (they may hold EXPO_PUBLIC_*
+# secrets such as the Tenor key) but keep the committed template.
+.env*
+!.env.example
 
-# Firebase Cloud Messaging config — provided via the ANDROID_GOOGLE_SERVICES_JSON
+# Firebase Cloud Messaging config - provided via the ANDROID_GOOGLE_SERVICES_JSON
 # CI secret (see .github/workflows/mobile-release.yml) and referenced by
 # app.config.ts (android.googleServicesFile). Must never be committed.
 google-services.json

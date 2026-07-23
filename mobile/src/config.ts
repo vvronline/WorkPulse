@@ -5,6 +5,8 @@ type Extra = {
   WS_BASE_URL?: string;
   TENOR_API_KEY?: string;
   TENOR_CLIENT_KEY?: string;
+  // App version string surfaced from package.json (used by the in-app updater).
+  APP_VERSION?: string;
   // Feature flags (string "true"/"false" or boolean — coerced below).
   ANDROID_NATIVE_CALL_UI?: boolean | string;
 };

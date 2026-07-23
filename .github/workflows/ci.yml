@@ -59,6 +59,36 @@ jobs:
         working-directory: client
         run: npm run build
 
+  mobile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            mobile/package-lock.json
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Typecheck mobile (app)
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Typecheck mobile (tests)
+        working-directory: mobile
+        run: npm run typecheck:tests
+
+      - name: Run mobile tests
+        working-directory: mobile
+        run: npm run test:ci
+
   docker-build:
     runs-on: ubuntu-latest
     needs: lint-and-test

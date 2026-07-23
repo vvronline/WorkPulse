@@ -36,7 +36,8 @@ class PushNotificationListener extends EventEmitter {
   }
 
   handleNotificationResponse(response: NotificationResponse) {
-    const { payload, actionId } = response.notification;
+    const { actionId } = response;
+    const { payload } = response.notification;
 
     if (payload.type === 'call' && actionId === 'answer') {
       this.emit('call:answer', payload);
