@@ -38,6 +38,11 @@ export type ClockOutPayload = {
   longitude?: number;
   accuracy?: number;
   wifi_bssid?: string;
+  face_descriptor?: number[];
+  // Device-biometric (fingerprint / OS auth) fallback used when the face scan
+  // fails. The server only honours this when the office location/wifi check
+  // has ALSO passed - a fingerprint alone cannot clock out remotely.
+  fingerprint_verified?: boolean;
 };
 
 export function clockIn(

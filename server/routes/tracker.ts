@@ -662,6 +662,81 @@ router.post("/clock-out", auth, loadUserContext, async (req: Request, res: Respo
                             });
                         }
                     }
+
+                    // Identity gate: office presence is now proven (Wi-Fi match
+                    // or an inside-geofence GPS fix). Mirror the clock-in flow
+                    // and ALSO verify WHO is clocking out - via the enrolled
+                    // face descriptor, or the device fingerprint fallback. This
+                    // never runs for remote sessions (the outer work_mode check).
+                    const { face_descriptor } = req.body || {};
+                    const fingerprintVerified = req.body?.fingerprint_verified === true;
+
+                    if (fingerprintVerified) {
+                        // Fingerprint fallback is accepted only because office
+                        // presence was already proven immediately above.
+                        logAction(req, "clock_out_fingerprint_fallback", "time_entry", null, {});
+                    } else {
+                        // Lock out brute-force face attempts (per-user, sliding window).
+                        const failCount = await getFaceFailCount(req.tenantId, req.userId);
+                        if (failCount >= FACE_FAIL_LIMIT) {
+                            logAction(req, "clock_out_face_locked", "time_entry", null, { fail_count: failCount });
+                            return res.status(429).json({
+                                error: "Too many failed face verification attempts. Please wait 15 minutes and try again, or contact your admin.",
+                                code: "FACE_ATTEMPTS_LOCKED",
+                            });
+                        }
+
+                        const enrolledRow = (await req.db!.query(
+                            "SELECT face_descriptor FROM users WHERE id = $1",
+                            [req.userId],
+                        )).rows[0];
+                        const enrolled = parseDescriptor(enrolledRow?.face_descriptor);
+                        if (!enrolled) {
+                            return res.status(403).json({
+                                error: "Please enroll your face from Profile → Face Enrollment before clocking out.",
+                                code: "FACE_NOT_ENROLLED",
+                            });
+                        }
+                        if (!isValidDescriptor(face_descriptor) || !isPlausibleDescriptor(face_descriptor)) {
+                            return res.status(400).json({
+                                error: "Face verification required. Please complete the face scan and try again.",
+                                code: "FACE_REQUIRED",
+                            });
+                        }
+                        // Replay guard: a fresh capture never reproduces the exact
+                        // embedding of a previous one; a (near-)identical descriptor
+                        // means a captured payload is being re-submitted.
+                        try {
+                            const lastDescriptor = await redis.get(faceKey(req.tenantId, "last", req.userId));
+                            if (lastDescriptor && isDescriptorReplay(lastDescriptor, face_descriptor)) {
+                                logAction(req, "clock_out_face_replay", "time_entry", null, {});
+                                await bumpFaceFailCount(req.tenantId, req.userId);
+                                return res.status(403).json({
+                                    error: "This face scan looks like a duplicate of a previous one. Please perform a fresh face scan.",
+                                    code: "FACE_REPLAY",
+                                });
+                            }
+                        } catch { /* redis unavailable — fail open */ }
+                        const cmp = compareDescriptors(enrolled, face_descriptor);
+                        if (!cmp.match) {
+                            await bumpFaceFailCount(req.tenantId, req.userId);
+                            logAction(req, "clock_out_face_mismatch", "time_entry", null, {
+                                distance: Number.isFinite(cmp.distance) ? Number(cmp.distance.toFixed(4)) : null,
+                                threshold: cmp.threshold,
+                            });
+                            return res.status(403).json({
+                                error: "Face didn't match your enrolled photo. Please ensure good lighting and try again.",
+                                code: "FACE_MISMATCH",
+                            });
+                        }
+                        // Success: reset the failure counter and remember this
+                        // descriptor so an exact replay of it is rejected next time.
+                        await clearFaceFailCount(req.tenantId, req.userId);
+                        try {
+                            await redis.set(faceKey(req.tenantId, "last", req.userId), face_descriptor, FACE_LAST_DESCRIPTOR_TTL_SEC);
+                        } catch { /* best-effort */ }
+                    }
+
                 }
             }
         }

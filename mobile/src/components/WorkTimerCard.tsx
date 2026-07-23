@@ -27,6 +27,8 @@ import { getCurrentOrg, getFaceStatus } from "../features";
 import { socket } from "../realtime/socket";
 import ClockInVerifyModal from "./ClockInVerifyModal";
 import ClockOutVerifyModal from "./ClockOutVerifyModal";
+import VerifyMethodChooser from "./VerifyMethodChooser";
+import * as LocalAuthentication from "expo-local-authentication";
 
 const RADIUS = 42;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -51,6 +53,13 @@ export default function WorkTimerCard() {
   const [verifyEnabled, setVerifyEnabled] = useState(false);
   const [verifyModalOpen, setVerifyModalOpen] = useState(false);
   const [clockOutModalOpen, setClockOutModalOpen] = useState(false);
+  // Verification method passed into the verify modals. Face-enrolled users use
+  // "face"; users with no face on file who pick fingerprint use "fingerprint".
+  const [verifyMethod, setVerifyMethod] = useState<"face" | "fingerprint">("face");
+  // "Enroll Face or Use Fingerprint?" chooser shown to users who have not
+  // enrolled a face when clocking in/out from a verification-enabled org.
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const [chooserMode, setChooserMode] = useState<"in" | "out">("in");
 
   // Live-ticking seconds seeded from the server snapshot.
   const [floorSec, setFloorSec] = useState(0);
@@ -101,7 +110,60 @@ export default function WorkTimerCard() {
 
   // Decide between the one-tap clock-in (verification off) and the
   // verify-modal flow (verification on). For the modal flow we first check the
-  // user has enrolled a face Ã¢â‚¬â€ if not, route them to enrollment.
+  // user has enrolled a face — if not, route them to enrollment.
+  // Open the "Enroll Face or Use Fingerprint?" chooser for a user who has not
+  // enrolled a face yet.
+  function openVerifyChooser(mode: "in" | "out") {
+    setChooserMode(mode);
+    setChooserOpen(true);
+  }
+
+  // The user picked "Use Fingerprint" in the chooser. A fingerprint is a
+  // device-only capability — verify the device actually has a biometric set up,
+  // then open the relevant verify modal in fingerprint mode (the server accepts
+  // a fingerprint from the office without a face on file).
+  async function useFingerprint() {
+    setChooserOpen(false);
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = await LocalAuthentication.isEnrolledAsync();
+      if (!hasHardware || !enrolled) {
+        alert(
+          "Fingerprint unavailable",
+          "No fingerprint / device biometric is set up on this device. Set one up in your device settings, or enroll your face instead.",
+        );
+        return;
+      }
+    } catch {
+      alert(
+        "Fingerprint unavailable",
+        "Could not check this device's biometrics. Set up a fingerprint in your device settings, or enroll your face instead.",
+      );
+      return;
+    }
+    setVerifyMethod("fingerprint");
+    if (chooserMode === "out") setClockOutModalOpen(true);
+    else setVerifyModalOpen(true);
+  }
+
+  // Office clock-out for a verification-enabled org: face-enrolled users go
+  // straight to the face flow; users with no face on file get the chooser.
+  async function startVerifiedClockOut() {
+    try {
+      const { data: face } = await getFaceStatus();
+      if (!face?.enrolled) {
+        openVerifyChooser("out");
+        return;
+      }
+    } catch {
+      // Face-status check failed — fall through to the face modal; the server
+      // returns a clear error if enrollment is missing.
+    }
+    setVerifyMethod("face");
+    setClockOutModalOpen(true);
+  }
+
+
   const handleLogin = useCallback(async () => {
     if (!verifyEnabled) {
       run("clockIn", () => clockIn(workMode));
@@ -112,22 +174,18 @@ export default function WorkTimerCard() {
       const { data: face } = await getFaceStatus();
       if (!face?.enrolled) {
         setAction(null);
-        confirm({
-          title: "Face enrollment required",
-          message:
-            "Please enroll your face before clocking in. Open Face Enrollment now?",
-          confirmText: "Enroll",
-          isDanger: false,
-          onConfirm: () => router.push("/profile/face"),
-        });
+        openVerifyChooser("in");
         return;
       }
       setAction(null);
+      setVerifyMethod("face");
       setVerifyModalOpen(true);
     } catch {
       setAction(null);
-      // If the face-status check fails, still open the modal Ã¢â‚¬â€ the server
+      // If the face-status check fails, still open the modal — the server
       // will return a clear error if enrollment is missing.
+      setVerifyMethod("face");
+
       setVerifyModalOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -158,10 +216,14 @@ export default function WorkTimerCard() {
   }
 
   const onLogout = useCallback(() => {
-    // Verification-enabled orgs restrict clock-out to the office, so route the
-    // logout through the location-verifying modal instead of a plain confirm.
-    if (verifyEnabled) {
-      setClockOutModalOpen(true);
+    // Verification-enabled orgs restrict clock-out to the office, so route an
+    // OFFICE session's logout through the location + face/fingerprint modal.
+    // A REMOTE session carries no office proof, so requiring office presence to
+    // end it would trap the employee — the server also exempts remote
+    // sessions (see server/routes/tracker.ts clock-out). Remote (and
+    // verification-off) logouts use the plain confirm with no location prompt.
+    if (verifyEnabled && workMode === "office") {
+      startVerifiedClockOut();
       return;
     }
     confirm({
@@ -172,7 +234,7 @@ export default function WorkTimerCard() {
       onConfirm: () => run("clockOut", clockOut),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verifyEnabled]);
+  }, [verifyEnabled, workMode]);
 
   if (loading) {
     return (
@@ -234,7 +296,7 @@ export default function WorkTimerCard() {
               <Text style={[styles.ringTime, { color: ringColor }]}>
                 {state === "on_floor" && formatTimeSec(floorSec)}
                 {state === "on_break" && formatTimeSec(breakSec)}
-                {state === "logged_out" && (dailyTargetMet ? "Ã¢Å“â€œ" : "Ã¢â‚¬â€")}
+                {state === "logged_out" && (dailyTargetMet ? "✓" : "—")}
               </Text>
             </View>
           </View>
@@ -262,7 +324,7 @@ export default function WorkTimerCard() {
               <View style={styles.stat}>
                 <Text style={styles.statLabel}>Remaining</Text>
                 <Text style={styles.statValue}>
-                  {dailyTargetMet ? "Ã¢â‚¬â€" : formatTime(remainingMin)}
+                  {dailyTargetMet ? "—" : formatTime(remainingMin)}
                 </Text>
               </View>
             </View>
@@ -342,7 +404,7 @@ export default function WorkTimerCard() {
             )}
 
             {state === "logged_out" && dailyTargetMet && (
-              <Text style={styles.targetDone}>Ã¢Å“â€¦ Daily target complete!</Text>
+              <Text style={styles.targetDone}>✅ Daily target complete!</Text>
             )}
 
             {state === "on_floor" && (
@@ -394,6 +456,8 @@ export default function WorkTimerCard() {
       <ClockInVerifyModal
         visible={verifyModalOpen}
         workMode={workMode}
+        method={verifyMethod}
+
         onClose={() => setVerifyModalOpen(false)}
         onSuccess={() => {
           setVerifyModalOpen(false);
@@ -403,6 +467,8 @@ export default function WorkTimerCard() {
 
       {/* Office-verified clock-out (verification-enabled orgs). */}
       <ClockOutVerifyModal
+        method={verifyMethod}
+
         visible={clockOutModalOpen}
         onClose={() => setClockOutModalOpen(false)}
         onSuccess={() => {
@@ -410,6 +476,20 @@ export default function WorkTimerCard() {
           refresh();
         }}
       />
+      {/* "Enroll Face or Use Fingerprint?" chooser for users with no face on
+          file at a verification-enabled org. */}
+      <VerifyMethodChooser
+        visible={chooserOpen}
+        mode={chooserMode}
+        onEnrollFace={() => {
+          setChooserOpen(false);
+          router.push("/profile/face");
+        }}
+        onUseFingerprint={useFingerprint}
+        onClose={() => setChooserOpen(false)}
+      />
+
+
 
       {/* Themed confirm / alert dialog (replaces OS-native Alert). */}
       {dialog}

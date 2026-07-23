@@ -353,7 +353,7 @@ describe("POST /api/tracker/clock-out", () => {
         expect(res.body.code).toBe("OUTSIDE_GEOFENCE");
     });
 
-    test("allows office clock-out when inside the geofence", async () => {
+    test("allows office clock-out when inside the geofence (fingerprint fallback)", async () => {
         setupAuthMocks({ org_id: 1 });
         mockQuery
             .mockResolvedValueOnce({
@@ -375,7 +375,62 @@ describe("POST /api/tracker/clock-out", () => {
             .set(CSRF)
             .set("Cookie", authCookie())
             .set("X-Timezone-Offset", "-330")
+            .send({ latitude: 10, longitude: 20, accuracy: 10, fingerprint_verified: true });
+        expect(res.status).toBe(200);
+        expect(res.body.message).toMatch(/logged out/i);
+    });
+
+    test("office clock-out inside the geofence still requires identity (face not enrolled)", async () => {
+        setupAuthMocks({ org_id: 1 });
+        mockQuery
+            .mockResolvedValueOnce({
+                rows: [{
+                    attendance_verification_enabled: true,
+                    office_latitude: 10, office_longitude: 20, office_radius_m: 150,
+                    office_wifi_bssids: [], office_wifi_verification_enabled: false,
+                }],
+                rowCount: 1,
+            })
+            .mockResolvedValueOnce({ rows: [{ work_mode: "office" }], rowCount: 1 })
+            // SELECT face_descriptor -> not enrolled
+            .mockResolvedValueOnce({ rows: [{ face_descriptor: null }], rowCount: 1 });
+
+        // Inside the geofence but no face descriptor and no fingerprint fallback:
+        // the identity gate must reject before any clock_out row is written.
+        const res = await request(app)
+            .post("/api/tracker/clock-out")
+            .set(CSRF)
+            .set("Cookie", authCookie())
+            .set("X-Timezone-Offset", "-330")
             .send({ latitude: 10, longitude: 20, accuracy: 10 });
+        expect(res.status).toBe(403);
+        expect(res.body.code).toBe("FACE_NOT_ENROLLED");
+    });
+
+    test("remote session clock-out skips office location + identity verification", async () => {
+        setupAuthMocks({ org_id: 1 });
+        mockQuery
+            .mockResolvedValueOnce({
+                rows: [{
+                    attendance_verification_enabled: true,
+                    office_latitude: 10, office_longitude: 20, office_radius_m: 150,
+                    office_wifi_bssids: [], office_wifi_verification_enabled: false,
+                }],
+                rowCount: 1,
+            })
+            // open session was REMOTE -> whole office/identity gate is skipped
+            .mockResolvedValueOnce({ rows: [{ work_mode: "remote" }], rowCount: 1 });
+
+        mockTxClient.query
+            .mockResolvedValueOnce({ rows: [{ entry_type: "clock_in" }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        // No location, no face, no fingerprint - a remote clock-out must succeed.
+        const res = await request(app)
+            .post("/api/tracker/clock-out")
+            .set(CSRF)
+            .set("Cookie", authCookie())
+            .set("X-Timezone-Offset", "-330");
         expect(res.status).toBe(200);
         expect(res.body.message).toMatch(/logged out/i);
     });
