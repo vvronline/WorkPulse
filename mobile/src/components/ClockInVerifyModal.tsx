@@ -11,10 +11,12 @@ import {
 import {
   AlertTriangle,
   CheckCircle2,
+  Fingerprint,
   MapPin,
   ShieldCheck,
   X,
 } from "../icons";
+import * as LocalAuthentication from "expo-local-authentication";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import FaceCaptureWebView from "./FaceCaptureWebView";
@@ -64,7 +66,7 @@ function formatDistance(m: number): string {
  *
  * Steps:
  *   1. (office/hybrid) Collect GPS location. If unavailable, surface the error
- *      but still allow proceeding — the server is authoritative and will
+ *      but still allow proceeding ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the server is authoritative and will
  *      reject if the geofence/wifi check fails.
  *   2. Capture a face descriptor via FaceCaptureWebView (face-api.js).
  *   3. POST /tracker/clock-in with { work_mode, face_descriptor, lat/lng,
@@ -86,7 +88,7 @@ export default function ClockInVerifyModal({
   const [location, setLocation] = useState<Position | null>(null);
   const [locErr, setLocErr] = useState<string | null>(null);
   // True when the client-side geofence pre-check (or a server geofence
-  // rejection) determined the user is outside the office radius — the
+  // rejection) determined the user is outside the office radius ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the
   // location step then shows a clear "you are X from the office" error
   // instead of the spinner, and hides "Continue anyway" (the server would
   // reject it anyway).
@@ -95,6 +97,11 @@ export default function ClockInVerifyModal({
   const [busy, setBusy] = useState(false);
   // Bumped after a failed submit to re-arm the WebView capture button.
   const [resetNonce, setResetNonce] = useState(0);
+  // Remember the most recent captured descriptor so the fingerprint fallback
+  // can re-submit the same office-presence context after a face failure.
+  const lastDescriptorRef = useRef<number[] | null>(null);
+  // True while the device biometric (fingerprint) prompt is in flight.
+  const [fpBusy, setFpBusy] = useState(false);
   // Org office coordinates + radius, fetched in parallel with the GPS
   // request so we can geofence-check locally BEFORE running the face scan.
   const orgGeoRef = useRef<Promise<OfficeGeofence | null> | null>(null);
@@ -129,7 +136,7 @@ export default function ClockInVerifyModal({
         radiusM: Number.isFinite(radius) && radius > 0 ? radius : 200,
       };
     } catch {
-      // Org fetch failed — skip the local pre-check; server stays
+      // Org fetch failed ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â skip the local pre-check; server stays
       // authoritative on submit.
       return null;
     }
@@ -159,7 +166,7 @@ export default function ClockInVerifyModal({
           if (dist - acc > office.radiusM) {
             setOutsideGeofence(true);
             setLocErr(
-              `You're not at the office — you are ~${formatDistance(dist)} away ` +
+              `You're not at the office ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â you are ~${formatDistance(dist)} away ` +
                 `(allowed radius ${office.radiusM} m). Move to the office and ` +
                 `try again, or switch to remote mode.`,
             );
@@ -176,15 +183,64 @@ export default function ClockInVerifyModal({
   }
 
   async function handleFaceCapture(descriptor: number[]) {
+    lastDescriptorRef.current = descriptor;
+    await submitClockIn({ descriptor });
+  }
+
+  // Fingerprint fallback: after a face failure the user can prove identity with
+  // the device's own biometric (fingerprint / OS auth). The office location was
+  // already collected in the location step, so we re-submit the SAME location
+  // with fingerprint_verified=true. The server still enforces the office
+  // geofence/wifi, so this only works from the office.
+  async function handleFingerprintFallback() {
+    setFpBusy(true);
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = await LocalAuthentication.isEnrolledAsync();
+      if (!hasHardware || !enrolled) {
+        setSubmitErr({
+          kind: "generic",
+          title: "Fingerprint unavailable",
+          message:
+            "No fingerprint / device biometric is set up on this device. Set one up in your device settings, or retry the face scan.",
+        });
+        return;
+      }
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: "Verify with fingerprint to clock in",
+        disableDeviceFallback: false,
+      });
+      if (!result.success) {
+        setSubmitErr({
+          kind: "generic",
+          title: "Fingerprint not verified",
+          message: "Fingerprint verification was cancelled or failed. Try again.",
+        });
+        return;
+      }
+      await submitClockIn({
+        descriptor: lastDescriptorRef.current ?? undefined,
+        fingerprintVerified: true,
+      });
+    } finally {
+      setFpBusy(false);
+    }
+  }
+
+  async function submitClockIn(opts: {
+    descriptor?: number[];
+    fingerprintVerified?: boolean;
+  }) {
     setStep("submitting");
     setSubmitErr(null);
     try {
       const payload: ClockInPayload = {
         work_mode: workMode,
-        face_descriptor: descriptor,
+        face_descriptor: opts.descriptor,
         latitude: location?.latitude,
         longitude: location?.longitude,
         accuracy: location?.accuracy,
+        fingerprint_verified: opts.fingerprintVerified,
       };
       await clockIn(payload);
       onSuccess();
@@ -193,7 +249,7 @@ export default function ClockInVerifyModal({
       // geofence, etc.) from a lost-response transport error. The server
       // writes the clock-in row inside a transaction and only THEN returns
       // its JSON; if the request reaches the server but the response is lost
-      // — a dropped/slow connection or the axios timeout firing — axios
+      // ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â a dropped/slow connection or the axios timeout firing ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â axios
       // rejects with NO `response`. Showing the generic "Clock-in failed"
       // in that case is wrong: the user is already clocked in.
       if (!e?.response) {
@@ -205,7 +261,7 @@ export default function ClockInVerifyModal({
             return;
           }
         } catch {
-          /* status re-check failed too — fall through to the error below */
+          /* status re-check failed too ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â fall through to the error below */
         }
       }
       // Map the structured server error (code + message) into a specific
@@ -215,9 +271,9 @@ export default function ClockInVerifyModal({
       const info = clockInErrorInfo(e);
       setSubmitErr(info);
       if (info.kind === "location" && needsLocation) {
-        // Show the server's geofence rejection ON the location step —
+        // Show the server's geofence rejection ON the location step ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â
         // previously we switched to the location step without an error, so
-        // it rendered the "Detecting your location…" spinner forever.
+        // it rendered the "Detecting your locationÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" spinner forever.
         setOutsideGeofence(true);
         setLocErr(info.message);
         setStep("location");
@@ -301,7 +357,7 @@ export default function ClockInVerifyModal({
                         disabled={busy}
                       >
                         <Text style={styles.primaryBtnText}>
-                          {busy ? "Requesting…" : "Try again"}
+                          {busy ? "RequestingÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦" : "Try again"}
                         </Text>
                       </Pressable>
                       {!outsideGeofence ? (
@@ -321,7 +377,7 @@ export default function ClockInVerifyModal({
                   <>
                     <ActivityIndicator size="large" color={theme.primary} />
                     <Text style={styles.locText}>
-                      Detecting your location…
+                      Detecting your locationÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦
                     </Text>
                   </>
                 )}
@@ -339,7 +395,7 @@ export default function ClockInVerifyModal({
                     <Text style={styles.locDoneText}>
                       Location verified
                       {location.accuracy
-                        ? ` (±${Math.round(location.accuracy)} m)`
+                        ? ` (ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±${Math.round(location.accuracy)} m)`
                         : ""}
                     </Text>
                   </View>
@@ -348,7 +404,7 @@ export default function ClockInVerifyModal({
                   <View style={styles.locWarn}>
                     <MapPin size={14} color={theme.warning} />
                     <Text style={styles.locWarnText}>
-                      No location — the server will verify on submit.
+                      No location ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the server will verify on submit.
                     </Text>
                   </View>
                 ) : null}
@@ -369,10 +425,25 @@ export default function ClockInVerifyModal({
                     </View>
                   </View>
                 ) : null}
+                {/* Fingerprint fallback: offered after a FACE failure when a
+                    location is required (office/hybrid). Location is already
+                    captured, so the server can still enforce the geofence. */}
+                {submitErr && submitErr.kind === "face" && needsLocation && step !== "submitting" ? (
+                  <Pressable
+                    style={styles.fingerprintBtn}
+                    onPress={handleFingerprintFallback}
+                    disabled={fpBusy}
+                  >
+                    <Fingerprint size={16} color="#fff" />
+                    <Text style={styles.fingerprintBtnText}>
+                      {fpBusy ? "Verifying fingerprint..." : "Use fingerprint instead"}
+                    </Text>
+                  </Pressable>
+                ) : null}
                 {step === "submitting" ? (
                   <View style={styles.submittingRow}>
                     <ActivityIndicator color={theme.primary} />
-                    <Text style={styles.submittingText}>Logging in…</Text>
+                    <Text style={styles.submittingText}>Logging inÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦</Text>
                   </View>
                 ) : null}
               </>
@@ -380,7 +451,7 @@ export default function ClockInVerifyModal({
 
             {/* Single persistent WebView: mounted (hidden) from the moment
                 the modal opens, so the CDN library + model download and the
-                camera warm-up happen IN PARALLEL with the location step —
+                camera warm-up happen IN PARALLEL with the location step ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â
                 by the time the user reaches the face step it's already
                 live. Keeping one instance (rather than remounting) also
                 avoids camera-contention races between two WebViews. */}
@@ -389,14 +460,14 @@ export default function ClockInVerifyModal({
               pointerEvents={step === "location" ? "none" : "auto"}
             >
               <FaceCaptureWebView
-                // Auto-capture as soon as a face is steadily in frame — but
+                // Auto-capture as soon as a face is steadily in frame ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â but
                 // only until the first server rejection, so a mismatch
                 // doesn't auto-retry into the face-attempt rate limit
                 // (mirrors the web client's ClockInVerifyModal).
                 autoCapture={!submitErr}
                 resetNonce={resetNonce}
                 captureLabel="Verify & Login"
-                capturingLabel="Verifying…"
+                capturingLabel="VerifyingÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦"
                 onCapture={handleFaceCapture}
                 disabled={step !== "face"}
               />
@@ -546,6 +617,16 @@ const makeStyles = (theme: Theme) =>
     padding: 10,
   },
   submitErrTextWrap: { flex: 1, gap: 2 },
+  fingerprintBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: theme.primary,
+    borderRadius: theme.radiusSm,
+    paddingVertical: 11,
+  },
+  fingerprintBtnText: { color: "#fff", fontSize: 14, fontWeight: "600" },
   submitErrTitle: { color: theme.danger, fontSize: 13, fontWeight: "700" },
   submitErrText: { color: theme.danger, fontSize: 12 },
   submittingRow: {

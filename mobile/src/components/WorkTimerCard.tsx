@@ -26,6 +26,7 @@ import {
 import { getCurrentOrg, getFaceStatus } from "../features";
 import { socket } from "../realtime/socket";
 import ClockInVerifyModal from "./ClockInVerifyModal";
+import ClockOutVerifyModal from "./ClockOutVerifyModal";
 
 const RADIUS = 42;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -49,6 +50,7 @@ export default function WorkTimerCard() {
   // Attendance verification gate (face + geofence/wifi).
   const [verifyEnabled, setVerifyEnabled] = useState(false);
   const [verifyModalOpen, setVerifyModalOpen] = useState(false);
+  const [clockOutModalOpen, setClockOutModalOpen] = useState(false);
 
   // Live-ticking seconds seeded from the server snapshot.
   const [floorSec, setFloorSec] = useState(0);
@@ -99,7 +101,7 @@ export default function WorkTimerCard() {
 
   // Decide between the one-tap clock-in (verification off) and the
   // verify-modal flow (verification on). For the modal flow we first check the
-  // user has enrolled a face — if not, route them to enrollment.
+  // user has enrolled a face Ã¢â‚¬â€ if not, route them to enrollment.
   const handleLogin = useCallback(async () => {
     if (!verifyEnabled) {
       run("clockIn", () => clockIn(workMode));
@@ -124,7 +126,7 @@ export default function WorkTimerCard() {
       setVerifyModalOpen(true);
     } catch {
       setAction(null);
-      // If the face-status check fails, still open the modal — the server
+      // If the face-status check fails, still open the modal Ã¢â‚¬â€ the server
       // will return a clear error if enrollment is missing.
       setVerifyModalOpen(true);
     }
@@ -156,6 +158,12 @@ export default function WorkTimerCard() {
   }
 
   const onLogout = useCallback(() => {
+    // Verification-enabled orgs restrict clock-out to the office, so route the
+    // logout through the location-verifying modal instead of a plain confirm.
+    if (verifyEnabled) {
+      setClockOutModalOpen(true);
+      return;
+    }
     confirm({
       title: "Logout",
       message: "Are you sure you want to clock out?",
@@ -164,7 +172,7 @@ export default function WorkTimerCard() {
       onConfirm: () => run("clockOut", clockOut),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [verifyEnabled]);
 
   if (loading) {
     return (
@@ -226,7 +234,7 @@ export default function WorkTimerCard() {
               <Text style={[styles.ringTime, { color: ringColor }]}>
                 {state === "on_floor" && formatTimeSec(floorSec)}
                 {state === "on_break" && formatTimeSec(breakSec)}
-                {state === "logged_out" && (dailyTargetMet ? "✓" : "—")}
+                {state === "logged_out" && (dailyTargetMet ? "Ã¢Å“â€œ" : "Ã¢â‚¬â€")}
               </Text>
             </View>
           </View>
@@ -254,7 +262,7 @@ export default function WorkTimerCard() {
               <View style={styles.stat}>
                 <Text style={styles.statLabel}>Remaining</Text>
                 <Text style={styles.statValue}>
-                  {dailyTargetMet ? "—" : formatTime(remainingMin)}
+                  {dailyTargetMet ? "Ã¢â‚¬â€" : formatTime(remainingMin)}
                 </Text>
               </View>
             </View>
@@ -334,7 +342,7 @@ export default function WorkTimerCard() {
             )}
 
             {state === "logged_out" && dailyTargetMet && (
-              <Text style={styles.targetDone}>✅ Daily target complete!</Text>
+              <Text style={styles.targetDone}>Ã¢Å“â€¦ Daily target complete!</Text>
             )}
 
             {state === "on_floor" && (
@@ -389,6 +397,16 @@ export default function WorkTimerCard() {
         onClose={() => setVerifyModalOpen(false)}
         onSuccess={() => {
           setVerifyModalOpen(false);
+          refresh();
+        }}
+      />
+
+      {/* Office-verified clock-out (verification-enabled orgs). */}
+      <ClockOutVerifyModal
+        visible={clockOutModalOpen}
+        onClose={() => setClockOutModalOpen(false)}
+        onSuccess={() => {
+          setClockOutModalOpen(false);
           refresh();
         }}
       />

@@ -25,6 +25,19 @@ export type ClockInPayload = {
   longitude?: number;
   accuracy?: number;
   wifi_bssid?: string;
+  // Device-biometric (fingerprint / OS auth) fallback used when the face scan
+  // fails. The server only honours this when the office location/wifi check
+  // has ALSO passed - a fingerprint alone cannot clock in remotely.
+  fingerprint_verified?: boolean;
+};
+
+// Clock-out may carry office-presence proof (location / wifi) because
+// verification-enabled orgs restrict clock-out to the office.
+export type ClockOutPayload = {
+  latitude?: number;
+  longitude?: number;
+  accuracy?: number;
+  wifi_bssid?: string;
 };
 
 export function clockIn(
@@ -47,6 +60,6 @@ export function breakEnd() {
   return api.post("/tracker/break-end");
 }
 
-export function clockOut() {
-  return api.post("/tracker/clock-out");
+export function clockOut(payload?: ClockOutPayload) {
+  return api.post("/tracker/clock-out", payload ?? {});
 }

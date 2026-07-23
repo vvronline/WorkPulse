@@ -369,6 +369,25 @@ router.post("/clock-in", auth, loadUserContext, async (req: Request, res: Respon
                     }
                 }
 
+                // Fingerprint fallback: when the client could not pass the face
+                // scan it may fall back to the device biometric (fingerprint /
+                // OS-level auth). We accept that ONLY when office presence has
+                // already been proven above (wifi match or an inside-geofence
+                // fix) - a fingerprint alone is NOT enough to clock in remotely.
+                const fingerprintVerified = req.body?.fingerprint_verified === true;
+                const officePresenceProven =
+                    verifyMeta.verified_via === "wifi" || verifyMeta.verified_via === "geofence";
+                if (fingerprintVerified) {
+                    if (!officePresenceProven) {
+                        return res.status(403).json({
+                            error: "Fingerprint verification is only allowed from the office. Connect to the office Wi-Fi or move inside the office, then try again.",
+                            code: "FINGERPRINT_LOCATION_REQUIRED",
+                        });
+                    }
+                    verifyMeta.face_verified = false;
+                    verifyMeta.verified_via = "fingerprint";
+                    logAction(req, "clock_in_fingerprint_fallback", "time_entry", null, {});
+                } else {
                 // Lock out brute-force face attempts (per-user, sliding window).
                 const failCount = await getFaceFailCount(req.tenantId, req.userId);
                 if (failCount >= FACE_FAIL_LIMIT) {
@@ -433,7 +452,8 @@ router.post("/clock-in", auth, loadUserContext, async (req: Request, res: Respon
                 // Remote clock-ins have no wifi/geofence proof — record that
                 // at least the face check passed.
                 if (!verifyMeta.verified_via) verifyMeta.verified_via = "face";
-            }
+                }
+                }
         }
 
         const txResult = await (req.db as unknown as DbLike).transaction(async (client) => {
@@ -553,11 +573,98 @@ router.post("/break-end", auth, async (req: Request, res: Response) => {
 });
 
 // Clock-out
-router.post("/clock-out", auth, async (req: Request, res: Response) => {
+router.post("/clock-out", auth, loadUserContext, async (req: Request, res: Response) => {
     try {
         const today = getLocalToday(req);
         const tzMod = getTzModifier(req);
 
+        // Office-presence gate: when the org enforces attendance verification,
+        // a clock-out is only allowed from the office (matching office Wi-Fi
+        // BSSID OR a GPS fix inside the geofence). This mirrors the clock-in
+        // verification so employees cannot end their shift from home.
+        if (req.userOrgId) {
+            const orgVerify = (await req.db!.query(
+                `SELECT attendance_verification_enabled, office_latitude, office_longitude, office_radius_m,
+                        office_wifi_bssids, office_wifi_verification_enabled
+                 FROM organizations WHERE id = $1`,
+                [req.userOrgId],
+            )).rows[0];
+
+            if (orgVerify?.attendance_verification_enabled) {
+                // Only enforce when the CURRENT open session was an office
+                // clock-in. Remote sessions carry no office proof, so requiring
+                // office presence to end them would trap the employee.
+                const openClockIn = (await req.db!.query(
+                    `SELECT work_mode FROM time_entries
+                     WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date
+                       AND entry_type = 'clock_in'
+                       AND (approval_status IS NULL OR approval_status != 'rejected')
+                     ORDER BY timestamp DESC, id DESC LIMIT 1`,
+                    [req.userId, today],
+                )).rows[0];
+
+                if (openClockIn?.work_mode === "office") {
+                    const { latitude, longitude, accuracy, wifi_bssid } = req.body || {};
+                    const orgLat = orgVerify.office_latitude != null ? Number(orgVerify.office_latitude) : null;
+                    const orgLng = orgVerify.office_longitude != null ? Number(orgVerify.office_longitude) : null;
+                    const radiusM = Number(orgVerify.office_radius_m) || 150;
+                    const accuracyM = (accuracy != null && Number.isFinite(Number(accuracy)) && Number(accuracy) >= 0)
+                        ? Number(accuracy)
+                        : null;
+
+                    const officeBssids = Array.isArray(orgVerify.office_wifi_bssids)
+                        ? orgVerify.office_wifi_bssids
+                            .map((e: unknown) => (typeof e === "string" ? e : (e as { bssid?: string })?.bssid))
+                            .filter(Boolean)
+                            .map((b: string) => String(b).toUpperCase())
+                        : [];
+                    const normalisedBssid = (typeof wifi_bssid === "string" && wifi_bssid.trim())
+                        ? wifi_bssid.replace(/[^0-9a-fA-F]/g, "").toUpperCase()
+                        : null;
+                    const formattedBssid = normalisedBssid && normalisedBssid.length === 12
+                        ? normalisedBssid.match(/.{2}/g)!.join(":")
+                        : null;
+                    const wifiMatch = !!(
+                        orgVerify.office_wifi_verification_enabled &&
+                        formattedBssid &&
+                        officeBssids.includes(formattedBssid)
+                    );
+
+                    if (!wifiMatch) {
+                        if (orgLat == null || orgLng == null) {
+                            return res.status(400).json({
+                                error: "Office location is not configured. Contact your admin.",
+                                code: "OFFICE_LOCATION_NOT_CONFIGURED",
+                            });
+                        }
+                        if (!isValidLat(latitude) || !isValidLng(longitude)) {
+                            return res.status(400).json({
+                                error: "Location is required to clock out from office. Please allow location access, or connect to the office Wi-Fi.",
+                                code: "LOCATION_REQUIRED",
+                            });
+                        }
+                        const maxAccuracyM = Math.max(radiusM, 200);
+                        if (accuracyM == null || accuracyM > maxAccuracyM) {
+                            return res.status(403).json({
+                                error: accuracyM == null
+                                    ? "Your location fix has no accuracy reading. Enable precise location (GPS/Wi-Fi positioning) and try again, or connect to the office Wi-Fi."
+                                    : `Your location accuracy is ~${Math.round(accuracyM)} m - too coarse for the office geofence (max ~${maxAccuracyM} m). Enable precise location or connect to the office Wi-Fi.`,
+                                code: "LOCATION_TOO_COARSE",
+                            });
+                        }
+                        const distance = Math.round(haversineMeters(Number(latitude), Number(longitude), orgLat, orgLng));
+                        if (distance > radiusM) {
+                            return res.status(403).json({
+                                error: `You are ${distance} m from the office (allowed ${radiusM} m). Clock-out is only allowed from the office. Move closer or connect to the office Wi-Fi.`,
+                                code: "OUTSIDE_GEOFENCE",
+                                distance_m: distance,
+                                radius_m: radiusM,
+                            });
+                        }
+                    }
+                }
+            }
+        }
         const txResult = await (req.db as unknown as DbLike).transaction(async (client) => {
             const lastRes = await client.query(
                 `SELECT * FROM time_entries

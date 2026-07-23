@@ -180,10 +180,10 @@ describe("POST /api/tracker/clock-in", () => {
 
     test("succeeds when not clocked in", async () => {
         setupAuthMocks({ org_id: 1 });
-        // org work_days query — include all days so test passes regardless of day-of-week
+        // org work_days query â€” include all days so test passes regardless of day-of-week
         mockQuery.mockResolvedValueOnce({ rows: [{ work_days: "0,1,2,3,4,5,6" }], rowCount: 1 });
 
-        // transaction: last entry = clock_out (or empty) → allow
+        // transaction: last entry = clock_out (or empty) â†’ allow
         mockTxClient.query
             .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // no last entry
             .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // INSERT
@@ -262,7 +262,7 @@ describe("POST /api/tracker/clock-in", () => {
             })
             .mockResolvedValueOnce({ rows: [{ id: 42 }], rowCount: 1 });                    // approved OT exists
 
-        // transaction: last entry = clock_out → allow login
+        // transaction: last entry = clock_out â†’ allow login
         mockTxClient.query
             .mockResolvedValueOnce({ rows: [{ entry_type: "clock_out" }], rowCount: 1 })
             .mockResolvedValueOnce({ rows: [], rowCount: 0 }); // INSERT clock_in
@@ -286,8 +286,8 @@ describe("POST /api/tracker/clock-out", () => {
     });
 
     test("succeeds when clocked in (last entry is clock_in)", async () => {
-        // auth
-        mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 });
+        // auth + loadUserContext (org_id null -> office-verify block skipped)
+        setupAuthMocks();
 
         mockTxClient.query
             .mockResolvedValueOnce({ rows: [{ entry_type: "clock_in" }], rowCount: 1 }) // last entry
@@ -303,7 +303,7 @@ describe("POST /api/tracker/clock-out", () => {
     });
 
     test("returns 400 when not clocked in", async () => {
-        mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 });
+        setupAuthMocks();
 
         mockTransaction.mockReset().mockImplementation(async () => ({ error: "You are not logged in" }));
 
@@ -317,7 +317,7 @@ describe("POST /api/tracker/clock-out", () => {
     });
 
     test("returns 400 when still on break", async () => {
-        mockQuery.mockResolvedValueOnce({ rows: [{ token_version: 0 }], rowCount: 1 });
+        setupAuthMocks();
 
         mockTransaction.mockReset().mockImplementation(async () => ({ error: "You are still on break. End your break before clocking out." }));
 
@@ -328,6 +328,56 @@ describe("POST /api/tracker/clock-out", () => {
             .set("X-Timezone-Offset", "-330");
         expect(res.status).toBe(400);
         expect(res.body.error).toMatch(/break/i);
+    });
+
+    test("rejects office clock-out when outside the geofence", async () => {
+        setupAuthMocks({ org_id: 1 });
+        mockQuery
+            .mockResolvedValueOnce({
+                rows: [{
+                    attendance_verification_enabled: true,
+                    office_latitude: 10, office_longitude: 20, office_radius_m: 150,
+                    office_wifi_bssids: [], office_wifi_verification_enabled: false,
+                }],
+                rowCount: 1,
+            })
+            .mockResolvedValueOnce({ rows: [{ work_mode: "office" }], rowCount: 1 });
+
+        const res = await request(app)
+            .post("/api/tracker/clock-out")
+            .set(CSRF)
+            .set("Cookie", authCookie())
+            .set("X-Timezone-Offset", "-330")
+            .send({ latitude: 20, longitude: 20, accuracy: 10 });
+        expect(res.status).toBe(403);
+        expect(res.body.code).toBe("OUTSIDE_GEOFENCE");
+    });
+
+    test("allows office clock-out when inside the geofence", async () => {
+        setupAuthMocks({ org_id: 1 });
+        mockQuery
+            .mockResolvedValueOnce({
+                rows: [{
+                    attendance_verification_enabled: true,
+                    office_latitude: 10, office_longitude: 20, office_radius_m: 150,
+                    office_wifi_bssids: [], office_wifi_verification_enabled: false,
+                }],
+                rowCount: 1,
+            })
+            .mockResolvedValueOnce({ rows: [{ work_mode: "office" }], rowCount: 1 });
+
+        mockTxClient.query
+            .mockResolvedValueOnce({ rows: [{ entry_type: "clock_in" }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        const res = await request(app)
+            .post("/api/tracker/clock-out")
+            .set(CSRF)
+            .set("Cookie", authCookie())
+            .set("X-Timezone-Offset", "-330")
+            .send({ latitude: 10, longitude: 20, accuracy: 10 });
+        expect(res.status).toBe(200);
+        expect(res.body.message).toMatch(/logged out/i);
     });
 });
 
