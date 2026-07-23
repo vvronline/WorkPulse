@@ -218,14 +218,19 @@ export default function ManualEntry({ isActive, onEntryChanged }: ManualEntryPro
         timezoneOffset: new Date().getTimezoneOffset(),
       };
 
-      // If editing, use atomic PUT to delete and re-insert in one transaction
+      // If editing, use atomic PUT. For days that already hold approved or
+      // live-tracked entries the server keeps the originals intact and files
+      // a pending manager-approval request instead (non-destructive edit).
+      let serverMsg = "";
       if (isEditMode) {
-        await updateManualEntry(date, entryData);
+        const res = await updateManualEntry(date, entryData);
+        serverMsg = (res?.data as any)?.message || "";
       } else {
-        await addManualEntry({ date, ...entryData });
+        const res = await addManualEntry({ date, ...entryData });
+        serverMsg = (res?.data as any)?.message || "";
       }
 
-      setSuccess(`${isEditMode ? "Entry updated" : "Manual entry submitted"} for ${date}!`);
+      setSuccess(serverMsg || `${isEditMode ? "Entry updated" : "Manual entry submitted"} for ${date}!`);
 
       // If the manual entry is for today and is still open ("Still working" /
       // no clock-out), reflect that in the user's profile status so the
@@ -293,6 +298,22 @@ export default function ManualEntry({ isActive, onEntryChanged }: ManualEntryPro
                 <button type="button" className={s["cancel-edit-btn"]} onClick={handleCancelEdit}>
                   ✕ Cancel
                 </button>
+              </div>
+            )}
+
+            {/* Approval-required notice: editing a day that already holds
+                recorded (approved or live-tracked) entries does not overwrite
+                them. The change is submitted for manager approval and the
+                original entries stay in place until it is approved. */}
+            {isEditMode && existingEntries && existingEntries.length > 0 && (
+              <div className={`${s["existing-entries-warning"]} ${s["approval-required-banner"] || ""}`}>
+                <div className={s["warning-header"]} style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                  <AlertCircle size={14} /> Edits to recorded days require manager approval
+                </div>
+                <p className={s["warning-helper-text"]}>
+                  Your existing entries stay in place. This edit will be sent to your
+                  manager for approval and only applied once approved.
+                </p>
               </div>
             )}
 

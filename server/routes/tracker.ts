@@ -1128,12 +1128,25 @@ router.put("/manual-entry/:date", auth, loadUserContext, async (req: Request, re
         let needsApproval = !isSuperAdmin;
 
         const tzMod = getTzModifier(req);
+        const resolvedWorkMode = VALID_WORK_MODES.includes(work_mode) ? work_mode : "office";
 
-        // Protect existing entries: the edit deletes-and-recreates the whole
-        // day, so refuse when the date holds already-APPROVED entries or
-        // live-tracked (non-manual) entries — those carry face/location
-        // verification data that an edit would silently destroy. Mirrors the
-        // guard on DELETE /entries/:date. (super_admin may still edit.)
+        // Normalise the proposed breaks so both the immediate-apply path and
+        // the pending-approval metadata share an identical, sorted shape.
+        const normalizedBreaks = (breaks && Array.isArray(breaks))
+            ? [...breaks]
+                .filter((b) => b && b.start && b.end)
+                .sort((a, b) => a.start.localeCompare(b.start))
+                .map((b) => ({ start: b.start, end: b.end }))
+            : [];
+
+        // Detect whether this date holds "protected" data - already-APPROVED
+        // entries or live-tracked (non-manual) entries that carry face/location
+        // verification. Such days are no longer hard-blocked from editing:
+        // non-super-admins may edit them, but the change is held as a PENDING
+        // approval request WITHOUT touching the original rows, so the verified
+        // record stays the source of truth until a manager approves.
+        // (super_admin still applies edits immediately.)
+        let hasProtectedData = false;
         if (!isSuperAdmin) {
             const protectedRes = await req.db!.query(
                 `SELECT 1 FROM time_entries
@@ -1142,67 +1155,99 @@ router.put("/manual-entry/:date", auth, loadUserContext, async (req: Request, re
                  LIMIT 1`,
                 [req.userId, date],
             );
-            if (protectedRes.rowCount > 0) {
-                return res.status(403).json({
-                    error: "This date has approved or live-tracked entries which cannot be edited. Contact your manager to adjust them.",
-                });
-            }
+            hasProtectedData = protectedRes.rowCount > 0;
         }
 
         const clockInTs = toUTC(date, clock_in);
         const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
         let txApproverEdit: any = null;
 
-        await (req.db as unknown as DbLike).transaction(async (client) => {
-            await client.query(
-                `UPDATE approval_requests
-                 SET status = 'rejected', reject_reason = 'Superseded by edit'
-                 WHERE requester_id = $1 AND type = 'manual_entry' AND status = 'pending'
-                   AND metadata::jsonb->>'date' = $2`,
-                [req.userId, date],
-            );
+        // Full proposed day, stored on the approval request so the manager's
+        // approve handler can apply it non-destructively. `edit: true` marks
+        // this as an edit-request payload (vs a legacy in-place pending edit).
+        const proposedDay = {
+            date,
+            clock_in,
+            clock_out: clock_out || null,
+            breaks: normalizedBreaks,
+            work_mode: resolvedWorkMode,
+            timezone_offset: (typeof timezoneOffset === "number") ? timezoneOffset : 0,
+            edit: true,
+        };
 
-            await client.query(
-                `DELETE FROM time_entries WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date`,
-                [req.userId, date],
-            );
-
-            const ins = (uid: number | undefined, type: string, ts: string, wm: string | null) => client.query(
-                "INSERT INTO time_entries (user_id, entry_type, timestamp, work_mode, is_manual, approval_status) VALUES ($1,$2,$3,$4,TRUE,$5)",
-                [uid, type, ts, wm || null, approvalStatus],
-            );
-            await ins(req.userId, "clock_in", clockInTs, VALID_WORK_MODES.includes(work_mode) ? work_mode : "office");
-            if (breaks && Array.isArray(breaks)) {
-                const sorted = [...breaks].sort((a, b) => a.start.localeCompare(b.start));
-                for (const brk of sorted) {
-                    await ins(req.userId, "break_start", toUTC(date, brk.start), null);
-                    await ins(req.userId, "break_end", toUTC(date, brk.end), null);
-                }
-            }
-            if (clockOutTs) await ins(req.userId, "clock_out", clockOutTs, null);
-
-            if (needsApproval) {
+        if (hasProtectedData) {
+            // NON-DESTRUCTIVE PATH: keep existing verified entries intact.
+            // Supersede any prior pending edit request for this date, then
+            // insert a fresh pending request carrying the full proposed day.
+            await (req.db as unknown as DbLike).transaction(async (client) => {
+                await client.query(
+                    `UPDATE approval_requests
+                     SET status = 'rejected', reject_reason = 'Superseded by edit'
+                     WHERE requester_id = $1 AND type = 'manual_entry' AND status = 'pending'
+                       AND metadata::jsonb->>'date' = $2`,
+                    [req.userId, date],
+                );
                 const approver = await findApprover(req.db, req.userId, req.userOrgId);
                 txApproverEdit = approver;
                 await client.query(
                     `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
                      VALUES ($1,$2,$3,'manual_entry',NULL,$4,$5)`,
-                    [req.userOrgId || null, req.userId, approver?.id || null, "Manual time entry (edited)",
-                    JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: VALID_WORK_MODES.includes(work_mode) ? work_mode : "office" })],
+                    [req.userOrgId || null, req.userId, approver?.id || null, "Manual time entry (edit request)",
+                    JSON.stringify(proposedDay)],
                 );
-            }
-        });
+            });
+        } else {
+            // NO PROTECTED DATA: only pending manual rows (or none) exist, so
+            // nothing verified is lost. Apply delete-and-reinsert directly
+            // (immediately for super_admin; as pending rows otherwise).
+            await (req.db as unknown as DbLike).transaction(async (client) => {
+                await client.query(
+                    `UPDATE approval_requests
+                     SET status = 'rejected', reject_reason = 'Superseded by edit'
+                     WHERE requester_id = $1 AND type = 'manual_entry' AND status = 'pending'
+                       AND metadata::jsonb->>'date' = $2`,
+                    [req.userId, date],
+                );
+                await client.query(
+                    `DELETE FROM time_entries WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date`,
+                    [req.userId, date],
+                );
+                const ins = (uid: number | undefined, type: string, ts: string, wm: string | null) => client.query(
+                    "INSERT INTO time_entries (user_id, entry_type, timestamp, work_mode, is_manual, approval_status) VALUES ($1,$2,$3,$4,TRUE,$5)",
+                    [uid, type, ts, wm || null, approvalStatus],
+                );
+                await ins(req.userId, "clock_in", clockInTs, resolvedWorkMode);
+                for (const brk of normalizedBreaks) {
+                    await ins(req.userId, "break_start", toUTC(date, brk.start), null);
+                    await ins(req.userId, "break_end", toUTC(date, brk.end), null);
+                }
+                if (clockOutTs) await ins(req.userId, "clock_out", clockOutTs, null);
+                if (needsApproval) {
+                    const approver = await findApprover(req.db, req.userId, req.userOrgId);
+                    txApproverEdit = approver;
+                    await client.query(
+                        `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
+                         VALUES ($1,$2,$3,'manual_entry',NULL,$4,$5)`,
+                        [req.userOrgId || null, req.userId, approver?.id || null, "Manual time entry (edited)",
+                        JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: resolvedWorkMode })],
+                    );
+                }
+            });
+        }
+
+        // When protected data exists the change is always pending approval.
+        const isPendingEdit = hasProtectedData || needsApproval;
 
         // Respond immediately after the transaction commits — see the POST
         // handler above for why the notification fan-out is deferred.
-        logAction(req, "update", "manual_entry", null, { date, clock_in, clock_out: clock_out || null, status: approvalStatus });
+        logAction(req, "update", "manual_entry", null, { date, clock_in, clock_out: clock_out || null, status: isPendingEdit ? "pending" : approvalStatus, non_destructive: hasProtectedData });
         res.json({
-            message: needsApproval ? "Entry updated and submitted for approval" : "Entry updated successfully",
-            status: approvalStatus,
-            needsApproval,
+            message: isPendingEdit ? "Your edit was submitted for manager approval. Your original entries stay in place until it is approved." : "Entry updated successfully",
+            status: isPendingEdit ? "pending" : approvalStatus,
+            needsApproval: isPendingEdit,
         });
 
-        if (needsApproval && txApproverEdit?.id) {
+        if (isPendingEdit && txApproverEdit?.id) {
             void (async () => {
                 try {
                     const requesterName = (await req.db!.query("SELECT full_name FROM users WHERE id = $1", [req.userId])).rows[0]?.full_name || "A team member";

@@ -459,14 +459,52 @@ router.post("/approvals/:id/approve", async (req: Request, res: Response) => {
                 let metadata: any = {};
                 if (approval.metadata) { try { metadata = JSON.parse(approval.metadata); } catch { } }
                 if (metadata.date) {
-                    // Use the requester's stored timezone, not the manager's header
+                    // Use the requester's stored timezone, not the manager's header.
                     const requesterRow = (await client.query("SELECT timezone_offset FROM users WHERE id = $1", [approval.requester_id])).rows[0];
                     const reqOffset = requesterRow?.timezone_offset || 0;
                     const tzMod = `${-reqOffset} minutes`;
-                    await client.query(
-                        `UPDATE time_entries SET approval_status = 'approved', approved_by = $1 WHERE user_id = $2 AND (timestamp + $3::interval)::date = $4::date AND is_manual = TRUE`,
-                        [req.userId, approval.requester_id, tzMod, metadata.date]
-                    );
+                    if (metadata.edit === true && metadata.clock_in) {
+                        // NON-DESTRUCTIVE EDIT REQUEST: the original verified
+                        // entries were kept in place while pending. Now that the
+                        // manager approved, apply the proposed day: remove the old
+                        // rows for that date and insert the edited ones as approved.
+                        const offsetMs = reqOffset * 60000;
+                        const toUTC = (dateStr: string, timeStr: string) => {
+                            const [y, m, d] = dateStr.split("-").map(Number);
+                            const [hh, mm] = timeStr.split(":").map(Number);
+                            return new Date(Date.UTC(y, m - 1, d, hh, mm, 0) + offsetMs).toISOString();
+                        };
+                        const VALID_WM = ["office", "remote", "hybrid"];
+                        const wm = VALID_WM.includes(metadata.work_mode) ? metadata.work_mode : "office";
+                        await client.query(
+                            `DELETE FROM time_entries WHERE user_id = $1 AND (timestamp + $2::interval)::date = $3::date`,
+                            [approval.requester_id, tzMod, metadata.date]
+                        );
+                        const ins = (type: string, ts: string, mode: string | null) => client.query(
+                            "INSERT INTO time_entries (user_id, entry_type, timestamp, work_mode, is_manual, approval_status, approved_by) VALUES ($1,$2,$3,$4,TRUE,'approved',$5)",
+                            [approval.requester_id, type, ts, mode || null, req.userId]
+                        );
+                        await ins("clock_in", toUTC(metadata.date, metadata.clock_in), wm);
+                        if (Array.isArray(metadata.breaks)) {
+                            const sorted = [...metadata.breaks]
+                                .filter((b: any) => b && b.start && b.end)
+                                .sort((a: any, b: any) => a.start.localeCompare(b.start));
+                            for (const brk of sorted) {
+                                await ins("break_start", toUTC(metadata.date, brk.start), null);
+                                await ins("break_end", toUTC(metadata.date, brk.end), null);
+                            }
+                        }
+                        if (metadata.clock_out) {
+                            await ins("clock_out", toUTC(metadata.date, metadata.clock_out), null);
+                        }
+                    } else {
+                        // LEGACY / normal manual entry: rows were already inserted
+                        // as pending, so just flip them to approved.
+                        await client.query(
+                            `UPDATE time_entries SET approval_status = 'approved', approved_by = $1 WHERE user_id = $2 AND (timestamp + $3::interval)::date = $4::date AND is_manual = TRUE`,
+                            [req.userId, approval.requester_id, tzMod, metadata.date]
+                        );
+                    }
                 }
             } else if (approval.type === "overtime") {
                 // Credit comp-off leave balance for the overtime worked
@@ -568,7 +606,11 @@ router.post("/approvals/:id/reject", async (req: Request, res: Response) => {
             } else if (approval.type === "manual_entry") {
                 let metadata: any = {};
                 if (approval.metadata) { try { metadata = JSON.parse(approval.metadata); } catch { } }
-                if (metadata.date) {
+                // NON-DESTRUCTIVE EDIT REQUEST: the original verified entries were
+                // never modified while the edit was pending, so rejecting simply
+                // discards the request and leaves the source-of-truth intact.
+                // Only legacy in-place pending rows need to be marked rejected.
+                if (metadata.date && metadata.edit !== true) {
                     // Use the requester's stored timezone, not the manager's header
                     const requesterRow = (await client.query("SELECT timezone_offset FROM users WHERE id = $1", [approval.requester_id])).rows[0];
                     const reqOffset = requesterRow?.timezone_offset || 0;

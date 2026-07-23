@@ -27,6 +27,16 @@ jest.mock("../utils/audit", () => ({
     queryLogs: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
 }));
 
+// Force loadUserContext down its deterministic DB path (see chat.routes.test).
+jest.mock("../redis", () => {
+    const actual = jest.requireActual("../redis");
+    return {
+        ...actual,
+        getUserContext: jest.fn().mockResolvedValue(null),
+        setUserContext: jest.fn().mockResolvedValue(undefined),
+    };
+});
+
 const jwt = require("jsonwebtoken");
 const request = require("supertest");
 
@@ -173,5 +183,75 @@ describe("POST /api/manager/approvals/bulk", () => {
             .set("Cookie", authCookie())
             .send({ ids: [1, 2], action: "invalid" });
         expect(res.status).toBe(400);
+    });
+});
+
+describe("POST /api/manager/approvals/:id/(approve|reject) - manual_entry edit", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+        mockTxClient.query.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+        mockTransaction.mockReset().mockImplementation(async (fn: any) => fn(mockTxClient));
+    });
+
+    const editMeta = JSON.stringify({
+        date: "2024-03-10",
+        clock_in: "09:00",
+        clock_out: "17:00",
+        breaks: [{ start: "12:00", end: "12:30" }],
+        work_mode: "office",
+        timezone_offset: 0,
+        edit: true,
+    });
+
+    test("approve applies the edited day: deletes old rows and inserts approved ones", async () => {
+        setupAuth("team_lead", { role_level: 3 });
+        mockTxClient.query
+            // SELECT approval_requests
+            .mockResolvedValueOnce({ rows: [{ id: 5, org_id: 1, requester_id: 2, approver_id: 1, status: "pending", type: "manual_entry", reference_id: null, metadata: editMeta }], rowCount: 1 })
+            // isDirectManager probe
+            .mockResolvedValueOnce({ rows: [{ "?column?": 1 }], rowCount: 1 })
+            // UPDATE approval_requests -> approved
+            .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+            // SELECT requester timezone_offset
+            .mockResolvedValueOnce({ rows: [{ timezone_offset: 0 }], rowCount: 1 });
+
+        const res = await request(app)
+            .post("/api/manager/approvals/5/approve")
+            .set(CSRF)
+            .set("Cookie", authCookie())
+            .set("X-Timezone-Offset", "-330");
+
+        expect(res.status).toBe(200);
+        expect(res.body.message).toMatch(/approved/i);
+        const txSql = mockTxClient.query.mock.calls.map((c: any[]) => String(c[0]));
+        expect(txSql.some((s: string) => /DELETE FROM time_entries/i.test(s))).toBe(true);
+        const inserts = txSql.filter((s: string) => /INSERT INTO time_entries/i.test(s));
+        // clock_in + break_start + break_end + clock_out = 4 inserts
+        expect(inserts.length).toBe(4);
+        // Inserted rows are approved, not pending.
+        expect(inserts.every((s: string) => /'approved'/i.test(s))).toBe(true);
+    });
+
+    test("reject leaves time_entries untouched for an edit request", async () => {
+        setupAuth("team_lead", { role_level: 3 });
+        mockTxClient.query
+            // SELECT approval_requests
+            .mockResolvedValueOnce({ rows: [{ id: 5, org_id: 1, requester_id: 2, approver_id: 1, status: "pending", type: "manual_entry", reference_id: null, metadata: editMeta }], rowCount: 1 })
+            // isDirectManager probe
+            .mockResolvedValueOnce({ rows: [{ "?column?": 1 }], rowCount: 1 })
+            // UPDATE approval_requests -> rejected
+            .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+        const res = await request(app)
+            .post("/api/manager/approvals/5/reject")
+            .set(CSRF)
+            .set("Cookie", authCookie())
+            .send({ reject_reason: "Times look off" });
+
+        expect(res.status).toBe(200);
+        expect(res.body.message).toMatch(/rejected/i);
+        const txSql = mockTxClient.query.mock.calls.map((c: any[]) => String(c[0]));
+        // Non-destructive edit rejection must NOT touch time_entries at all.
+        expect(txSql.some((s: string) => /time_entries/i.test(s))).toBe(false);
     });
 });

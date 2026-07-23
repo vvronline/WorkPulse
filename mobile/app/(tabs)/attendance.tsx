@@ -781,14 +781,21 @@ function ManualTab() {
         timezoneOffset: new Date().getTimezoneOffset(),
         work_mode: workMode,
       };
+      let serverMsg = "";
       if (isEditMode) {
-        await updateManualEntry(date, payload);
+        // For days that already hold recorded (approved / live-tracked)
+        // entries the server keeps the originals intact and files a pending
+        // manager-approval request instead of overwriting them.
+        const res = await updateManualEntry(date, payload);
+        serverMsg = (res?.data as any)?.message || "";
       } else {
-        await addManualEntry({ date, ...payload });
+        const res = await addManualEntry({ date, ...payload });
+        serverMsg = (res?.data as any)?.message || "";
       }
       Alert.alert(
         "Submitted",
-        `${isEditMode ? "Entry updated" : "Manual entry submitted"} for ${date}. It may require approval.`,
+        serverMsg ||
+          `${isEditMode ? "Entry updated" : "Manual entry submitted"} for ${date}. It may require approval.`,
       );
       setIsEditMode(false);
       loadPending();
@@ -823,14 +830,27 @@ function ManualTab() {
           <DatePicker value={date} onChange={setDate} maxDate={todayKey} />
         </>
       ) : (
-        <View style={styles.editBanner}>
-          <Text style={styles.editBannerText}>
-            Editing entry for <Text style={{ fontWeight: "800" }}>{date}</Text>
-          </Text>
-          <Pressable onPress={() => setIsEditMode(false)} hitSlop={8}>
-            <X size={16} color={theme.textSecondary} />
-          </Pressable>
-        </View>
+        <>
+          <View style={styles.editBanner}>
+            <Text style={styles.editBannerText}>
+              Editing entry for <Text style={{ fontWeight: "800" }}>{date}</Text>
+            </Text>
+            <Pressable onPress={() => setIsEditMode(false)} hitSlop={8}>
+              <X size={16} color={theme.textSecondary} />
+            </Pressable>
+          </View>
+          {existingEntries && existingEntries.length > 0 ? (
+            <View style={[styles.warnCard, styles.warnExisting]}>
+              <Text style={styles.warnTitle}>
+                Edits to recorded days require manager approval
+              </Text>
+              <Text style={styles.warnBody}>
+                Your existing entries stay in place. This edit will be sent to
+                your manager for approval and only applied once approved.
+              </Text>
+            </View>
+          ) : null}
+        </>
       )}
 
       {checking ? (

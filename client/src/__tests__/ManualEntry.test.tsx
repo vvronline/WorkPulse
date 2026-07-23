@@ -16,6 +16,7 @@ vi.mock("../ThemeContext", () => ({
 // tracker events don't write status. No mock needed.
 
 const mockAddManualEntry = vi.fn();
+const mockUpdateManualEntry = vi.fn();
 const mockGetEntries = vi.fn();
 const mockGetLeaves = vi.fn();
 const mockGetStatus = vi.fn();
@@ -27,7 +28,7 @@ const mockGetCurrentOrg = vi.fn();
 
 vi.mock("../api", () => ({
     addManualEntry: (...args: any[]) => mockAddManualEntry(...args),
-    updateManualEntry: vi.fn().mockResolvedValue({ data: { message: "Updated" } }),
+    updateManualEntry: (...args: any[]) => mockUpdateManualEntry(...args),
     deleteEntries: vi.fn().mockResolvedValue({ data: { message: "Deleted" } }),
     getEntries: (...args: any[]) => mockGetEntries(...args),
     getLeaves: (...args: any[]) => mockGetLeaves(...args),
@@ -158,5 +159,63 @@ describe("ManualEntry page - pending requests display", () => {
         });
         // No row items rendered for requests
         expect(screen.queryByTestId("pending-request-row")).not.toBeInTheDocument();
+    });
+});
+
+// -- Non-destructive edit workflow ------------------------------------------
+
+describe("ManualEntry page - edit approval workflow", () => {
+    beforeEach(() => {
+        mockGetManualEntryRequests.mockReset().mockResolvedValue({ data: [] });
+        mockGetOvertimeRequests.mockReset().mockResolvedValue({ data: [] });
+        mockGetCurrentOrg.mockReset().mockResolvedValue({ data: {} });
+        mockGetLeaves.mockReset().mockResolvedValue({ data: [] });
+        mockGetStatus.mockReset().mockResolvedValue({ data: { state: "logged_out" } });
+        mockAddManualEntry.mockReset();
+        mockUpdateManualEntry.mockReset();
+        mockGetLocalToday.mockReset().mockReturnValue("2024-03-20");
+        // A recorded day with an approved clock-in / clock-out pair.
+        mockGetEntries.mockReset().mockResolvedValue({
+            data: [
+                { entry_type: "clock_in", timestamp: "2024-03-10T09:00:00.000Z", work_mode: "office", is_manual: false, approval_status: "approved" },
+                { entry_type: "clock_out", timestamp: "2024-03-10T17:00:00.000Z", is_manual: false, approval_status: "approved" },
+            ],
+        });
+    });
+
+    async function enterEditMode() {
+        const { container } = renderManualEntry();
+        const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+        fireEvent.change(dateInput, { target: { value: "2024-03-10" } });
+        // Wait for existing entries to load and the edit button to appear.
+        const editBtn = await screen.findByText(/Edit These Entries/i);
+        fireEvent.click(editBtn);
+        return container;
+    }
+
+    test("shows the manager-approval banner when editing a recorded day", async () => {
+        await enterEditMode();
+        expect(
+            await screen.findByText(/require manager approval/i),
+        ).toBeInTheDocument();
+    });
+
+    test("submitting an edit surfaces the server's approval message", async () => {
+        mockUpdateManualEntry.mockResolvedValue({
+            data: {
+                message: "Your edit was submitted for manager approval. Your original entries stay in place until it is approved.",
+                status: "pending",
+                needsApproval: true,
+            },
+        });
+        const container = await enterEditMode();
+        const form = container.querySelector("form") as HTMLFormElement;
+        fireEvent.submit(form);
+        await waitFor(() => {
+            expect(mockUpdateManualEntry).toHaveBeenCalledWith("2024-03-10", expect.any(Object));
+        });
+        expect(
+            await screen.findByText(/submitted for manager approval/i),
+        ).toBeInTheDocument();
     });
 });

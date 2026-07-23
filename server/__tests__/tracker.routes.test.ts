@@ -27,6 +27,20 @@ jest.mock("../utils/audit", () => ({
     queryLogs: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
 }));
 
+// Force loadUserContext down its deterministic DB path: with the user-context
+// cache always missing, every request runs the same `SELECT ... is_active FROM
+// users` lookup, so the per-test mockQuery chains stay stable (otherwise the
+// first test would warm the cache and later tests would skip the user lookup,
+// shifting their mock sequence).
+jest.mock("../redis", () => {
+    const actual = jest.requireActual("../redis");
+    return {
+        ...actual,
+        getUserContext: jest.fn().mockResolvedValue(null),
+        setUserContext: jest.fn().mockResolvedValue(undefined),
+    };
+});
+
 const jwt = require("jsonwebtoken");
 const request = require("supertest");
 
@@ -541,5 +555,88 @@ describe("GET /api/tracker/widgets", () => {
 
         expect(res.status).toBe(200);
         expect(res.body.attendancePercent).toBe(0);
+    });
+});
+
+describe("PUT /api/tracker/manual-entry/:date (non-destructive edit)", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+        mockTxClient.query.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+        mockTransaction.mockReset().mockImplementation(async (fn: any) => fn(mockTxClient));
+    });
+
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+
+    test("keeps existing entries and queues a pending approval when the day holds protected data", async () => {
+        setupAuthMocks({ id: 1, role: "employee", org_id: null });
+        mockQuery
+            // leave conflict check
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+            // protected-data probe: an approved / live-tracked row exists
+            .mockResolvedValueOnce({ rows: [{ "?column?": 1 }], rowCount: 1 });
+
+        const res = await request(app)
+            .put(`/api/tracker/manual-entry/${yesterday}`)
+            .set("Cookie", authCookie())
+            .set(CSRF)
+            .set("X-Timezone-Offset", "0")
+            .send({ clock_in: "09:00", clock_out: "17:00", work_mode: "office" });
+
+        if (res.status !== 200) { console.log("DBG body", JSON.stringify(res.body)); console.log("DBG mockQuery n", mockQuery.mock.calls.length); }
+        expect(res.status).toBe(200);
+        expect(res.body.status).toBe("pending");
+        expect(res.body.needsApproval).toBe(true);
+        expect(res.body.message).toMatch(/manager approval/i);
+
+        // The verified time_entries rows must NOT be deleted on this path.
+        const txSql = mockTxClient.query.mock.calls.map((c: any[]) => String(c[0]));
+        expect(txSql.some((s: string) => /DELETE FROM time_entries/i.test(s))).toBe(false);
+        // A fresh pending approval_requests row is inserted with the proposal.
+        expect(txSql.some((s: string) => /INSERT INTO approval_requests/i.test(s))).toBe(true);
+        // The stored metadata marks this as an edit request.
+        const insertCall = mockTxClient.query.mock.calls.find(
+            (c: any[]) => /INSERT INTO approval_requests/i.test(String(c[0])),
+        );
+        const metadata = JSON.parse(insertCall[1][insertCall[1].length - 1]);
+        expect(metadata.edit).toBe(true);
+        expect(metadata.date).toBe(yesterday);
+        expect(metadata.clock_in).toBe("09:00");
+        expect(metadata.clock_out).toBe("17:00");
+    });
+
+    test("applies delete-and-reinsert directly when only pending/no data exists", async () => {
+        setupAuthMocks({ id: 1, role: "employee", org_id: null });
+        mockQuery
+            // leave conflict check
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+            // protected-data probe: nothing verified on this day
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        const res = await request(app)
+            .put(`/api/tracker/manual-entry/${yesterday}`)
+            .set("Cookie", authCookie())
+            .set(CSRF)
+            .set("X-Timezone-Offset", "0")
+            .send({ clock_in: "09:00", clock_out: "17:00", work_mode: "office" });
+
+        expect(res.status).toBe(200);
+        // Non-super-admin edit still needs approval, but rows are re-inserted
+        // as pending (no verified data is lost).
+        expect(res.body.needsApproval).toBe(true);
+        const txSql = mockTxClient.query.mock.calls.map((c: any[]) => String(c[0]));
+        expect(txSql.some((s: string) => /DELETE FROM time_entries/i.test(s))).toBe(true);
+        expect(txSql.some((s: string) => /INSERT INTO time_entries/i.test(s))).toBe(true);
+    });
+
+    test("rejects a future date", async () => {
+        setupAuthMocks({ id: 1, role: "employee", org_id: null });
+        const future = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+        const res = await request(app)
+            .put(`/api/tracker/manual-entry/${future}`)
+            .set("Cookie", authCookie())
+            .set(CSRF)
+            .set("X-Timezone-Offset", "0")
+            .send({ clock_in: "09:00", clock_out: "17:00" });
+        expect(res.status).toBe(400);
     });
 });
