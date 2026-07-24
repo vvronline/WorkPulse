@@ -96,3 +96,68 @@
     justify-content: center;
     gap: 0.5rem;
 }
+
+/* Phase 1: live coaching + capture feedback */
+
+/* Green success affirmation overlay shown briefly after a capture resolves. */
+.successOverlay {
+    background: rgba(16, 122, 87, 0.72);
+    animation: popIn 0.18s ease-out;
+}
+
+.successOverlay svg {
+    color: #fff;
+}
+
+@keyframes popIn {
+    from {
+        opacity: 0;
+        transform: scale(0.92);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Frame guide recolours with the live detection quality. */
+.frameGuideWeak {
+    border-color: rgba(245, 158, 11, 0.85);
+}
+
+.frameGuideGood {
+    border-color: rgba(34, 197, 94, 0.9);
+}
+
+/* Coaching hint turns green once a confident face is locked. */
+.autoHintGood {
+    background: rgba(16, 122, 87, 0.85);
+}
+
+/* Consecutive-hit progress dots inside the coaching pill. */
+.progressDots {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 4px;
+}
+
+.progressDot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.35);
+    transition: background 0.15s ease;
+}
+
+.progressDotOn {
+    background: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .spin,
+    .successOverlay {
+        animation: none;
+    }
+}

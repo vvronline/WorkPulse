@@ -20,6 +20,7 @@ import * as LocalAuthentication from "expo-local-authentication";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import FaceCaptureWebView from "./FaceCaptureWebView";
+import VerifyError from "./VerifyError";
 import { getOfficeSignals, type Position } from "../utils/officeSignals";
 import { getCurrentOrg } from "../features";
 import { clockIn, getTrackerStatus, type ClockInPayload } from "../tracker";
@@ -433,23 +434,7 @@ export default function ClockInVerifyModal({
                     </Text>
                   </View>
                 ) : null}
-                {submitErr ? (
-                  <View style={styles.submitErr}>
-                    {submitErr.kind === "location" ? (
-                      <MapPin size={16} color={theme.danger} />
-                    ) : (
-                      <AlertTriangle size={16} color={theme.danger} />
-                    )}
-                    <View style={styles.submitErrTextWrap}>
-                      <Text style={styles.submitErrTitle}>
-                        {submitErr.title}
-                      </Text>
-                      <Text style={styles.submitErrText}>
-                        {submitErr.message}
-                      </Text>
-                    </View>
-                  </View>
-                ) : null}
+                {submitErr ? <VerifyError info={submitErr} /> : null}
                 {/* Fingerprint fallback: offered after a FACE failure when a
                     location is required (office/hybrid). Location is already
                     captured, so the server can still enforce the geofence. */}

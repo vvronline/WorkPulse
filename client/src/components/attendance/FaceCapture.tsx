@@ -3,7 +3,18 @@ import { Camera, RotateCcw, CheckCircle2, AlertTriangle, Loader2 } from "lucide-
 import { loadFaceModels, extractDescriptor, detectFaceScore, getWebcamStream, stopStream } from "../../utils/faceApi";
 import s from "./FaceCapture.module.css";
 
-type CaptureState = "idle" | "loading" | "ready" | "capturing" | "error";
+type CaptureState = "idle" | "loading" | "ready" | "capturing" | "error" | "success";
+
+// Real-time coaching quality derived from the live detector score:
+//   none  → no face in frame
+//   weak  → a face is present but not confident enough (too far / poor light)
+//   good  → confident detection, capture imminent
+type CaptureQuality = "none" | "weak" | "good";
+
+// Detector-score thresholds for the coaching hints. `detectFaceScore` returns
+// the TinyFaceDetector confidence (0–1). We treat >=0.5 as "seen" (matches the
+// auto-capture gate) and >=0.7 as a confident/"good" frame.
+const QUALITY_GOOD_SCORE = 0.7;
 
 interface FaceCaptureProps {
     autoStart?: boolean;
@@ -52,7 +63,11 @@ export default function FaceCapture({
     const streamRef = useRef<MediaStream | null>(null);
     const [state, setState] = useState<CaptureState>("idle");
     const [error, setError] = useState<string | null>(null);
-    const [faceSeen, setFaceSeen] = useState(false);
+    // Live coaching quality + how many consecutive confident frames we've seen
+    // (0..AUTO_CONSECUTIVE_HITS) — powers the coaching hint text and the
+    // capture-progress ring around the frame guide.
+    const [quality, setQuality] = useState<CaptureQuality>("none");
+    const [progressHits, setProgressHits] = useState(0);
 
     const start = useCallback(async () => {
         setState("loading");
@@ -101,7 +116,9 @@ export default function FaceCapture({
                 return;
             }
             await onCapture?.(descriptor);
-            setState("ready");
+            // Brief success affirmation before the parent tears down the modal.
+            setState("success");
+            return;
         } catch (err) {
             const msg = (err as Error)?.message || "Failed to capture face";
             setError(msg);
@@ -126,14 +143,18 @@ export default function FaceCapture({
                 if (cancelled) return;
                 if (score != null && score >= 0.5) {
                     hits++;
-                    setFaceSeen(true);
+                    setProgressHits(Math.min(hits, AUTO_CONSECUTIVE_HITS));
+                    // A face is present but not confident enough -> coach;
+                    // a confident frame means capture is imminent.
+                    setQuality(score >= QUALITY_GOOD_SCORE ? "good" : "weak");
                     if (hits >= AUTO_CONSECUTIVE_HITS) {
                         handleCapture();
                         return; // state change re-arms the effect after capture
                     }
                 } else {
                     hits = 0;
-                    setFaceSeen(false);
+                    setProgressHits(0);
+                    setQuality("none");
                 }
             } catch { /* model not ready yet — keep polling */ }
             timer = setTimeout(poll, AUTO_POLL_MS);
@@ -145,6 +166,16 @@ export default function FaceCapture({
             if (timer) clearTimeout(timer);
         };
     }, [autoCapture, disabled, state, handleCapture]);
+
+    // Live coaching copy shown on the frame while auto-capture waits for a
+    // clean, confident face.
+    const coachHint =
+        quality === "good"
+            ? "Hold still - verifying..."
+            : quality === "weak"
+              ? "Move closer & face the light"
+              : "Position your face in the frame";
+
 
     return (
         <div className={s.wrap}>
@@ -168,17 +199,38 @@ export default function FaceCapture({
                 {state === "capturing" && (
                     <div className={s.overlay}>
                         <Loader2 size={26} className={s.spin} />
-                        <div className={s.overlayText}>Analysing…</div>
+                        <div className={s.overlayText}>Analysing...</div>
                     </div>
                 )}
+                {state === "success" && (
+                    <div className={`${s.overlay} ${s.successOverlay}`}>
+                        <CheckCircle2 size={30} />
+                        <div className={s.overlayText}>Verified</div>
+                    </div>
+                )}
+
                 {state === "ready" && (
-                    <div className={s.frameGuide} aria-hidden="true" />
+                    <div
+                        className={`${s.frameGuide} ${quality === "good" ? s.frameGuideGood : quality === "weak" ? s.frameGuideWeak : ""}`}
+                        aria-hidden="true"
+                    />
                 )}
                 {autoCapture && state === "ready" && (
-                    <div className={s.autoHint}>
-                        {faceSeen
-                            ? <><CheckCircle2 size={13} /> Face detected — capturing…</>
-                            : "Position your face in the frame"}
+                    <div
+                        className={`${s.autoHint} ${quality === "good" ? s.autoHintGood : ""}`}
+                        aria-live="polite"
+                    >
+                        {quality !== "none" && <CheckCircle2 size={13} />} {coachHint}
+                        {progressHits > 0 && (
+                            <span className={s.progressDots} aria-hidden="true">
+                                {Array.from({ length: AUTO_CONSECUTIVE_HITS }).map((_, i) => (
+                                    <span
+                                        key={i}
+                                        className={`${s.progressDot} ${i < progressHits ? s.progressDotOn : ""}`}
+                                    />
+                                ))}
+                            </span>
+                        )}
                     </div>
                 )}
             </div>

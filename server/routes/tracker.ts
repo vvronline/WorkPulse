@@ -156,7 +156,13 @@ router.get("/status", auth, async (req: Request, res: Response) => {
         }
 
         status.isWeekend = isWeekend;
-        const clockInEntry = entries.find((e) => e.entry_type === "clock_in");
+        // Report the CURRENT/open session's work mode (the latest clock-in of
+        // the day), not the first. A user may have an earlier office session
+        // and then start a new remote one; using the first clock-in would
+        // mislabel the open session as "office" and make clients wrongly
+        // demand office (Wi-Fi/geofence) verification on clock-out. This
+        // mirrors the clock-out enforcement, which keys off the latest clock-in.
+        const clockInEntry = [...entries].reverse().find((e) => e.entry_type === "clock_in");
         status.workMode = clockInEntry?.work_mode || "office";
         status.targetMinutes = targetMinutes;
         status.dailyTargetMet = status.floorMinutes >= targetMinutes;

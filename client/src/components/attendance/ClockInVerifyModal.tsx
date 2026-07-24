@@ -5,6 +5,8 @@ import { preloadFaceModels } from "../../utils/faceApi";
 import { getOfficeSignals, geolocationErrorMessage } from "../../utils/geolocation";
 import type { Position, WifiInfo, PositionSource } from "../../utils/geolocation";
 import { getCurrentOrg } from "../../api";
+import { useNavigate } from "react-router-dom";
+import VerifyError from "./VerifyError";
 import s from "./ClockInVerifyModal.module.css";
 
 type WorkMode = "office" | "remote" | "hybrid";
@@ -117,6 +119,7 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
     // authoritative, but we want to give the user accurate UI feedback
     // *before* they hit submit).
     const [orgWifi, setOrgWifi] = useState<OrgWifiState | null>(null);
+    const navigate = useNavigate();
 
     // Warm the face-api models the moment the modal opens, in parallel with
     // the Wi-Fi/location collection — by the time the user reaches the face
@@ -337,15 +340,23 @@ export default function ClockInVerifyModal({ workMode, submitClockIn, onSuccess,
                             )}
                             {submitErr && (() => {
                                 const { kind, title } = classifySubmitErr(submitErr.message, submitErr.code);
-                                const Icon = kind === "location" ? MapPin : kind === "face" ? ScanFace : AlertTriangle;
                                 return (
-                                    <div className={s.errMsg} style={{ alignItems: "flex-start" }}>
-                                        <Icon size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-                                        <span>
-                                            <strong style={{ display: "block" }}>{title}</strong>
-                                            {submitErr.message}
-                                        </span>
-                                    </div>
+                                    <VerifyError
+                                        kind={kind}
+                                        title={title}
+                                        message={submitErr.message}
+                                        code={submitErr.code}
+                                        onSecondary={
+                                            submitErr.code === "FACE_NOT_ENROLLED"
+                                                ? () => navigate("/profile/face")
+                                                : undefined
+                                        }
+                                        secondaryLabel={
+                                            submitErr.code === "FACE_NOT_ENROLLED"
+                                                ? "Enroll face"
+                                                : undefined
+                                        }
+                                    />
                                 );
                             })()}
                             <FaceCapture

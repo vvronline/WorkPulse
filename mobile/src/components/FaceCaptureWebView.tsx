@@ -204,7 +204,7 @@ function buildHtml(
       if (!autoCapture || capturing || captured) return;
       if (det && det.score >= 0.5) {
         autoHits++;
-        setStatus("Face detected — capturing…");
+        setStatus(det.score >= 0.7 ? "Hold still - verifying..." : "Move closer & face the light");
         if (autoHits >= ${AUTO_CONSECUTIVE_HITS}) {
           autoHits = 0;
           capture();
@@ -287,7 +287,7 @@ function buildHtml(
       captured = true;
       capturing = false;
       post({ type: "descriptor", descriptor: descriptor });
-      setStatus("Captured ✓");
+      statusEl.innerHTML = '<span style="color:#22c55e;font-weight:600;">&#10003; Verified</span>';
     } catch (e) {
       showError((e && e.message) ? e.message : "Face detection failed. Try again.");
       btn.disabled = false;

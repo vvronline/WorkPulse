@@ -222,7 +222,12 @@ export default function WorkTimerCard() {
     // end it would trap the employee — the server also exempts remote
     // sessions (see server/routes/tracker.ts clock-out). Remote (and
     // verification-off) logouts use the plain confirm with no location prompt.
-    if (verifyEnabled && workMode === "office") {
+    // Use the CURRENT open session's work mode from the freshest status
+    // snapshot rather than the separately-tracked `workMode` state, which
+    // defaults to "office" and can lag behind a remote clock-in. Only an
+    // office session must pass the location + face/fingerprint check.
+    const sessionMode = status?.workMode ?? workMode;
+    if (verifyEnabled && sessionMode === "office") {
       startVerifiedClockOut();
       return;
     }
@@ -234,7 +239,7 @@ export default function WorkTimerCard() {
       onConfirm: () => run("clockOut", clockOut),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verifyEnabled, workMode]);
+  }, [verifyEnabled, workMode, status?.workMode]);
 
   if (loading) {
     return (

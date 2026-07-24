@@ -14,6 +14,8 @@
 export type ClockInErrorKind = "location" | "face" | "generic";
 
 export interface ClockInErrorInfo {
+  /** Stable server error code (e.g. FACE_ATTEMPTS_LOCKED), when available. */
+  code?: string;
   kind: ClockInErrorKind;
   title: string;
   message: string;
@@ -85,10 +87,10 @@ export function clockInErrorInfo(err: unknown): ClockInErrorInfo {
     (!code && lower.includes("face"));
 
   if (isLocation) {
-    return { kind: "location", title: "Location Mismatch", message: msg };
+    return { kind: "location", title: "Location Mismatch", message: msg, code };
   }
   if (isFace) {
-    return { kind: "face", title: "Face Mismatch", message: msg };
+    return { kind: "face", title: "Face Mismatch", message: msg, code };
   }
-  return { kind: "generic", title: "Login Failed", message: msg };
+  return { kind: "generic", title: "Login Failed", message: msg, code };
 }
