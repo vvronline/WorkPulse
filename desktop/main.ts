@@ -786,13 +786,18 @@ $w.Stop()
         headers["origin"] = "workpulse://app";
         headers["x-requested-with"] = "WorkPulse";
 
+        // `cache: "no-store"` on EVERY request defeated HTTP caching for
+        // read-only GETs (chat messages, members, read-status, presence),
+        // forcing a full remote round-trip each time and adding latency on
+        // the chat-open path. Mutating requests still bypass the cache.
+        const isReadOnly = request.method === "GET" || request.method === "HEAD";
         const fetchOpts: RequestInit & {
           bypassCustomProtocolHandlers?: boolean;
         } = {
           method: request.method,
           headers,
           credentials: "include",
-          cache: "no-store",
+          cache: isReadOnly ? "default" : "no-store",
           bypassCustomProtocolHandlers: true,
         };
 
@@ -808,8 +813,15 @@ $w.Stop()
           }
         }
 
+        // Timing is logged so the real remote round-trip cost is measurable
+        // when diagnosing slow screens (the chat open path in particular).
+        const startedAt = Date.now();
         const resp = await net.fetch(targetUrl, fetchOpts);
-        console.log(`[proxy] ${request.method} ${targetUrl} -> ${resp.status}`);
+        console.log(
+          `[proxy] ${request.method} ${targetUrl} -> ${resp.status} (${
+            Date.now() - startedAt
+          }ms)`,
+        );
         return resp;
       } catch (err) {
         console.error("[proxy] FETCH ERROR:", err);

@@ -1439,24 +1439,25 @@ router.get(
       // Reciprocal read receipts (Signal parity): if the CALLER has turned
       // receipts off they see nobody's read state; and readers who turned
       // their receipts off are excluded from everyone's results.
-      const myPref = (
-        await req.db!.query(
-          `SELECT COALESCE((notification_prefs->>'readReceipts')::boolean, TRUE) AS on
-             FROM users WHERE id = $1`,
-          [req.userId],
-        )
-      ).rows[0];
-      if (myPref && myPref.on === false) {
-        return res.json([]);
-      }
-
+      //
+      // Both conditions are folded into a SINGLE statement. This used to be
+      // two sequential round-trips (fetch caller's pref, then the receipts),
+      // which doubled the latency of an endpoint that sits on the
+      // conversation-open path. The `me` CTE short-circuits via the WHERE:
+      // if the caller has receipts off, the cross join yields no rows.
       const rows = (
         await req.db!.query(
           `
+            WITH me AS (
+                SELECT COALESCE((notification_prefs->>'readReceipts')::boolean, TRUE) AS receipts_on
+                  FROM users WHERE id = $2
+            )
             SELECT mr.user_id, mr.last_read_at, u.full_name
             FROM message_reads mr
             JOIN users u ON u.id = mr.user_id
+            CROSS JOIN me
             WHERE mr.conversation_id = $1 AND mr.user_id != $2
+              AND me.receipts_on
               AND COALESCE((u.notification_prefs->>'readReceipts')::boolean, TRUE)
         `,
           [convId, req.userId],

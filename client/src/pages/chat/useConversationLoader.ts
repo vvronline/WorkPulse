@@ -83,6 +83,14 @@ export default function useConversationLoader({
             setHasMore(false);
             setLoading(true);
 
+            // ── Phase 1: messages only. This is the ONLY request the user is
+            // actually waiting to see. Paint as soon as it lands and drop the
+            // skeleton immediately — `setLoading(false)` previously lived in a
+            // `finally` that ran only after the read / read-status / members
+            // chain had ALSO completed. On the Electron desktop build (where
+            // every /api call is proxied through the main process to a remote
+            // origin) those four SERIALIZED round-trips were the 3–5s "chat
+            // takes forever to open" delay.
             try {
                 const response = await getMessages(conversationId);
                 if (!isCurrent()) return;
@@ -93,44 +101,63 @@ export default function useConversationLoader({
                         mergeTimelineMessages(current, fetched) as Message[],
                 );
                 setHasMore(fetched.length >= 50);
+                // Messages are on screen — stop blocking the UI. Everything
+                // below is metadata decorating an already-rendered thread.
+                setLoading(false);
+            } catch (error) {
+                if (isCurrent()) {
+                    console.error("Failed to open conversation", error);
+                    setLoading(false);
+                }
+                return;
+            }
 
-                await markConversationRead(conversationId);
+            // ── Phase 2: metadata, all IN PARALLEL. None of these depend on
+            // one another, so chaining them only multiplied the latency.
+            const markRead = markConversationRead(conversationId).then(() => {
                 if (!isCurrent()) return;
-
                 onMarkedRead(conversationId);
                 sendReadReceipt(conversationId);
+            });
 
-                try {
-                    const readResponse = await getReadStatus(conversationId);
+            const readStatus = getReadStatus(conversationId).then(
+                (readResponse) => {
                     if (!isCurrent()) return;
-
                     const map: Record<string, unknown> = {};
                     (readResponse.data as AnyRecord[]).forEach((row) => {
                         map[String(row.user_id)] = row.last_read_at;
                     });
                     setReadReceipts(map);
-                } catch (error) {
-                    if (isCurrent()) {
-                        console.error("Failed to load read status", error);
-                    }
-                }
+                },
+            );
 
-                try {
-                    const memberResponse = await getMembers(conversationId);
+            const members = getMembers(conversationId).then(
+                (memberResponse) => {
                     if (!isCurrent()) return;
                     setMembers(memberResponse.data as AnyRecord[]);
-                } catch (error) {
-                    if (isCurrent()) {
-                        setMembers([]);
-                        console.error("Failed to load members", error);
-                    }
-                }
-            } catch (error) {
-                if (isCurrent()) {
-                    console.error("Failed to open conversation", error);
-                }
-            } finally {
-                if (isCurrent()) setLoading(false);
+                },
+            );
+
+            const [markReadResult, readStatusResult, membersResult] =
+                await Promise.allSettled([markRead, readStatus, members]);
+
+            if (!isCurrent()) return;
+
+            if (markReadResult.status === "rejected") {
+                console.error(
+                    "Failed to mark conversation read",
+                    markReadResult.reason,
+                );
+            }
+            if (readStatusResult.status === "rejected") {
+                console.error(
+                    "Failed to load read status",
+                    readStatusResult.reason,
+                );
+            }
+            if (membersResult.status === "rejected") {
+                setMembers([]);
+                console.error("Failed to load members", membersResult.reason);
             }
         },
         [

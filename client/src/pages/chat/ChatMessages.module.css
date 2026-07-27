@@ -60,6 +60,11 @@
     flex-direction: column;
     gap: 0;
     position: relative;
+    /* The browser's automatic scroll anchoring fights our programmatic
+       "pin to newest message" during the skeleton→content swap on open,
+       leaving the thread parked mid-history. We manage scroll position
+       explicitly (see the open-pin effect in useChatState), so disable it. */
+    overflow-anchor: none;
 }
 /* ─── Pinned banner (top of chat window) ─── */
 .pinnedBanner {

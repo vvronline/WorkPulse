@@ -120,7 +120,23 @@ const INITIAL_THREAD_PAGE_SIZE = 50;
 // open: show the warm page immediately and avoid doing the same network + state
 // reconcile during repeated quick open/exit cycles.
 const THREAD_RECONCILE_TTL_MS = 10_000;
+// Bounded LRU. This map is module-level and previously grew without limit —
+// every conversation ever opened in the session kept an entry forever. Cap it
+// so a long session browsing many chats can't leak.
+const THREAD_RECONCILE_MAX_ENTRIES = 50;
 const __LAST_THREAD_RECONCILE_AT = new Map<number, number>();
+
+function rememberThreadReconcile(convId: number, at: number): void {
+  // Re-insert so the key moves to the end of the Map's insertion order,
+  // making the first key the least-recently-used one.
+  __LAST_THREAD_RECONCILE_AT.delete(convId);
+  __LAST_THREAD_RECONCILE_AT.set(convId, at);
+  while (__LAST_THREAD_RECONCILE_AT.size > THREAD_RECONCILE_MAX_ENTRIES) {
+    const oldest = __LAST_THREAD_RECONCILE_AT.keys().next().value;
+    if (oldest === undefined) break;
+    __LAST_THREAD_RECONCILE_AT.delete(oldest);
+  }
+}
 
 /**
  * Normalize the server's file-upload response into a snake_case ChatMessage.
@@ -1149,7 +1165,7 @@ export function useChatThread() {
       // skip repaying this whole `load()` (see the focus-gated effect below).
       const loadedAt = Date.now();
       lastLoadedAtRef.current = loadedAt;
-      __LAST_THREAD_RECONCILE_AT.set(convId, loadedAt);
+      rememberThreadReconcile(convId, loadedAt);
     } catch {
       /* keep the cached thread visible */
     } finally {
@@ -1185,7 +1201,21 @@ export function useChatThread() {
   // slide-in animation, which dropped frames and made the open feel laggy.
   // InteractionManager runs it on the first idle frame after the transition,
   // keeping the animation smooth (Signal-Android feel).
+  //
+  // CRITICAL: that reasoning only holds for a WARM thread, where the cached
+  // page is already painted and the reconcile is genuinely cosmetic. On a COLD
+  // thread (first-ever open, or a cache cleared/expired) the screen is EMPTY —
+  // deferring behind InteractionManager plus a 250ms timer is pure dead time
+  // stacked on top of the network round-trip, and it is exactly what made a
+  // first open feel slow. When there is nothing to show, fetch immediately.
+  const hasWarmCache = (initialCachedMessages?.length || 0) > 0;
   useEffect(() => {
+    if (!hasWarmCache) {
+      // Cold open: nothing on screen, so there is no animation to protect.
+      load();
+      loadPinned();
+      return;
+    }
     let timer: ReturnType<typeof setTimeout> | null = null;
     const task = InteractionManager.runAfterInteractions(() => {
       // Give the native push animation a short quiet window after interactions
@@ -1202,7 +1232,7 @@ export function useChatThread() {
       task.cancel();
       if (timer) clearTimeout(timer);
     };
-  }, [load, loadPinned]);
+  }, [hasWarmCache, load, loadPinned]);
 
   // Cross-screen "jump to message": the in-conversation search / saved / pinned
   // screens live on separate routes. When the user taps a result there, they

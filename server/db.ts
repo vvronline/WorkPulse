@@ -1330,6 +1330,10 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
     // Full-text search index on messages
     await q(`CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING gin(to_tsvector('english', COALESCE(content, '')))`);
 
+    // The message-page query self-joins `messages rm ON rm.id = m.reply_to_id`
+    // to inline the quoted parent. Partial — most messages aren't replies.
+    await q(`CREATE INDEX IF NOT EXISTS idx_messages_reply_to ON messages(reply_to_id) WHERE reply_to_id IS NOT NULL`);
+
     // ---- Starred Messages ----
     await q(`
         CREATE TABLE IF NOT EXISTS starred_messages (
@@ -1339,6 +1343,10 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
             PRIMARY KEY (user_id, message_id)
         )
     `);
+    // The message-page query LEFT JOINs starred_messages on message_id (with a
+    // user_id filter). The PK is (user_id, message_id), so message_id is NOT a
+    // leading column and the join could not use it — add the reverse index.
+    await q(`CREATE INDEX IF NOT EXISTS idx_starred_messages_message ON starred_messages(message_id)`);
 
     // ---- Blocked Users (Signal parity) ----
     // Directional block list: blocker_id blocks blocked_id. Enforcement lives
