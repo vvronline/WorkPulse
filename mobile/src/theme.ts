@@ -278,7 +278,9 @@ export function makeTheme(
     fontMedium: FONTS.medium,
     fontSemiBold: FONTS.semiBold,
     fontBold: FONTS.bold,
-    // Pacifico script display face for the "loops" brand wordmark only.
+    // Brand wordmark face. REBRAND (loops -> AINO): the old "loops" wordmark
+    // used the Pacifico script face, which suits a lowercase cursive word but
+    // renders an all-caps acronym poorly. AINO uses the bold UI face instead.
     fontBrand: FONTS.brand,
   };
 }

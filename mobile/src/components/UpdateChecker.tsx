@@ -138,7 +138,7 @@ export default function UpdateChecker() {
 
           {isUpToDate ? (
             <Text style={styles.body}>
-              Loops {info.currentVersion} is the latest version.
+              AINO {info.currentVersion} is the latest version.
             </Text>
           ) : (
             <>

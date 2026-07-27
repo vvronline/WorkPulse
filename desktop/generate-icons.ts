@@ -3,7 +3,7 @@
  * Run: node generate-icons.js
  * Requires: sharp + png-to-ico (dev dependencies)
  *
- * The single source of truth for the WorkPulse brand mark is
+ * The single source of truth for the AINO brand mark is
  * `icons/icon-source.png` (a high-resolution square PNG). Every other raster
  * size — plus the Windows .ico — is derived from it here so a brand refresh is
  * a one-file swap followed by re-running the generators (desktop + mobile +

@@ -276,14 +276,14 @@ class NativeCallService {
   private async configureCallKeep(callKeep: CallKeepModule): Promise<void> {
     await callKeep.setup({
       ios: {
-        appName: "Loops",
+        appName: "AINO",
         supportsVideo: true,
         includesCallsInRecents: false,
       },
       android: {
         alertTitle: "Phone account permission",
         alertDescription:
-          "Allow Loops to show incoming call screen and call controls from system UI.",
+          "Allow AINO to show incoming call screen and call controls from system UI.",
         cancelButton: "Cancel",
         okButton: "Enable",
         imageName: "ic_launcher",

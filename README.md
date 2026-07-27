@@ -1,8 +1,8 @@
-# WorkPulse
+# AINO
 
 A multi-tenant, enterprise-grade workforce platform that combines **time tracking, agile project management, leave & approval workflows, real-time chat & video calls, calendar, and a hierarchical notes wiki** into one application — with a desktop client (Electron), responsive web UI, and managed Postgres deployment on Railway.
 
-> WorkPulse is what you get when you stop juggling Jira + Slack + Zoom + Google Calendar + Notion + Workday + a punch-clock spreadsheet. One login, one source of truth, one app for the whole team.
+> AINO is what you get when you stop juggling Jira + Slack + Zoom + Google Calendar + Notion + Workday + a punch-clock spreadsheet. One login, one source of truth, one app for the whole team.
 
 ---
 
@@ -85,7 +85,7 @@ A dedicated reporting view so the day-to-day Sprint board stays focused on plann
 
 ### 📞 Audio / Video Calls
 - **WebRTC** 1:1 and small-group calls bootstrapped from any chat.
-- **Picture-in-Picture (PiP)** mini-window so calls keep going as you navigate WorkPulse.
+- **Picture-in-Picture (PiP)** mini-window so calls keep going as you navigate AINO.
 - **Global incoming-call banner** on every page; ringer respects user notification preferences.
 - **Call history** per conversation + global; **active-call resume** on reload.
 - **Coturn TURN/STUN** support included in `infra/coturn` for private deployments.
@@ -259,7 +259,7 @@ Additional flags:
 
 ## 🐳 Local development (Docker)
 
-The recommended way to run WorkPulse locally is through Docker Compose, which handles PostgreSQL automatically.
+The recommended way to run AINO locally is through Docker Compose, which handles PostgreSQL automatically.
 
 > **Note:** The dev config files below are gitignored and must be created manually.
 
@@ -373,7 +373,7 @@ Log out and back in to see the **Admin** tab.
 
 ## ☁️ Production deployment (Railway)
 
-WorkPulse is deployed on [Railway](https://railway.com) — a managed platform that handles PostgreSQL, HTTPS, persistent storage, and auto-deploys on every push to `master`.
+AINO is deployed on [Railway](https://railway.com) — a managed platform that handles PostgreSQL, HTTPS, persistent storage, and auto-deploys on every push to `master`.
 
 See the full step-by-step guide in **[RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md)**.
 

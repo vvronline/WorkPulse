@@ -20,7 +20,7 @@ import {
   Inter_600SemiBold,
   Inter_700Bold,
 } from "@expo-google-fonts/inter";
-// Pacifico — a flowing script display face used ONLY for the "loops" brand
+// Pacifico — a flowing script display face formerly used for the "loops" brand
 // wordmark (dashboard header + animated splash). It is intentionally not the
 // default UI family; reference it explicitly via FONTS.brand.
 import { Pacifico_400Regular } from "@expo-google-fonts/pacifico";
@@ -31,8 +31,11 @@ export const FONTS = {
   medium: "Inter_500Medium",
   semiBold: "Inter_600SemiBold",
   bold: "Inter_700Bold",
-  // Script display face for the "loops" brand wordmark only.
-  brand: "Pacifico_400Regular",
+  // Brand wordmark face. REBRAND (loops -> AINO): previously the Pacifico
+  // script face for the lowercase "loops" wordmark. "AINO" is an all-caps
+  // acronym, which reads badly in cursive, so the wordmark now uses the bold
+  // UI face (letter-spaced at the call site) for a cleaner logotype.
+  brand: "Inter_700Bold",
 } as const;
 
 /** Map handed to expo-font's `useFonts(...)` loader at app startup. */

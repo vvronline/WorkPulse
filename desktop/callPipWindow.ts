@@ -142,7 +142,7 @@ function setupCallPipWindow(mainWindow: BrowserWindow): CallPipController {
             skipTaskbar: true,
             show: false,
             backgroundColor: "#111827",
-            title: "WorkPulse Call",
+            title: "AINO Call",
             icon: (() => {
                 try {
                     return nativeImage.createFromPath(path.join(__dirname, "icons", "icon.png"));

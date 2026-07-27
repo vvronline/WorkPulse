@@ -40,7 +40,7 @@ export default function PublicNote() {
                     <div className={s.brand}>
                         {data?.branding?.logo_url
                             ? <img src={data.branding.logo_url} alt={data?.orgName || ""} className={s.logo} />
-                            : <span className={s.brandName}>{data?.orgName || "Loops"}</span>}
+                            : <span className={s.brandName}>{data?.orgName || "AINO"}</span>}
                     </div>
                     {data?.sharedAt && (
                         <span className={s.sharedAt}>
@@ -83,7 +83,7 @@ export default function PublicNote() {
 
                 <footer className={s.footer}>
                     <span className={s.footerText}>Powered by</span>
-                    <Link to="/" className={s.footerLink}>Loops</Link>
+                    <Link to="/" className={s.footerLink}>AINO</Link>
                 </footer>
             </div>
         </div>

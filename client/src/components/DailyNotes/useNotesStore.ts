@@ -1426,7 +1426,7 @@ export function useNotesStore(userId: number | string | undefined) {
         handleMention,
         collabUsers,
         collabConnected,
-        // Tier 6 — WorkPulse integrations
+        // Tier 6 — AINO integrations
         handleNewOneOnOneWithPrefill,
         handleConvertToTask,
         reportPickerOpen,

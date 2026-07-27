@@ -38,7 +38,7 @@ function webauthnConfig(req: Request): { rpID: string; rpName: string; origin: s
     const origin = envOrigin
         ? envOrigin.split(",")[0].trim()
         : `${proto}://${host}`;
-    return { rpID, rpName: "Loops", origin };
+    return { rpID, rpName: "AINO", origin };
 }
 
 const { cookieOptions } = require("../utils/cookie");
@@ -745,7 +745,7 @@ router.post("/forgot-password", async (req: Request, res: Response) => {
         if (mailer) {
             const sent = await sendMail({
                 to: user.email,
-                subject: "Loops — Password Reset",
+                subject: "AINO — Password Reset",
                 html: `
                     <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;">
                         <h2 style="color:#6366f1;">Reset Your Password</h2>

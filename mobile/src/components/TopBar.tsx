@@ -85,7 +85,7 @@ export default function TopBar() {
             resizeMode="cover"
           />
         </View>
-        <Text style={styles.title}>loops</Text>
+        <Text style={styles.title}>AINO</Text>
       </View>
 
       {/* Right: notifications + profile */}
@@ -151,13 +151,14 @@ const makeStyles = (theme: Theme) =>
   },
   logoImg: { width: 32, height: 32, borderRadius: 9 },
   title: {
-    fontSize: 22,
+    fontSize: 20,
     fontFamily: theme.fontBrand,
     color: theme.text,
-    letterSpacing: 0.3,
-    // Pacifico has tall ascenders/descenders; nudge baseline so it sits
-    // centered next to the logo without clipping.
-    paddingTop: 2,
+    // REBRAND (loops -> AINO): the wordmark is now an all-caps acronym in a
+    // bold sans face rather than the old Pacifico script. Wider tracking gives
+    // it a logotype feel, and no baseline nudge is needed because the sans face
+    // has none of Pacifico's tall ascenders/descenders.
+    letterSpacing: 1.5,
   },
   right: { flexDirection: "row", alignItems: "center", gap: 12 },
   iconBtn: {

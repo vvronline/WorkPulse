@@ -196,8 +196,13 @@ app.use((req: Request, res: Response, next: NextFunction) => {
             return true;
         }
 
-        // Allow Electron desktop app (custom protocol origin)
-        if (origin.startsWith("workpulse://")) return true;
+        // Allow Electron desktop app (custom protocol origin).
+        // REBRAND (WorkPulse -> AINO): accept BOTH schemes so already-installed
+        // desktop builds (which load from workpulse://app) keep working while new
+        // builds move to aino://app. Remove the legacy entry only once desktop
+        // adoption of the AINO build is effectively complete.
+        if (origin.startsWith("workpulse://") || origin.startsWith("aino://"))
+            return true;
 
         if (process.env.NODE_ENV !== "production") {
             const devOrigins = [
@@ -340,7 +345,12 @@ app.use("/api/webhooks", webhookRoutes);
 app.use("/api", (req: Request, res: Response, next: NextFunction) => {
     if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
     const xrw = req.headers["x-requested-with"];
-    if (xrw === "WorkPulse") return next();
+    // REBRAND (WorkPulse -> AINO): this header is a CSRF guard, and its value
+    // is a contract shared by every client (web, mobile, desktop). Accept BOTH
+    // brands so clients can migrate independently instead of all-at-once --
+    // flipping this to AINO-only before every client ships would 403 all
+    // mutating requests from older builds. Drop "WorkPulse" once adoption is done.
+    if (xrw === "WorkPulse" || xrw === "AINO") return next();
     return res.status(403).json({ error: "Missing CSRF header" });
 });
 

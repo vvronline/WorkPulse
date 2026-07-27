@@ -17,10 +17,18 @@ export const serverURL = import.meta.env.VITE_API_URL
     ? import.meta.env.VITE_API_URL.replace(/\/api$/, "")
     : "";
 
+// REBRAND (WorkPulse -> AINO): this value is a CSRF contract shared with
+// server/index.ts, the mobile client and the desktop protocol proxy. The server
+// now accepts BOTH "WorkPulse" and "AINO", but the clients intentionally keep
+// sending "WorkPulse" until every surface has shipped -- a client sending
+// "AINO" to an older (or rolled-back) server 403s every mutating request.
+// Flip all clients together, in a release AFTER dual-accept is live everywhere.
+const CSRF_HEADER_VALUE = "WorkPulse";
+
 const API = axios.create({
     baseURL: baseURL,
     withCredentials: true,
-    headers: { "X-Requested-With": "WorkPulse" },
+    headers: { "X-Requested-With": CSRF_HEADER_VALUE },
 });
 
 // Get today's date in local timezone as YYYY-MM-DD

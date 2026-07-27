@@ -13,6 +13,10 @@ import {
   type DesktopCapturerSource,
   type IpcMainEvent,
 } from "electron";
+// MUST be first: sets app.name/appUserModelId and migrates the legacy
+// %APPDATA%\WorkPulse profile into %APPDATA%\AINO before any module reads
+// app.getPath("userData") at import time (biometric.ts, callPipWindow.ts).
+import "./appIdentity";
 import path from "path";
 import fs from "fs";
 import os from "os";
@@ -24,9 +28,9 @@ import { setupUpdater } from "./updater";
 import { setupCallPipWindow } from "./callPipWindow";
 import { setupBiometric } from "./biometric";
 
-// Set app identity for Windows notifications and taskbar
-app.setAppUserModelId("com.workpulse.desktop");
-app.name = "WorkPulse";
+// App identity (appUserModelId + app.name) and the legacy userData migration
+// now live in ./appIdentity, imported at the very top so they run before any
+// module resolves app.getPath("userData").
 
 // ─── Chromium geolocation API key ─────────────────────────────────────────
 // Chromium's network-based geolocation (used by navigator.geolocation when
@@ -56,7 +60,7 @@ let LOADED_GOOGLE_API_KEY = "";
 (() => {
   let apiKey = process.env.GOOGLE_API_KEY || "";
   console.log(
-    "[WorkPulse] GOOGLE_API_KEY from env:",
+    "[AINO] GOOGLE_API_KEY from env:",
     apiKey ? `set (${apiKey.length} chars)` : "not set",
   );
   if (!apiKey) {
@@ -66,7 +70,7 @@ let LOADED_GOOGLE_API_KEY = "";
         ? path.join(process.resourcesPath, "google-api-key.txt")
         : null,
     ].filter(Boolean) as string[];
-    console.log("[WorkPulse] Checking API key file candidates:", candidates);
+    console.log("[AINO] Checking API key file candidates:", candidates);
     for (const f of candidates) {
       try {
         if (fs.existsSync(f)) {
@@ -76,17 +80,17 @@ let LOADED_GOOGLE_API_KEY = "";
           // regression that re-introduces a stray newline is visible.
           apiKey = raw.trim();
           console.log(
-            `[WorkPulse] Found API key in ${f} ` +
+            `[AINO] Found API key in ${f} ` +
               `(raw=${raw.length} bytes, trimmed=${apiKey.length} chars, ` +
               `prefix='${apiKey.slice(0, 4)}…')`,
           );
           if (apiKey) break;
         } else {
-          console.log(`[WorkPulse] File not found: ${f}`);
+          console.log(`[AINO] File not found: ${f}`);
         }
       } catch (err) {
         console.warn(
-          `[WorkPulse] Error reading ${f}:`,
+          `[AINO] Error reading ${f}:`,
           (err as Error)?.message,
         );
       }
@@ -101,12 +105,12 @@ let LOADED_GOOGLE_API_KEY = "";
     // we can verify the value is in the command line as expected.
     const registered = app.commandLine.getSwitchValue("google-api-key");
     console.log(
-      `[WorkPulse] Geolocation API key configured ` +
+      `[AINO] Geolocation API key configured ` +
         `(switch length=${registered.length}, matches=${registered === apiKey})`,
     );
   } else {
     console.log(
-      "[WorkPulse] No GOOGLE_API_KEY found — relying on OS location service for geolocation",
+      "[AINO] No GOOGLE_API_KEY found — relying on OS location service for geolocation",
     );
   }
 })();
@@ -114,11 +118,11 @@ let LOADED_GOOGLE_API_KEY = "";
 // Safety net: log uncaught errors instead of letting Electron show the
 // fatal "A JavaScript error occurred in the main process" dialog and exit.
 process.on("uncaughtException", (err) => {
-  console.error("[WorkPulse] Uncaught exception in main process:", err);
+  console.error("[AINO] Uncaught exception in main process:", err);
 });
 process.on("unhandledRejection", (reason) => {
   console.error(
-    "[WorkPulse] Unhandled promise rejection in main process:",
+    "[AINO] Unhandled promise rejection in main process:",
     reason,
   );
 });
@@ -155,7 +159,7 @@ function clearCacheIfVersionChanged(): boolean {
   }
   if (lastVersion !== currentVersion) {
     console.log(
-      `[WorkPulse] Version changed: ${lastVersion || "none"} → ${currentVersion}, will clear cache`,
+      `[AINO] Version changed: ${lastVersion || "none"} → ${currentVersion}, will clear cache`,
     );
     // Write new version immediately so we don't repeat on crash
     try {
@@ -206,6 +210,13 @@ async function openRemoteUpload(
 }
 
 // ─── Custom protocol registration (must happen before app.ready) ───
+// REBRAND NOTE (WorkPulse -> AINO): the `workpulse` scheme is INTENTIONALLY
+// not renamed. It is an internal transport the user never sees -- it appears
+// in no UI, only in the CSP header, the session cookie partition key and the
+// origin sent to the API. Renaming it would invalidate the existing Chromium
+// cookie partition (logging everyone out) for zero branding benefit. The
+// server already accepts `aino://` alongside it, so this can be flipped later
+// as an isolated, deliberate change.
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "workpulse",
@@ -288,9 +299,9 @@ app.whenReady().then(async () => {
       await session.defaultSession.clearStorageData({
         storages: ["cachestorage", "serviceworkers"],
       });
-      console.log("[WorkPulse] Cleared cache after version update");
+      console.log("[AINO] Cleared cache after version update");
     } catch (err) {
-      console.error("[WorkPulse] Cache clear failed:", (err as Error)?.message);
+      console.error("[AINO] Cache clear failed:", (err as Error)?.message);
     }
   }
 
@@ -314,7 +325,7 @@ app.whenReady().then(async () => {
       ];
       const granted = allowed.includes(permission);
       console.log(
-        `[WorkPulse] Permission request: ${permission} → ${granted ? "GRANTED" : "DENIED"}`,
+        `[AINO] Permission request: ${permission} → ${granted ? "GRANTED" : "DENIED"}`,
       );
       callback(granted);
     },
@@ -329,7 +340,7 @@ app.whenReady().then(async () => {
       ];
       const granted = allowed.includes(permission);
       console.log(
-        `[WorkPulse] Permission check: ${permission} → ${granted ? "GRANTED" : "DENIED"}`,
+        `[AINO] Permission check: ${permission} → ${granted ? "GRANTED" : "DENIED"}`,
       );
       return granted;
     },
@@ -359,7 +370,7 @@ app.whenReady().then(async () => {
       callback(streams);
     } catch (err) {
       console.warn(
-        "[WorkPulse] displayMedia callback error (likely user cancel):",
+        "[AINO] displayMedia callback error (likely user cancel):",
         (err as Error)?.message,
       );
     }
@@ -422,7 +433,7 @@ app.whenReady().then(async () => {
   // requires Windows Location Services to be ON; without it `netsh`
   // returns `(blank)` for the BSSID and we surface `{ ok: false }`.
   ipcMain.handle("get-wifi-info", async () => {
-    console.log("[WorkPulse] get-wifi-info: reading Wi-Fi interface...");
+    console.log("[AINO] get-wifi-info: reading Wi-Fi interface...");
     try {
       if (process.platform === "win32") {
         const { stdout } = await execFileP("netsh", [
@@ -431,14 +442,14 @@ app.whenReady().then(async () => {
           "interfaces",
         ]);
         console.log(
-          "[WorkPulse] get-wifi-info: netsh output length =",
+          "[AINO] get-wifi-info: netsh output length =",
           stdout.length,
         );
         const bssidM = /^\s*BSSID\s*:\s*([0-9A-Fa-f:]{17})\s*$/m.exec(stdout);
         const ssidM = /^\s*SSID\s*:\s*(.+?)\s*$/m.exec(stdout);
         const sigM = /^\s*Signal\s*:\s*(\d+)\s*%/m.exec(stdout);
         const stateM = /^\s*State\s*:\s*(.+?)\s*$/m.exec(stdout);
-        console.log("[WorkPulse] get-wifi-info: parsed →", {
+        console.log("[AINO] get-wifi-info: parsed →", {
           bssid: bssidM?.[1] || null,
           ssid: ssidM?.[1] || null,
           signal: sigM?.[1] || null,
@@ -449,7 +460,7 @@ app.whenReady().then(async () => {
             stateM && /disconnected/i.test(stateM[1])
               ? "wifi_disconnected"
               : "bssid_unavailable";
-          console.warn("[WorkPulse] get-wifi-info: no BSSID →", error);
+          console.warn("[AINO] get-wifi-info: no BSSID →", error);
           return { ok: false, error };
         }
         const result = {
@@ -458,7 +469,7 @@ app.whenReady().then(async () => {
           ssid: ssidM ? ssidM[1] : null,
           signal: sigM ? Number(sigM[1]) : null,
         };
-        console.log("[WorkPulse] get-wifi-info: success →", result);
+        console.log("[AINO] get-wifi-info: success →", result);
         return result;
       }
       if (process.platform === "darwin") {
@@ -502,7 +513,7 @@ app.whenReady().then(async () => {
       return { ok: false, error: "unsupported_platform" };
     } catch (err) {
       console.warn(
-        "[WorkPulse] get-wifi-info failed:",
+        "[AINO] get-wifi-info failed:",
         (err as Error)?.message,
       );
       return {
@@ -520,7 +531,7 @@ app.whenReady().then(async () => {
       return { ok: false, error: "unsupported_platform" };
     }
     console.log(
-      "[WorkPulse] get-native-location: querying Windows Location API...",
+      "[AINO] get-native-location: querying Windows Location API...",
     );
     try {
       const script = `
@@ -543,10 +554,10 @@ $w.Stop()
         { timeout: 20000 },
       );
       const line = stdout.trim();
-      console.log("[WorkPulse] get-native-location: raw output:", line);
+      console.log("[AINO] get-native-location: raw output:", line);
       if (line.startsWith("ERROR|")) {
         const reason = line.split("|")[1] || "unknown";
-        console.warn("[WorkPulse] get-native-location: failed →", reason);
+        console.warn("[AINO] get-native-location: failed →", reason);
         return { ok: false, error: reason };
       }
       const parts = line.split("|");
@@ -554,7 +565,7 @@ $w.Stop()
       const longitude = parseFloat(parts[1]);
       const accuracy = parseFloat(parts[2]);
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-        console.warn("[WorkPulse] get-native-location: parse failed →", line);
+        console.warn("[AINO] get-native-location: parse failed →", line);
         return { ok: false, error: "parse_failed" };
       }
       const result = {
@@ -563,11 +574,11 @@ $w.Stop()
         longitude,
         accuracy: Number.isFinite(accuracy) ? accuracy : 100,
       };
-      console.log("[WorkPulse] get-native-location: success →", result);
+      console.log("[AINO] get-native-location: success →", result);
       return result;
     } catch (err) {
       console.warn(
-        "[WorkPulse] get-native-location failed:",
+        "[AINO] get-native-location failed:",
         (err as Error)?.message,
       );
       return {
@@ -602,7 +613,7 @@ $w.Stop()
       return { ok: true };
     } catch (err) {
       console.warn(
-        "[WorkPulse] open-location-settings failed:",
+        "[AINO] open-location-settings failed:",
         (err as Error)?.message,
       );
       return { ok: false, error: (err as Error)?.message || "open_failed" };
@@ -610,7 +621,7 @@ $w.Stop()
   });
 
   ipcMain.handle("get-ip-location", async () => {
-    console.log("[WorkPulse] get-ip-location: attempting IP geolocation...");
+    console.log("[AINO] get-ip-location: attempting IP geolocation...");
     // Try a couple of providers for resilience; both are free / no key.
     const providers: {
       url: string;
@@ -635,35 +646,35 @@ $w.Stop()
     ];
     for (const p of providers) {
       try {
-        console.log(`[WorkPulse] get-ip-location: trying ${p.url}...`);
+        console.log(`[AINO] get-ip-location: trying ${p.url}...`);
         const resp = await net.fetch(p.url, { method: "GET" });
         console.log(
-          `[WorkPulse] get-ip-location: ${p.url} responded ${resp.status}`,
+          `[AINO] get-ip-location: ${p.url} responded ${resp.status}`,
         );
         if (!resp.ok) continue;
         const json = await resp.json();
         console.log(
-          `[WorkPulse] get-ip-location: ${p.url} body:`,
+          `[AINO] get-ip-location: ${p.url} body:`,
           JSON.stringify(json),
         );
         const coords = p.parse(json);
         if (coords) {
           console.log(
-            `[WorkPulse] IP geolocation via ${p.url} → ${coords.latitude},${coords.longitude}`,
+            `[AINO] IP geolocation via ${p.url} → ${coords.latitude},${coords.longitude}`,
           );
           return { ok: true, ...coords };
         }
         console.warn(
-          `[WorkPulse] get-ip-location: ${p.url} returned data but parse failed`,
+          `[AINO] get-ip-location: ${p.url} returned data but parse failed`,
         );
       } catch (err) {
         console.warn(
-          `[WorkPulse] IP geolocation provider failed (${p.url}):`,
+          `[AINO] IP geolocation provider failed (${p.url}):`,
           (err as Error)?.message,
         );
       }
     }
-    console.error("[WorkPulse] get-ip-location: ALL providers failed");
+    console.error("[AINO] get-ip-location: ALL providers failed");
     return { ok: false, error: "All IP geolocation providers failed" };
   });
 
@@ -903,7 +914,7 @@ $w.Stop()
     });
   }
 
-  console.log(`[WorkPulse] API server: ${RAILWAY_URL}`);
+  console.log(`[AINO] API server: ${RAILWAY_URL}`);
 
   // Override the HTML <title> tag so the title bar stays blank
   mainWindow.on("page-title-updated", (e) => e.preventDefault());
@@ -973,7 +984,7 @@ $w.Stop()
       if (isUpload && isOwnHost) {
         openRemoteUpload(pathname + (u.search || "")).catch((err) => {
           console.error(
-            "[WorkPulse] Failed to open uploaded file:",
+            "[AINO] Failed to open uploaded file:",
             (err as Error)?.message,
           );
         });
@@ -1039,7 +1050,7 @@ $w.Stop()
         const body = await resp.text();
         if (!resp.ok) {
           console.warn(
-            `[WorkPulse] GeoProbe: Google rejected the API key — HTTP ${resp.status}: ${body.slice(0, 500)}`,
+            `[AINO] GeoProbe: Google rejected the API key — HTTP ${resp.status}: ${body.slice(0, 500)}`,
           );
           return;
         }
@@ -1056,23 +1067,23 @@ $w.Stop()
           const lat = Number(parsed.location.lat).toFixed(2);
           const lng = Number(parsed.location.lng).toFixed(2);
           console.log(
-            `[WorkPulse] GeoProbe: Google accepted key, accuracy ≈ ${parsed.accuracy} m at ${lat},${lng} (IP-only, Chromium will do better with Wi-Fi scan)`,
+            `[AINO] GeoProbe: Google accepted key, accuracy ≈ ${parsed.accuracy} m at ${lat},${lng} (IP-only, Chromium will do better with Wi-Fi scan)`,
           );
         } else {
           console.warn(
-            "[WorkPulse] GeoProbe: unexpected response shape:",
+            "[AINO] GeoProbe: unexpected response shape:",
             body.slice(0, 500),
           );
         }
       } catch (err) {
         console.warn(
-          "[WorkPulse] GeoProbe: failed to reach Google Geolocation API:",
+          "[AINO] GeoProbe: failed to reach Google Geolocation API:",
           (err as Error)?.message,
         );
       }
     })();
   } else {
-    console.log("[WorkPulse] GeoProbe: skipped (no GOOGLE_API_KEY loaded)");
+    console.log("[AINO] GeoProbe: skipped (no GOOGLE_API_KEY loaded)");
   }
 });
 

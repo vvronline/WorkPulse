@@ -95,7 +95,7 @@ export default function GitHubIntegration({
   // automatically. We accept the message from any origin because the
   // popup is the same-origin /api/integrations/github/oauth/callback —
   // the script there sets window.opener.postMessage(..., '*') so the
-  // origin matches whatever WorkPulse is served from.
+  // origin matches whatever AINO is served from.
   useEffect(() => {
     function onMessage(e: MessageEvent) {
       if (e.data?.type === "github-connected") {
@@ -145,7 +145,7 @@ export default function GitHubIntegration({
   async function onDisconnectAll() {
     if (
       !confirm(
-        "Disconnect GitHub? This will remove every WorkPulse webhook from your repositories.",
+        "Disconnect GitHub? This will remove every AINO webhook from your repositories.",
       )
     )
       return;

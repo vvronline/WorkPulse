@@ -5,7 +5,7 @@
      • htmlToMarkdown(html)  — Quill HTML → CommonMark-flavoured MD
      • markdownToHtml(md)    — Markdown → HTML compatible with Quill
 
-   These cover the elements WorkPulse Notes actually uses:
+   These cover the elements AINO Notes actually uses:
      headings (h1-h3), paragraphs, bold/italic/underline/strike,
      inline code, links, images, blockquote, ordered / bulleted /
      todo lists, code blocks (with language), horizontal rules,
@@ -73,7 +73,7 @@ function nodeToMd(node: Node | null, ctx: MdContext = {}): string {
         return tex ? `\n\n$$${tex}$$\n\n` : "";
     }
     if (el.classList?.contains("ql-drawio")) {
-        const appName = ctx.appName || "WorkPulse";
+        const appName = ctx.appName || "AINO";
         return `\n\n_[Diagram — open in ${appName} to view]_\n\n`;
     }
     if (el.classList?.contains("ql-callout")) {
@@ -94,7 +94,7 @@ function nodeToMd(node: Node | null, ctx: MdContext = {}): string {
         return tableToMd(el);
     }
     if (el.classList?.contains("ql-audio")) {
-        const appName = ctx.appName || "WorkPulse";
+        const appName = ctx.appName || "AINO";
         return `\n\n_[Audio recording — open in ${appName} to play]_\n\n`;
     }
 

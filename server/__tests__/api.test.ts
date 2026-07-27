@@ -60,6 +60,28 @@ describe("CSRF protection", () => {
         // Should get past CSRF — may get 400/401 from auth logic, but NOT 403
         expect(res.status).not.toBe(403);
     });
+
+    // REBRAND (WorkPulse -> AINO): the header value is a contract shared by the
+    // web, mobile and desktop clients, which all ship on independent release
+    // cadences. The server must therefore accept BOTH brands for the whole
+    // migration window — dropping either side strands the clients still on it
+    // and 403s every mutating request they make.
+    test("allows POST with the new AINO CSRF header", async () => {
+        const res = await request(app)
+            .post("/api/auth/login")
+            .set("X-Requested-With", "AINO")
+            .send({ username: "test", password: "test" });
+        expect(res.status).not.toBe(403);
+    });
+
+    test("still rejects an unrelated X-Requested-With value", async () => {
+        const res = await request(app)
+            .post("/api/auth/login")
+            .set("X-Requested-With", "XMLHttpRequest")
+            .send({ username: "test", password: "test" });
+        expect(res.status).toBe(403);
+        expect(res.body.error).toMatch(/CSRF/i);
+    });
 });
 
 describe("Rate limiting", () => {

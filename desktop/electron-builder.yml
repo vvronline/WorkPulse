@@ -1,6 +1,17 @@
+# REBRAND (WorkPulse -> AINO).
+#
+# `appId` is deliberately NOT renamed. On Windows it seeds the NSIS product
+# GUID: changing it makes the installer treat AINO as a DIFFERENT product, so it
+# installs side-by-side instead of upgrading, strands the old install, and
+# breaks the auto-update chain for everyone already on WorkPulse. Users never
+# see it.
 appId: com.workpulse.desktop
-productName: Loops
-copyright: Copyright © 2026 Loops
+# `productName` drives the window/installer title and, via `${productName}`
+# in nsis.artifactName below, the installer FILENAME. It also seeds Electron's
+# userData directory name -- see desktop/appIdentity.ts, which copies the legacy
+# %APPDATA%\WorkPulse profile forward so the rename does not log users out.
+productName: AINO
+copyright: Copyright © 2026 AINO
 
 directories:
   output: dist
@@ -8,6 +19,11 @@ directories:
 
 files:
   - main.js
+  # Sets app.name and migrates the legacy %APPDATA%\WorkPulse profile. main.js
+  # requires it, so omitting it here crashes the PACKAGED app on launch with
+  # "Cannot find module ./appIdentity" (dev runs fine -- this list only
+  # applies to what gets bundled into the asar).
+  - appIdentity.js
   - preload.js
   - tray.js
   - updater.js
@@ -37,7 +53,7 @@ win:
       arch:
         - x64
   icon: icons/icon.ico
-  publisherName: Loops
+  publisherName: AINO
   # TODO: Enable once code signing certificate is set up.
   # Without code signing, Windows SmartScreen will warn users on install.
   verifyUpdateCodeSignature: false
@@ -47,7 +63,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Loops
+  shortcutName: AINO
   artifactName: "${productName}-Setup-${version}.${ext}"
 
 mac:

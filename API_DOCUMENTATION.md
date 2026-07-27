@@ -1,4 +1,4 @@
-# WorkPulse API Documentation
+# AINO API Documentation
 
 > **Base URL**: `/api`  
 > **Authentication**: JWT via HTTP-only cookies  
@@ -1425,7 +1425,7 @@ Health check endpoint that validates database connectivity.
 
 ## 19. WebSocket Events — Chat
 
-WorkPulse uses Socket.IO for real-time communication. All WebSocket connections authenticate via JWT cookie.
+AINO uses Socket.IO for real-time communication. All WebSocket connections authenticate via JWT cookie.
 
 ### Connection
 ```javascript
@@ -1783,4 +1783,4 @@ All error responses follow a consistent format:
 
 ---
 
-*Generated from WorkPulse server route analysis. Last updated: April 2026.*
+*Generated from AINO server route analysis. Last updated: April 2026.*

@@ -215,7 +215,7 @@ export function exportAllPagesAsMarkdown(
         sections.join("\n");
     const blob = new Blob([out], { type: "text/markdown;charset=utf-8" });
     const stamp = new Date().toISOString().slice(0, 10);
-    downloadBlob(blob, `workpulse-notes-${stamp}.md`);
+    downloadBlob(blob, `aino-notes-${stamp}.md`);
 }
 
 /* ── Read a user-selected file as text (Promise) ────────── */

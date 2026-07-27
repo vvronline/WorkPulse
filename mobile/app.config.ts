@@ -28,7 +28,7 @@ const ANDROID_NATIVE_CALL_UI =
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
-  name: "WorkPulse",
+  name: "AINO",
   slug: "workpulse",
   version: APP_VERSION,
   // "default" lets the OS/device sensor control rotation so tablets (and phones
@@ -37,6 +37,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   // into the manifest, hard-locking every Android screen (incl. tablets) to portrait.
   orientation: "default",
   icon: "./assets/icon.png",
+  // Deep-link scheme. Hard-coded in the Android native modules (CallRingService,
+  // CallActionActivity, ConversationNotificationsModule) which build
+  // `workpulse://call/...` and `workpulse://chat/...` intents. Renaming here
+  // without updating all of them makes call answer/decline and notification
+  // taps dead links, so it stays until that is done as one deliberate change.
   scheme: "workpulse",
   userInterfaceStyle: "automatic",
   ios: {
@@ -44,6 +49,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     bundleIdentifier: "app.workpulse.mobile",
   },
   android: {
+    // FROZEN: the Play Store package name is permanent and cannot be changed
+    // after publishing. The store LISTING name is independent, so rebrand the
+    // listing (and `name` above) rather than this identifier.
     package: "app.workpulse.mobile",
     googleServicesFile: ANDROID_GOOGLE_SERVICES_FILE,
     adaptiveIcon: {
@@ -216,7 +224,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     "./scripts/withAndroidNewIntent",
     // Copies the bundled call ringtone WAV files (assets/sounds/*.wav, generated
     // by scripts/generate-call-sounds.cjs) into android res/raw so the Notifee
-    // calls channel can ring with the WorkPulse tone instead of the system
+    // calls channel can ring with the AINO tone instead of the system
     // default in the killed/background status-bar state.
     "./scripts/withAndroidRingtoneAssets",
     // Copies the white-silhouette notification small icon (assets/notification/

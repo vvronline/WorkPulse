@@ -154,13 +154,13 @@ export default function Login() {
           <div className={s["auth-icon"]}>
             <img
               src="/icon-192.png"
-              alt="Loops"
+              alt="AINO"
               className={s["auth-icon-img"]}
             />
           </div>
         )}
-        <h2>Get into the Loops</h2>
-        <p>Sign in to {branding?.org_name || "Loops"}</p>
+        <h2>Welcome to AINO</h2>
+        <p>Sign in to {branding?.org_name || "AINO"}</p>
         {(location.state as any)?.message && (
           <div className="success-msg">{(location.state as any).message}</div>
         )}

@@ -284,7 +284,7 @@ export default function RecentMediaStrip({
     return (
       <View style={[styles.promptWrap, { minHeight: height }]}>
         <Text style={styles.promptText}>
-          Loops needs permission to show your photos and videos
+          AINO needs permission to show your photos and videos
         </Text>
         <Pressable
           style={styles.promptButton}

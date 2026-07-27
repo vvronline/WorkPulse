@@ -59,6 +59,14 @@ function sanitizeForCache(
 // Device-scoped preferences (theme, emoji recents/skin-tone) are intentionally
 // left untouched — they carry no tenant data and should survive an account
 // switch on the same device.
+//
+// REBRAND (WorkPulse -> AINO): the `workpulse*` localStorage keys below are
+// DELIBERATELY NOT renamed. They are storage addresses, not branding — renaming
+// one does not move the data, it just points at an empty key. For
+// "workpulse-notes-" that silently orphans the user's private notebook, and for
+// the others it also breaks THIS cleanup routine, leaving stale tenant data
+// readable after an account switch. Renaming would require a read-old/write-new
+// migration; there is no user-visible benefit, so keep these frozen.
 const TENANT_SCOPED_CACHE_KEYS = [
   "workpulse_agile_config_v1", // AgileConfigContext — tenant workflow/board config
   "workpulse.notificationPrefs", // NotificationPrefsContext — per-user prefs

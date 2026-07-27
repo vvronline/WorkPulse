@@ -1,6 +1,6 @@
-# WorkPulse — Architecture & Developer Guide
+# AINO — Architecture & Developer Guide
 
-> **WorkPulse** is a full-stack employee productivity platform with time tracking, task management,
+> **AINO** is a full-stack employee productivity platform with time tracking, task management,
 > real-time chat, WebRTC video/voice calls, meeting rooms, leave management, calendar, notes, and
 > enterprise admin features. Built with React + Vite (client) and Express + PostgreSQL (server),
 > with optional Redis caching, BullMQ job scheduling, and WebSocket-based real-time communication.

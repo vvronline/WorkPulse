@@ -50,7 +50,7 @@ function readStore(): StoredCredential | null {
         }
         return null;
     } catch (err) {
-        console.warn("[WorkPulse] biometric: readStore failed:", (err as Error)?.message);
+        console.warn("[AINO] biometric: readStore failed:", (err as Error)?.message);
         return null;
     }
 }
@@ -60,7 +60,7 @@ function writeStore(cred: StoredCredential): boolean {
         fs.writeFileSync(STORE_FILE, JSON.stringify(cred), { mode: 0o600 });
         return true;
     } catch (err) {
-        console.warn("[WorkPulse] biometric: writeStore failed:", (err as Error)?.message);
+        console.warn("[AINO] biometric: writeStore failed:", (err as Error)?.message);
         return false;
     }
 }
@@ -69,7 +69,7 @@ function clearStore(): void {
     try {
         if (fs.existsSync(STORE_FILE)) fs.unlinkSync(STORE_FILE);
     } catch (err) {
-        console.warn("[WorkPulse] biometric: clearStore failed:", (err as Error)?.message);
+        console.warn("[AINO] biometric: clearStore failed:", (err as Error)?.message);
     }
 }
 
@@ -123,7 +123,7 @@ Write-Output $availability
         // "Available" (enum value 0) means a Hello credential is enrolled.
         return /^Available$/i.test(result) || result === "0";
     } catch (err) {
-        console.warn("[WorkPulse] biometric: windowsHelloAvailable failed:", (err as Error)?.message);
+        console.warn("[AINO] biometric: windowsHelloAvailable failed:", (err as Error)?.message);
         return false;
     }
 }
@@ -165,7 +165,7 @@ Write-Output $result
         // "Verified" (enum value 0) means the user passed Windows Hello.
         return /^Verified$/i.test(result) || result === "0";
     } catch (err) {
-        console.warn("[WorkPulse] biometric: windowsHelloVerify failed:", (err as Error)?.message);
+        console.warn("[AINO] biometric: windowsHelloVerify failed:", (err as Error)?.message);
         return false;
     }
 }
@@ -204,7 +204,7 @@ export function setupBiometric(_getWindow?: () => BrowserWindow | null): void {
             const ok = writeStore({ credentialId, encryptedSecret });
             return ok ? { ok: true } : { ok: false, error: "persist_failed" };
         } catch (err) {
-            console.warn("[WorkPulse] biometric:enroll failed:", (err as Error)?.message);
+            console.warn("[AINO] biometric:enroll failed:", (err as Error)?.message);
             return { ok: false, error: (err as Error)?.message || "enroll_failed" };
         }
     });
@@ -218,7 +218,7 @@ export function setupBiometric(_getWindow?: () => BrowserWindow | null): void {
             if (!safeStorage.isEncryptionAvailable()) {
                 return { ok: false, error: "encryption_unavailable" };
             }
-            const verified = await promptBiometric("Sign in to WorkPulse");
+            const verified = await promptBiometric("Sign in to AINO");
             if (!verified) return { ok: false, error: "verification_failed" };
 
             let deviceSecret: string;
@@ -232,7 +232,7 @@ export function setupBiometric(_getWindow?: () => BrowserWindow | null): void {
             }
             return { ok: true, credentialId: stored.credentialId, deviceSecret };
         } catch (err) {
-            console.warn("[WorkPulse] biometric:login failed:", (err as Error)?.message);
+            console.warn("[AINO] biometric:login failed:", (err as Error)?.message);
             return { ok: false, error: (err as Error)?.message || "login_failed" };
         }
     });

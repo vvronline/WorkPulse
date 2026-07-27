@@ -538,7 +538,10 @@ function setupWebSocket(server: HTTPServer): any {
       if (host && (origin === `https://${host}` || origin === `http://${host}`))
         return done(true);
 
-      if (origin.startsWith("workpulse://")) return done(true);
+      // REBRAND (WorkPulse -> AINO): accept both desktop protocol origins so
+      // installed builds keep their realtime socket while new builds use aino://.
+      if (origin.startsWith("workpulse://") || origin.startsWith("aino://"))
+        return done(true);
 
       if (process.env.CORS_ORIGIN) {
         const allowed = process.env.CORS_ORIGIN.split(",").map((s) => s.trim());

@@ -25,7 +25,9 @@ api.interceptors.request.use(async (config) => {
   if (token) {
     config.headers.set("Authorization", `Bearer ${token}`);
   }
-  // Mirror the web client's contract.
+  // Mirror the web client's contract. REBRAND (WorkPulse -> AINO): the server
+  // accepts both "WorkPulse" and "AINO"; keep sending the legacy value until
+  // every client ships, so an older/rolled-back server never 403s this app.
   config.headers.set("X-Requested-With", "WorkPulse");
   config.headers.set("x-timezone-offset", String(new Date().getTimezoneOffset()));
   return config;

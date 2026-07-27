@@ -1890,7 +1890,7 @@ class NotifeeService {
     try {
       await notifee.displayNotification({
         id: MESSAGE_GROUP_SUMMARY_ID,
-        title: "Loops",
+        title: "AINO",
         body: summaryText,
         data: summaryData,
         android: {
@@ -1909,7 +1909,7 @@ class NotifeeService {
           style: {
             type: this.AndroidStyle.INBOX ?? 2,
             lines,
-            title: "Loops",
+            title: "AINO",
             summary: summaryText,
           },
         },

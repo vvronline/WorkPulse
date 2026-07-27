@@ -2,7 +2,7 @@
   "name": "workpulse",
   "version": "1.0.0",
   "private": true,
-  "description": "WorkPulse monorepo — desktop + mobile + server + client",
+  "description": "AINO monorepo — desktop + mobile + server + client",
   "scripts": {
     "release": "pwsh ./scripts/release.ps1"
   }

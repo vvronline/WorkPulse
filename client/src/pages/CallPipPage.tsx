@@ -13,7 +13,7 @@ interface PipState {
 /**
  * Tiny page rendered inside the Electron always-on-top mini call window
  * ("floatie"). It does NOT own the WebRTC peer connection or capture any
- * media itself — the main WorkPulse window keeps full control of those.
+ * media itself — the main AINO window keeps full control of those.
  *
  * Lifecycle:
  *   1. On mount we tell the main process we're ready via callPip.ready().
@@ -116,8 +116,8 @@ export default function CallPipPage() {
                     type="button"
                     style={styles.btn}
                     onClick={() => sendAction("restore")}
-                    title="Return to Loops"
-                    aria-label="Return to Loops"
+                    title="Return to AINO"
+                    aria-label="Return to AINO"
                 >
                     <RestoreIcon />
                 </button>

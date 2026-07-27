@@ -123,8 +123,8 @@ export default function LoginScreen() {
             />
           </View>
 
-          <Text style={styles.title}>Get into the Loops</Text>
-          <Text style={styles.subtitle}>Sign in to Loops</Text>
+          <Text style={styles.title}>Welcome to AINO</Text>
+          <Text style={styles.subtitle}>Sign in to AINO</Text>
 
           {error ? (
             <View style={styles.errorBox}>

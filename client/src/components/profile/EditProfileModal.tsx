@@ -504,7 +504,7 @@ export default function EditProfileModal({ onClose }: EditProfileModalProps) {
                                     <p className={s.error} style={{ marginTop: 0 }}>
                                         Passkeys aren't available in this browser. They require a
                                         secure (HTTPS) connection and a device that supports
-                                        Touch ID / Windows Hello / a screen-lock. Open Loops over
+                                        Touch ID / Windows Hello / a screen-lock. Open AINO over
                                         HTTPS and try again.
                                     </p>
                                 )}

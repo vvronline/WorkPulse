@@ -166,7 +166,7 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
     }, [branding.accent_color]);
 
     // Mirror the org logo onto the browser tab favicon so the tenant's
-    // brand identity follows the user even when WorkPulse is just one
+    // brand identity follows the user even when AINO is just one
     // tab among many. Falls back to the original /favicon.ico when the
     // org has no custom logo.
     useEffect(() => {

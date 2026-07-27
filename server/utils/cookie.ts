@@ -16,8 +16,14 @@ const useSecureCookie = isProduction && process.env.USE_HTTPS === "true";
  * scheme prefixes. Note: the browser sets `Origin`, so a third-party web page
  * cannot spoof this to weaken a victim's cookie — relaxation only affects the
  * caller's own session — but keeping a tight allowlist is good hygiene.
+ *
+ * REBRAND (WorkPulse -> AINO): both `workpulse://` and `aino://` are allowed
+ * so an already-installed desktop build still receives its cross-site auth
+ * cookie during the migration. Omitting the legacy scheme would silently fall
+ * through to `sameSite: "strict"`, which a custom-protocol origin cannot send
+ * back — the user would appear to log in and be immediately logged out.
  */
-const DESKTOP_COOKIE_ORIGINS = (process.env.DESKTOP_COOKIE_ORIGINS || "workpulse://")
+const DESKTOP_COOKIE_ORIGINS = (process.env.DESKTOP_COOKIE_ORIGINS || "workpulse://,aino://")
     .split(",")
     .map(s => s.trim().toLowerCase())
     .filter(Boolean);

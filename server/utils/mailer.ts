@@ -269,7 +269,7 @@ function getTransporter(): Transporter | null {
     return null;
 }
 
-const FROM = (): string => process.env.SMTP_FROM || (process.env.SMTP_USER ? `"Loops" <${process.env.SMTP_USER}>` : '"Loops" <noreply@workpulse.app>');
+const FROM = (): string => process.env.SMTP_FROM || (process.env.SMTP_USER ? `"AINO" <${process.env.SMTP_USER}>` : '"AINO" <noreply@aino.org.in>');
 
 /** Escape user-controlled strings before embedding in HTML email templates. */
 function esc(str: unknown): string {
@@ -367,14 +367,14 @@ type TemplateFn = (...args: any[]) => TemplateOutput;
 const templates: Record<string, TemplateFn> = {
     leaveApproved: (user, leave) => ({
         to: user.email,
-        subject: "Loops — Leave Approved",
+        subject: "AINO — Leave Approved",
         body: `<h2 style="color:#22c55e;margin:0 0 12px;">Leave Approved ✅</h2>
             <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
             <p>Your <strong>${esc(leave.leave_type)}</strong> leave on <strong>${esc(leave.date)}</strong> has been approved.</p>`,
     }),
     leaveRejected: (user, leave, reason) => ({
         to: user.email,
-        subject: "Loops — Leave Rejected",
+        subject: "AINO — Leave Rejected",
         body: `<h2 style="color:#ef4444;margin:0 0 12px;">Leave Rejected</h2>
             <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
             <p>Your <strong>${esc(leave.leave_type)}</strong> leave on <strong>${esc(leave.date)}</strong> has been rejected.</p>
@@ -382,14 +382,14 @@ const templates: Record<string, TemplateFn> = {
     }),
     leaveRevoked: (user, leave) => ({
         to: user.email,
-        subject: "Loops — Leave Revoked",
+        subject: "AINO — Leave Revoked",
         body: `<h2 style="color:#f59e0b;margin:0 0 12px;">Leave Revoked</h2>
             <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
             <p>Your <strong>${esc(leave.leave_type)}</strong> leave on <strong>${esc(leave.date)}</strong> has been revoked by management.</p>`,
     }),
     taskAssigned: (user, task, assignerName) => ({
         to: user.email,
-        subject: `Loops — Task Assigned: ${esc(task.title)}`,
+        subject: `AINO — Task Assigned: ${esc(task.title)}`,
         body: `<h2 style="color:{{accent}};margin:0 0 12px;">New Task Assigned</h2>
             <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
             <p><strong>${esc(assignerName)}</strong> assigned you a task:</p>
@@ -398,21 +398,21 @@ const templates: Record<string, TemplateFn> = {
     }),
     mention: (user, commenterName, taskTitle) => ({
         to: user.email,
-        subject: `Loops — ${esc(commenterName)} mentioned you`,
+        subject: `AINO — ${esc(commenterName)} mentioned you`,
         body: `<h2 style="color:{{accent}};margin:0 0 12px;">You were mentioned</h2>
             <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
             <p><strong>${esc(commenterName)}</strong> mentioned you in a comment on task: <strong>${esc(taskTitle)}</strong></p>`,
     }),
     manualEntryApproved: (user, date) => ({
         to: user.email,
-        subject: "Loops — Manual Entry Approved",
+        subject: "AINO — Manual Entry Approved",
         body: `<h2 style="color:#22c55e;margin:0 0 12px;">Manual Entry Approved ✅</h2>
             <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
             <p>Your manual time entry for <strong>${esc(date)}</strong> has been approved.</p>`,
     }),
     manualEntryRejected: (user, date, reason) => ({
         to: user.email,
-        subject: "Loops — Manual Entry Rejected",
+        subject: "AINO — Manual Entry Rejected",
         body: `<h2 style="color:#ef4444;margin:0 0 12px;">Manual Entry Rejected</h2>
             <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
             <p>Your manual time entry for <strong>${esc(date)}</strong> has been rejected.</p>
@@ -420,7 +420,7 @@ const templates: Record<string, TemplateFn> = {
     }),
     meetingScheduled: (user, meeting, organizerName) => ({
         to: user.email,
-        subject: `Loops — Meeting Scheduled: ${esc(meeting.title)}`,
+        subject: `AINO — Meeting Scheduled: ${esc(meeting.title)}`,
         body: `<h2 style="color:{{accent}};margin:0 0 12px;">📹 Meeting Scheduled</h2>
             <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
             <p><strong>${esc(organizerName)}</strong> has scheduled a meeting:</p>
@@ -431,7 +431,7 @@ const templates: Record<string, TemplateFn> = {
     }),
     meetingUpdated: (user, meeting, organizerName) => ({
         to: user.email,
-        subject: `Loops — Meeting Updated: ${esc(meeting.title)}`,
+        subject: `AINO — Meeting Updated: ${esc(meeting.title)}`,
         body: `<h2 style="color:#f59e0b;margin:0 0 12px;">📹 Meeting Updated</h2>
             <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
             <p><strong>${esc(organizerName)}</strong> has updated the meeting:</p>
@@ -440,7 +440,7 @@ const templates: Record<string, TemplateFn> = {
     }),
     meetingCancelled: (user, meeting, organizerName) => ({
         to: user.email,
-        subject: `Loops — Meeting Cancelled: ${esc(meeting.title)}`,
+        subject: `AINO — Meeting Cancelled: ${esc(meeting.title)}`,
         body: `<h2 style="color:#ef4444;margin:0 0 12px;">📹 Meeting Cancelled</h2>
             <p>Hi <strong>${esc(user.full_name)}</strong>,</p>
             <p><strong>${esc(organizerName)}</strong> has cancelled the meeting:</p>
@@ -539,7 +539,7 @@ function applyBranding(bodyOrHtml: string, branding: Branding | null | undefined
         ${logoBlock}
         ${body}
         <hr style="margin:24px 0 12px;border:none;border-top:1px solid #e5e7eb;">
-        <p style="font-size:11px;color:#9ca3af;text-align:center;margin:0;">Sent by Loops · do not reply</p>
+        <p style="font-size:11px;color:#9ca3af;text-align:center;margin:0;">Sent by AINO · do not reply</p>
     </div>`;
 }
 

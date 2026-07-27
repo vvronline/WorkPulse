@@ -1,6 +1,6 @@
 // Integrations catalog.
 //
-// This page is the single hub for connecting WorkPulse with external systems.
+// This page is the single hub for connecting AINO with external systems.
 // It used to be a one-provider page (GitHub only); it's now a directory that
 // groups providers by category (Source Control today; more groups to follow)
 // and shows status badges so users can see at a glance which integrations are
@@ -115,7 +115,7 @@ export default function Integrations() {
             <header style={styles.header}>
                 <h1 style={styles.title}>Integrations</h1>
                 <p style={styles.subtitle}>
-                    Connect {branding?.org_name || "Loops"} with the tools your team already uses. Pick a provider
+                    Connect {branding?.org_name || "AINO"} with the tools your team already uses. Pick a provider
                     below to configure it. New integrations are added regularly — items marked
                     <em> Coming soon</em> are on the roadmap.
                 </p>

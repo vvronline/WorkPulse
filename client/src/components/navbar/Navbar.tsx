@@ -47,11 +47,11 @@ export default function Navbar() {
           ) : (
             <img
               src="/icon-192.png"
-              alt="Loops"
+              alt="AINO"
               className={s["logo-img"]}
             />
           )}
-          <h1 className={s.title}>{branding?.org_name || "Loops"}</h1>
+          <h1 className={s.title}>{branding?.org_name || "AINO"}</h1>
         </NavLink>
         <div className={s["navbar-right"]}>
           <NavLinks />

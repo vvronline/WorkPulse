@@ -687,7 +687,7 @@ export default function CallOverlay({
                 height: 220,
             });
             docPipWindowRef.current = pipWin;
-            pipWin.document.title = "Loops Call";
+            pipWin.document.title = "AINO Call";
             pipWin.document.body.style.margin = "0";
             pipWin.document.body.style.background = "#111827";
             pipWin.document.body.style.color = "#f9fafb";
@@ -775,7 +775,7 @@ export default function CallOverlay({
         [closeAllFloatingLayers]
     );
 
-    // ─── Auto-open PiP when the user minimises / hides WorkPulse ─────
+    // ─── Auto-open PiP when the user minimises / hides AINO ─────
     const handleMinimizeRef = useRef(handleMinimize);
     const statusRef = useRef(status);
     const minimizedRef = useRef(minimized);

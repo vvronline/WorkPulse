@@ -22,11 +22,11 @@ function setupTray(mainWindow: BrowserWindow): Tray {
   }
 
   tray = new Tray(trayIcon);
-  tray.setToolTip("Loops");
+  tray.setToolTip("AINO");
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: "Show Loops",
+      label: "Show AINO",
       click: () => {
         mainWindow.show();
         mainWindow.focus();

@@ -292,7 +292,7 @@ function makeCommands(opts: MakeCommandsOpts = {}): SlashCommand[] {
                 }
             },
         },
-        // ── Tier 6: WorkPulse integrations ──────────────────────
+        // ── Tier 6: AINO integrations ──────────────────────
         {
             id: "sprint", label: "Sprint board", hint: "Embed live sprint board & burndown",
             icon: Rocket, keys: ["sprint", "board", "burndown", "kanban", "scrum"],

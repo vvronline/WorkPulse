@@ -108,7 +108,7 @@ export default function ModalEditor({
     onMention,
     collabUsers,
     collabConnected,
-    // Tier 6 — WorkPulse integrations
+    // Tier 6 — AINO integrations
     onConvertToTask,
     onNewOneOnOne,
 }: ModalEditorProps) {
