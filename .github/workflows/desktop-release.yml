@@ -53,7 +53,7 @@ jobs:
       - name: Build client for Electron
         working-directory: client
         env:
-          VITE_WS_URL: wss://workpulse-prod.up.railway.app/ws
+          VITE_WS_URL: wss://www.aino.org.in/ws
           VITE_ELECTRON: "true"
         run: npm run build
 

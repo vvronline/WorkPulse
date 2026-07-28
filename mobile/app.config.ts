@@ -7,11 +7,14 @@ import { version as APP_VERSION } from "./package.json";
 
 // Default backend targets. Override per-build via environment variables
 // (EAS secrets / .env) without touching source.
+// Must be the `www.` host: the apex `aino.org.in` is a registrar redirect and
+// is NOT served by Railway (it 404s on /api). The legacy Railway origin still
+// resolves to the same server and must stay alive for already-installed builds
+// that baked it in.
 const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_BASE_URL ||
-  "https://workpulse-prod.up.railway.app/api";
+  process.env.EXPO_PUBLIC_API_BASE_URL || "https://www.aino.org.in/api";
 const WS_BASE_URL =
-  process.env.EXPO_PUBLIC_WS_BASE_URL || "wss://workpulse-prod.up.railway.app";
+  process.env.EXPO_PUBLIC_WS_BASE_URL || "wss://www.aino.org.in";
 const TENOR_API_KEY = process.env.EXPO_PUBLIC_TENOR_API_KEY || "";
 const TENOR_CLIENT_KEY =
   process.env.EXPO_PUBLIC_TENOR_CLIENT_KEY || "workpulse-chat";

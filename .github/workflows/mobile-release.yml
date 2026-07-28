@@ -58,8 +58,10 @@ jobs:
       VERSION: ${{ needs.validate.outputs.version }}
       # Backend targets baked into the JS bundle at build time. Override here (or
       # via repo variables) if you ever ship a build pointing at a different API.
-      EXPO_PUBLIC_API_BASE_URL: https://workpulse-prod.up.railway.app/api
-      EXPO_PUBLIC_WS_BASE_URL: wss://workpulse-prod.up.railway.app
+      # Must be the `www.` host: the apex aino.org.in is a registrar redirect
+      # that is NOT served by Railway (it 404s on /api).
+      EXPO_PUBLIC_API_BASE_URL: https://www.aino.org.in/api
+      EXPO_PUBLIC_WS_BASE_URL: wss://www.aino.org.in
       # OTA update source (Cloudflare R2 public custom domain). Baked into the JS
       # bundle so the in-app updater reads mobile/latest.json from the CDN. When
       # the repo variable is unset this is empty and the updater falls back to

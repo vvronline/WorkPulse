@@ -1,6 +1,7 @@
 # Rebrand: WorkPulse / Loops → AINO
 
-Status: **code changes complete; infrastructure steps pending (see §4).**
+Status: **code changes complete; client backend targets switched to
+`https://www.aino.org.in`; remaining infrastructure steps in §4.**
 
 The project shipped under two legacy names — `WorkPulse` (technical identifiers)
 and `Loops` (user-facing copy). Both are being replaced by **AINO**, on the new
@@ -94,9 +95,15 @@ These are not code and must be done in the respective dashboards.
 1. App service → **Settings → Networking → Custom Domain** → add `aino.org.in` (and `www.aino.org.in`).
 2. Add the `CNAME` record Railway shows at your DNS provider.
 3. Wait for certificate issuance.
-4. **Keep `workpulse-prod.up.railway.app` active.** Every installed desktop and
-   mobile build still points at it (`desktop/main.ts`, `mobile/src/config.ts`,
-   `mobile/eas.json`). Removing it bricks them.
+4. **Keep `workpulse-prod.up.railway.app` active — permanently.** New builds now
+   target `https://www.aino.org.in`, but every *already-installed* desktop and
+   mobile build baked the Railway host into its JS bundle. Removing that domain
+   bricks them; there is no way to migrate a client that can no longer reach the
+   server to tell it about a new address.
+5. **Always use the `www.` host.** The apex `aino.org.in` resolves to a registrar
+   redirect (`15.197.225.128` / `3.33.251.168`), **not** Railway, and returns
+   `404` on `/api/health`. Only `www.aino.org.in` is CNAME'd to the app service.
+   Point the apex at Railway too, or leave clients on `www.` as they are now.
 
 ### 4.2 Railway — environment variables
 
@@ -126,6 +133,8 @@ Only worth doing with an explicit read-old/write-new shim — or never:
 - Mobile deep-link scheme + the 4 Kotlin files.
 - Dropping `WorkPulse` from the server's dual-accept lists — **only** once client
   adoption is effectively complete.
+- Retiring `workpulse-prod.up.railway.app` — see §4.1, this is effectively
+  "never" while any old install survives.
 
 Mobile/desktop app *identity* (package, bundle ID, appId) should stay frozen
 permanently. Store **listing** names are independent of package IDs, so the

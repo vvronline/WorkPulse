@@ -30,13 +30,18 @@ function asBool(value: boolean | string | undefined): boolean {
  */
 export const ANDROID_NATIVE_CALL_UI = asBool(extra.ANDROID_NATIVE_CALL_UI);
 
-/** REST API base, e.g. https://workpulse-prod.up.railway.app/api */
+/**
+ * REST API base, e.g. https://www.aino.org.in/api
+ *
+ * Must be the `www.` host: the apex `aino.org.in` is a registrar redirect and
+ * is NOT served by Railway (it 404s on /api). This default only applies when
+ * `extra` is missing (it is populated from app.config.ts at build time).
+ */
 export const API_BASE_URL =
-  extra.API_BASE_URL ?? "https://workpulse-prod.up.railway.app/api";
+  extra.API_BASE_URL ?? "https://www.aino.org.in/api";
 
-/** WebSocket base, e.g. wss://workpulse-prod.up.railway.app */
-export const WS_BASE_URL =
-  extra.WS_BASE_URL ?? "wss://workpulse-prod.up.railway.app";
+/** WebSocket base, e.g. wss://www.aino.org.in */
+export const WS_BASE_URL = extra.WS_BASE_URL ?? "wss://www.aino.org.in";
 
 export const TENOR_API_KEY = extra.TENOR_API_KEY ?? "";
 export const TENOR_CLIENT_KEY = extra.TENOR_CLIENT_KEY ?? "workpulse-chat";

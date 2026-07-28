@@ -128,8 +128,11 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // ─── Configuration ───
-const RAILWAY_URL =
-  process.env.API_SERVER || "https://workpulse-prod.up.railway.app";
+// Production backend origin. Must be the `www.` host: the apex `aino.org.in`
+// is a registrar redirect and is NOT served by Railway (it 404s on /api). The
+// legacy `workpulse-prod.up.railway.app` origin still resolves to the same
+// server and must stay alive for already-installed builds that baked it in.
+const RAILWAY_URL = process.env.API_SERVER || "https://www.aino.org.in";
 // In packaged build, client/dist is in extraResources; in dev, it's adjacent
 const CLIENT_DIST = app.isPackaged
   ? path.join(process.resourcesPath, "client", "dist")
