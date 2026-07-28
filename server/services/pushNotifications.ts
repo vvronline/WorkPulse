@@ -144,7 +144,7 @@ class PushNotificationService {
             const serviceAccount = JSON.parse(serviceAccountKey);
             this.app = initializeApp({
                 credential: cert(serviceAccount),
-            }, "workpulse");
+            }, "aino");
             this.initialized = true;
             // Log the resolved Firebase project_id so deploys can confirm the
             // server's service account matches the mobile app's

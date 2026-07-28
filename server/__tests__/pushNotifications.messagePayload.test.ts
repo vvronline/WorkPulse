@@ -24,8 +24,8 @@ const sendEachForMulticast = jest.fn(async (message: any) => ({
 }));
 
 jest.mock("firebase-admin/app", () => ({
-    initializeApp: jest.fn(() => ({ name: "workpulse" })),
-    getApp: jest.fn(() => ({ name: "workpulse" })),
+    initializeApp: jest.fn(() => ({ name: "aino" })),
+    getApp: jest.fn(() => ({ name: "aino" })),
     cert: jest.fn((serviceAccount) => serviceAccount),
 }));
 

@@ -1,8 +1,46 @@
-# WorkPulse Mobile — Release (APK) Guide
+# AINO Mobile - Release Guide (EAS Build / EAS Update / Play Store)
 
-The Android release APK is built **automatically by GitHub Actions** on every
-`mobile-vX.Y.Z` tag push (`.github/workflows/mobile-release.yml`). No local
-Android SDK / EAS account is required.
+Distribution moved from sideloaded, debug-signed APKs to **EAS Build + Google
+Play**. The old `mobile-vX.Y.Z` GitHub Actions workflow and the in-app APK
+self-updater have been removed - see `docs/AINO_EAS_MIGRATION_PLAN.md` for the
+full migration, including the identifier rename to `app.aino.mobile`.
+
+## Ship a JS-only change (OTA, seconds)
+
+```sh
+cd mobile
+eas update --channel production --message "<what changed>" --environment production
+```
+
+`--environment` is required on SDK 55+. This swaps the JS bundle only. Anything
+that touches native code (a new dependency with native code, a config plugin, a
+permission, an app icon) needs a full build instead - the `fingerprint` runtime
+policy will bump the runtime version automatically so old binaries correctly
+ignore the update.
+
+## Ship a native change (full build + store submit)
+
+```sh
+cd mobile
+eas build -p android --profile preview      # smoke test first (APK, internal)
+eas build -p android --profile production   # AAB for Play
+eas submit -p android --profile production  # -> internal track, draft
+```
+
+Or in one step once the flow is trusted:
+`eas build -p android --profile production --auto-submit`.
+
+`versionCode` is managed remotely (`cli.appVersionSource: "remote"` +
+`autoIncrement`), so do not hand-edit it. The user-facing version still comes
+from `mobile/package.json`.
+
+## Firebase / push
+
+The app is on Firebase project `aino-86bb6` (package `app.aino.mobile`). The
+server must hold a service-account key from the SAME project in
+`FIREBASE_SERVICE_ACCOUNT_KEY`, or every send fails with `mismatched-credential`
+and no push is delivered. `google-services.json` is gitignored and reaches EAS
+through the `GOOGLE_SERVICES_JSON` file env var.
 
 ## Native call parity prerequisites (WhatsApp/Teams-style incoming calls)
 

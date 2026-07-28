@@ -63,7 +63,7 @@ export type StartRingingOptions = {
   token?: string;
   /** "voice" | "video". */
   callType?: string;
-  /** App deep-link scheme (e.g. "workpulse") so action taps open the call screen. */
+  /** App deep-link scheme (e.g. "aino") so action taps open the call screen. */
   scheme?: string;
 };
 
@@ -99,7 +99,7 @@ export function startRinging(options: StartRingingOptions = {}): boolean {
         callerAvatar: options.callerAvatar ?? "",
         token: options.token ?? "",
         callType: options.callType ?? "voice",
-        scheme: options.scheme ?? "workpulse",
+        scheme: options.scheme ?? "aino",
       }) === true
     );
   } catch {
@@ -144,7 +144,7 @@ export function startActiveCall(options: StartActiveCallOptions = {}): void {
       callType: options.callType ?? "voice",
       title: options.title ?? "Ongoing call",
       body: options.body ?? "",
-      scheme: options.scheme ?? "workpulse",
+      scheme: options.scheme ?? "aino",
     });
   } catch {
     // Best-effort; never let a native bridge error break the call flow.

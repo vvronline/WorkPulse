@@ -1417,12 +1417,12 @@ class NotifeeService {
       // Top-level person is the device user (the recipient of these messages).
       // A stable id prevents Android from treating this as a different Person
       // each time the display name changes.
-      person: { id: "workpulse-self", name: "You" },
+      person: { id: "aino-self", name: "You" },
       messages: threadMessages.map((m) => ({
         text: m.text,
         timestamp: m.timestamp,
         person: {
-          id: m.senderId ? `workpulse-user-${m.senderId}` : m.senderName,
+          id: m.senderId ? `aino-user-${m.senderId}` : m.senderName,
           name: m.senderName,
           // The MessagingStyle Person icon is the conversation avatar Android
           // promotes in its native message template. The separate smallIcon

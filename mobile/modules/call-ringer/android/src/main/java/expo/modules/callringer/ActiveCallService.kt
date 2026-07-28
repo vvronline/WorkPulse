@@ -95,7 +95,7 @@ class ActiveCallService : Service() {
     val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Ongoing call"
     val body = intent?.getStringExtra(EXTRA_BODY) ?: "Tap to return to the call"
     val callType = intent?.getStringExtra(EXTRA_CALL_TYPE) ?: "voice"
-    val scheme = intent?.getStringExtra(EXTRA_SCHEME) ?: "workpulse"
+    val scheme = intent?.getStringExtra(EXTRA_SCHEME) ?: "aino"
 
     val notification = buildNotification(title, body, scheme)
 

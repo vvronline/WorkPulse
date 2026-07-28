@@ -1,7 +1,7 @@
 import type { ExpoConfig, ConfigContext } from "expo/config";
 // Single source of truth for the app version. The mobile release workflow
-// validates that the `mobile-vX.Y.Z` tag matches this value, and the in-app
-// updater compares against it — so it MUST reflect the real shipped version
+// validates that the `mobile-vX.Y.Z` tag matches this value, and EAS Update
+// surfaces it on the Profile screen — so it MUST reflect the real shipped version
 // (previously this was hardcoded to "1.0.0" which broke update comparisons).
 import { version as APP_VERSION } from "./package.json";
 
@@ -17,7 +17,7 @@ const WS_BASE_URL =
   process.env.EXPO_PUBLIC_WS_BASE_URL || "wss://www.aino.org.in";
 const TENOR_API_KEY = process.env.EXPO_PUBLIC_TENOR_API_KEY || "";
 const TENOR_CLIENT_KEY =
-  process.env.EXPO_PUBLIC_TENOR_CLIENT_KEY || "workpulse-chat";
+  process.env.EXPO_PUBLIC_TENOR_CLIENT_KEY || "aino-chat";
 const ANDROID_GOOGLE_SERVICES_FILE =
   process.env.EXPO_ANDROID_GOOGLE_SERVICES_FILE ||
   process.env.GOOGLE_SERVICES_JSON ||
@@ -29,33 +29,63 @@ const ANDROID_GOOGLE_SERVICES_FILE =
 const ANDROID_NATIVE_CALL_UI =
   process.env.EXPO_PUBLIC_ANDROID_NATIVE_CALL_UI === "true";
 
+// EAS project id (@aino/aino) — required for EAS Update: the OTA
+// manifest lives at https://u.expo.dev/<projectId>. This project already
+// existed and was renamed to @aino/aino on EAS, so the id is stable and carries
+// the build history -- it is NOT re-created by `eas init`. Overridable by env
+// so CI can target a different project without editing source.
+const EAS_PROJECT_ID =
+  process.env.EAS_PROJECT_ID || "dcccf532-ce8b-431c-bb2d-bc99866d14fd";
+
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: "AINO",
-  slug: "workpulse",
+  // EAS project identity. `slug` + `owner` resolve the project on EAS servers
+  // (build history, OTA channels, credentials). Renamed from "workpulse" while
+  // the project was still UNLINKED (`eas project:info` reported "not
+  // configured"), so nothing needed migrating. See docs/AINO_EAS_MIGRATION_PLAN.md §0.
+  slug: "aino",
+  owner: "aino",
   version: APP_VERSION,
+  // EAS Update (OTA). The "fingerprint" policy derives the runtime version from
+  // a hash of everything that affects the native layer, so the runtime bumps
+  // AUTOMATICALLY whenever a config plugin, local native module or patch
+  // changes -- this project has 9 plugins, 4 local modules and patch-package,
+  // so the "appVersion" policy would silently ship JS that calls into native
+  // code the installed binary does not have. "nativeVersion" is not an option:
+  // it is incompatible with cli.appVersionSource="remote" in eas.json.
+  runtimeVersion: { policy: "fingerprint" },
+  ...(EAS_PROJECT_ID
+    ? { updates: { url: `https://u.expo.dev/${EAS_PROJECT_ID}` } }
+    : {}),
   // "default" lets the OS/device sensor control rotation so tablets (and phones
   // with auto-rotate enabled) can switch between portrait and landscape and the
   // UI re-aligns. Previously "portrait" injected android:screenOrientation="portrait"
   // into the manifest, hard-locking every Android screen (incl. tablets) to portrait.
   orientation: "default",
   icon: "./assets/icon.png",
-  // Deep-link scheme. Hard-coded in the Android native modules (CallRingService,
-  // CallActionActivity, ConversationNotificationsModule) which build
-  // `workpulse://call/...` and `workpulse://chat/...` intents. Renaming here
-  // without updating all of them makes call answer/decline and notification
-  // taps dead links, so it stays until that is done as one deliberate change.
-  scheme: "workpulse",
+  // Deep-link scheme. The Android native modules (CallRingService,
+  // CallActionActivity, ActiveCallService) receive this value as an intent
+  // extra and only fall back to a literal, so JS and native were flipped
+  // together to "aino" as one change; ConversationNotificationsModule builds
+  // `aino://chat/...` directly. Renaming here alone would make call
+  // answer/decline and notification taps dead links.
+  scheme: "aino",
   userInterfaceStyle: "automatic",
   ios: {
     supportsTablet: true,
-    bundleIdentifier: "app.workpulse.mobile",
+    bundleIdentifier: "app.aino.mobile",
   },
   android: {
-    // FROZEN: the Play Store package name is permanent and cannot be changed
-    // after publishing. The store LISTING name is independent, so rebrand the
-    // listing (and `name` above) rather than this identifier.
-    package: "app.workpulse.mobile",
+    // FROZEN FROM THE FIRST `eas submit` ONWARDS. A Play Store package name is
+    // permanent once published; this was renamed from `app.workpulse.mobile`
+    // while the app had NEVER been published (distribution was sideloaded,
+    // debug-signed APKs only), which was the last possible window. Treat it as
+    // immutable now — see docs/AINO_EAS_MIGRATION_PLAN.md §0. The store LISTING
+    // name is independent, so rebrand that (and `name` above) instead.
+    // Matches the `aino-86bb6` Firebase client in google-services.json; the two
+    // must stay in lockstep or FCM sends fail with `mismatched-credential`.
+    package: "app.aino.mobile",
     googleServicesFile: ANDROID_GOOGLE_SERVICES_FILE,
     adaptiveIcon: {
       backgroundColor: "#131314",
@@ -91,9 +121,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "android.permission.ACCESS_NETWORK_STATE",
       "android.permission.ACCESS_FINE_LOCATION",
       "android.permission.ACCESS_COARSE_LOCATION",
-      // Required so the in-app updater can launch the system package installer
-      // for the downloaded APK (see src/updater.ts).
-      "android.permission.REQUEST_INSTALL_PACKAGES",
     ],
   },
   web: {
@@ -240,27 +267,27 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "expo-audio",
       {
         microphonePermission:
-          "Allow WorkPulse to access your microphone to record voice messages and make calls.",
+          "Allow AINO to access your microphone to record voice messages and make calls.",
       },
     ],
     [
       "@config-plugins/react-native-webrtc",
       {
         cameraPermission:
-          "Allow WorkPulse to access your camera for video calls.",
+          "Allow AINO to access your camera for video calls.",
         microphonePermission:
-          "Allow WorkPulse to access your microphone for calls.",
+          "Allow AINO to access your microphone for calls.",
       },
     ],
     [
       "expo-camera",
       {
         cameraPermission:
-          "Allow WorkPulse to access your camera to take photos and record videos for chat, face enrollment and attendance verification.",
+          "Allow AINO to access your camera to take photos and record videos for chat, face enrollment and attendance verification.",
         // Required so the in-chat camera can RECORD VIDEO (audio track) on a
         // long-press of the shutter, matching Signal's camera.
         microphonePermission:
-          "Allow WorkPulse to access your microphone to record videos in chat.",
+          "Allow AINO to access your microphone to record videos in chat.",
         recordAudioAndroid: true,
       },
     ],
@@ -271,9 +298,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "expo-media-library",
       {
         photosPermission:
-          "Allow WorkPulse to access your photos so you can share them in chat.",
+          "Allow AINO to access your photos so you can share them in chat.",
         savePhotosPermission:
-          "Allow WorkPulse to save photos and videos you capture in chat.",
+          "Allow AINO to save photos and videos you capture in chat.",
         isAccessMediaLocationEnabled: true,
       },
     ],
@@ -281,9 +308,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "expo-location",
       {
         locationAlwaysAndWhenInUsePermission:
-          "Allow WorkPulse to use your location to verify office attendance at clock-in.",
+          "Allow AINO to use your location to verify office attendance at clock-in.",
         locationWhenInUsePermission:
-          "Allow WorkPulse to use your location to verify office attendance at clock-in.",
+          "Allow AINO to use your location to verify office attendance at clock-in.",
       },
     ],
     [
@@ -294,7 +321,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "expo-local-authentication",
       {
         faceIDPermission:
-          "Allow WorkPulse to use Face ID to sign you in securely.",
+          "Allow AINO to use Face ID to sign you in securely.",
       },
     ],
     "expo-sharing",
@@ -318,5 +345,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // P3.15 — surfaced to src/config.ts so nativeCallService can gate the
     // Android react-native-callkeep branch behind this feature flag.
     ANDROID_NATIVE_CALL_UI,
+    // Written by `eas init`. expo-updates reads the project id from here at
+    // runtime to resolve the OTA manifest, so it must match the `updates.url`
+    // above and the project that `eas update` publishes to.
+    ...(EAS_PROJECT_ID ? { eas: { projectId: EAS_PROJECT_ID } } : {}),
   },
 });

@@ -10,7 +10,7 @@ import { storage } from "./mmkv";
  * AuthContext); clearing the in-memory client also re-persists the empty state,
  * so no stale tenant data survives an account switch on a shared device.
  */
-const CACHE_KEY = "workpulse-rq-cache";
+const CACHE_KEY = "aino-rq-cache";
 
 export const mmkvQueryPersister: Persister = {
   persistClient: (client) => {

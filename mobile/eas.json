@@ -1,6 +1,6 @@
 {
   "cli": {
-    "version": ">= 5.0.0",
+    "version": ">= 21.0.0",
     "appVersionSource": "remote"
   },
   "build": {
@@ -13,7 +13,8 @@
         "EXPO_PUBLIC_WS_BASE_URL": "wss://www.aino.org.in"
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "resourceClass": "large"
       }
     },
     "preview": {
@@ -24,7 +25,8 @@
         "EXPO_PUBLIC_WS_BASE_URL": "wss://www.aino.org.in"
       },
       "android": {
-        "buildType": "apk"
+        "buildType": "apk",
+        "resourceClass": "large"
       }
     },
     "production": {
@@ -33,10 +35,18 @@
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://www.aino.org.in/api",
         "EXPO_PUBLIC_WS_BASE_URL": "wss://www.aino.org.in"
+      },
+      "android": {
+        "resourceClass": "large"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
+      }
+    }
   }
 }

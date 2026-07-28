@@ -13,7 +13,7 @@ import org.json.JSONObject
  * WHY THIS EXISTS:
  * When the app is killed and the user taps Answer/Decline on the foreground-
  * service call notification, [CallActionActivity] launches a deep link
- * (`workpulse://call/<id>?…&autoAnswer=1` / `&action=decline`). But on a cold
+ * (`aino://call/<id>?…&autoAnswer=1` / `&action=decline`). But on a cold
  * launch the proven routing path (`app/index.tsx`) reads the SecureStore-
  * PERSISTED pending-call route — which was written at RING time with
  * autoAnswer="0" and no action (the call was only ringing then). That persisted

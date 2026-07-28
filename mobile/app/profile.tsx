@@ -40,8 +40,9 @@ import {
 } from "../src/icons";
 import { useAuth } from "../src/auth/AuthContext";
 import { useSettings, type ThemePreference } from "../src/store/settings";
-import { triggerUpdateCheck } from "../src/components/UpdateChecker";
-import { getCurrentVersion } from "../src/updater";
+import Constants from "expo-constants";
+import * as Updates from "expo-updates";
+
 import type { Theme } from "../src/theme";
 import { useTheme } from "../src/theme/ThemeProvider";
 import {
@@ -235,6 +236,42 @@ export default function Profile() {
   } = useAuth();
   const router = useRouter();
   const { alert, confirm, dialog } = useDialog();
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+
+  /**
+   * Manual EAS Update check. Replaces the old in-app APK downloader (the app is
+   * distributed through the Play Store now, which forbids self-installing APKs),
+   * so this only ever swaps the JS bundle -- native changes still require a new
+   * store build. No-op in dev, where updates are served by the Metro dev server.
+   */
+  const onCheckForUpdates = useCallback(async () => {
+    if (checkingUpdate) return;
+    if (__DEV__ || !Updates.isEnabled) {
+      alert("Updates unavailable", "Updates are disabled in development builds.");
+      return;
+    }
+    setCheckingUpdate(true);
+    try {
+      const result = await Updates.checkForUpdateAsync();
+      if (!result.isAvailable) {
+        alert("Up to date", "You're running the latest version.");
+        return;
+      }
+      await Updates.fetchUpdateAsync();
+      confirm({
+        title: "Update ready",
+        message: "Restart the app now to apply the update?",
+        confirmText: "Restart",
+        onConfirm: () => {
+          void Updates.reloadAsync();
+        },
+      });
+    } catch (e: any) {
+      alert("Update check failed", e?.message || "Could not reach the update server.");
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }, [alert, confirm, checkingUpdate]);
   const [biometricBusy, setBiometricBusy] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
@@ -588,10 +625,18 @@ export default function Profile() {
           )}
         </Pressable>
       ) : null}
-      <Pressable style={styles.action} onPress={() => triggerUpdateCheck()}>
+      <Pressable
+        style={styles.action}
+        onPress={onCheckForUpdates}
+        disabled={checkingUpdate}
+      >
         <RefreshCw size={16} color={theme.text} />
-        <Text style={styles.actionText}>Check for Updates</Text>
-        <Text style={styles.versionText}>v{getCurrentVersion()}</Text>
+        <Text style={styles.actionText}>
+          {checkingUpdate ? "Checking…" : "Check for Updates"}
+        </Text>
+        <Text style={styles.versionText}>
+          v{Constants.expoConfig?.version ?? "0.0.0"}
+        </Text>
       </Pressable>
 
       <TouchableOpacity

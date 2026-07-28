@@ -18,6 +18,17 @@ address, not a label. Renaming it doesn't move the data; it points at nothing.
 
 ---
 
+> **Update — mobile identifiers were unfrozen and renamed.** The table in §1
+> below is now **historical for the four mobile rows**. `app.workpulse.mobile`,
+> the `workpulse` EAS slug, the `workpulse` deep-link scheme and the
+> `workpulse-app` MMKV id were all renamed to AINO before the app's first store
+> publication — see `AINO_EAS_MIGRATION_PLAN.md` §0. Two of §1's premises had
+> expired: package names are only permanent **after** publishing (this app had
+> only ever been sideloaded), and the EAS slug could not "unlink" a project that
+> was never linked. The MMKV rename was safe only because the package id changed
+> in the same commit, which already yields a fresh data directory. Rows for the
+> desktop app, Postgres and the Railway host remain **fully in force**.
+
 ## 1. Frozen identifiers — do NOT rename
 
 Each of these is load-bearing. The "what breaks" column is the actual observed
@@ -128,9 +139,16 @@ mail from the new domain will land in spam.
 
 Only worth doing with an explicit read-old/write-new shim — or never:
 
-- localStorage / MMKV key renames.
+- localStorage key renames (web). **MMKV is done** — `workpulse-app` →
+  `aino-app`, safe only because the Android package id changed in the same
+  commit. The web localStorage keys are still frozen: a browser profile
+  survives a rebrand, so those genuinely would strand data.
 - Desktop `workpulse://` → `aino://` (server already accepts it; flip as one isolated change).
-- Mobile deep-link scheme + the 4 Kotlin files.
+- ~~Mobile deep-link scheme + the 4 Kotlin files.~~ **Done** — flipped to
+  `aino://`. The Kotlin only ever *fell back* to a literal
+  (`intent.getStringExtra(EXTRA_SCHEME) ?: "workpulse"`) while JS passed the
+  scheme explicitly, so both sides were changed together with no split-brain
+  window. Only `ConversationNotificationsModule` hard-coded the URI.
 - Dropping `WorkPulse` from the server's dual-accept lists — **only** once client
   adoption is effectively complete.
 - Retiring `workpulse-prod.up.railway.app` — see §4.1, this is effectively

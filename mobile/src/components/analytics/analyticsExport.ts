@@ -1,5 +1,5 @@
 // expo-file-system v56 moved the classic downloadAsync/cacheDirectory API to
-// the /legacy entrypoint (same pattern used by src/updater.ts).
+// the /legacy entrypoint.
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { API_BASE_URL } from "../../config";

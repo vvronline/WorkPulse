@@ -53,9 +53,9 @@ class ConversationNotificationsModule : Module() {
         val personBuilder = Person.Builder()
           .setKey(
             if (senderId.isNotEmpty()) {
-              "workpulse-user-$senderId"
+              "aino-user-$senderId"
             } else {
-              "workpulse-conversation-$stableSuffix"
+              "aino-conversation-$stableSuffix"
             }
           )
           .setName(senderName)
@@ -67,11 +67,11 @@ class ConversationNotificationsModule : Module() {
           .getLaunchIntentForPackage(context.packageName)
           ?.apply {
             action = Intent.ACTION_VIEW
-            data = Uri.parse("workpulse://chat/$conversationId")
+            data = Uri.parse("aino://chat/$conversationId")
             putExtra("conversationId", conversationId)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
           }
-          ?: Intent(Intent.ACTION_VIEW, Uri.parse("workpulse://chat/$conversationId")).apply {
+          ?: Intent(Intent.ACTION_VIEW, Uri.parse("aino://chat/$conversationId")).apply {
             setPackage(context.packageName)
             putExtra("conversationId", conversationId)
           }

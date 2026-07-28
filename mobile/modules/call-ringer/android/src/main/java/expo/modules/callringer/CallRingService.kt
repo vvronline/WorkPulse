@@ -164,7 +164,7 @@ class CallRingService : Service() {
     val callerAvatar = intent?.getStringExtra(EXTRA_CALLER_AVATAR) ?: ""
     val token = intent?.getStringExtra(EXTRA_TOKEN) ?: ""
     val callType = intent?.getStringExtra(EXTRA_CALL_TYPE) ?: "voice"
-    val scheme = intent?.getStringExtra(EXTRA_SCHEME) ?: "workpulse"
+    val scheme = intent?.getStringExtra(EXTRA_SCHEME) ?: "aino"
 
     // Post the foreground notification FIRST, with NO avatar bitmap yet
     // (required within ~5s of startForegroundService or the OS throws — a

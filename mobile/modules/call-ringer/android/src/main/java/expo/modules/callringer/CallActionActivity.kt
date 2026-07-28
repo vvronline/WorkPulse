@@ -37,8 +37,8 @@ import android.os.Bundle
  *      merges it into the pending route at boot).
  *   2. LAUNCHES the JS call screen via the existing deep link (single accept/
  *      reject code path):
- *        • Answer  → workpulse://call/<id>?…&autoAnswer=1   (acceptIncoming on mount)
- *        • Decline → workpulse://call/<id>?…&action=decline (rejectIncoming on mount)
+ *        • Answer  → aino://call/<id>?…&autoAnswer=1   (acceptIncoming on mount)
+ *        • Decline → aino://call/<id>?…&action=decline (rejectIncoming on mount)
  *   3. STOPS the foreground-service ring + dismisses the notification.
  *   4. finish()es immediately (it has no UI of its own).
  *
@@ -99,7 +99,7 @@ class CallActionActivity : Activity() {
     val callerName = intent.getStringExtra(EXTRA_CALLER_NAME) ?: ""
     val callerAvatar = intent.getStringExtra(EXTRA_CALLER_AVATAR) ?: ""
     val callType = intent.getStringExtra(EXTRA_CALL_TYPE) ?: "voice"
-    val scheme = intent.getStringExtra(EXTRA_SCHEME) ?: "workpulse"
+    val scheme = intent.getStringExtra(EXTRA_SCHEME) ?: "aino"
 
     if (conversationId.isEmpty() || callId.isEmpty()) {
       // No valid call identity — still stop any running ring before bailing.

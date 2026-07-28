@@ -36,10 +36,11 @@ yarn-error.*
 .env*
 !.env.example
 
-# Firebase Cloud Messaging config - provided via the ANDROID_GOOGLE_SERVICES_JSON
-# CI secret (see .github/workflows/mobile-release.yml) and referenced by
+# Firebase Cloud Messaging config (project aino-86bb6) - uploaded to EAS as the
+# GOOGLE_SERVICES_JSON file env var and read by
 # app.config.ts (android.googleServicesFile). Must never be committed.
 google-services.json
+google-services.*.json.bak
 GoogleService-Info.plist
 
 # typescript

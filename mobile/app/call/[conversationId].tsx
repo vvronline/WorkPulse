@@ -2720,7 +2720,7 @@ export default function CallScreen() {
         title: peerName,
         body:
           callType === "video" ? "Ongoing video call" : "Ongoing voice call",
-        scheme: "workpulse",
+        scheme: "aino",
       });
     } else {
       stopActiveCall();

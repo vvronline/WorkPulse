@@ -5,7 +5,7 @@ type Extra = {
   WS_BASE_URL?: string;
   TENOR_API_KEY?: string;
   TENOR_CLIENT_KEY?: string;
-  // App version string surfaced from package.json (used by the in-app updater).
+  // App version string surfaced from package.json (shown on the Profile screen).
   APP_VERSION?: string;
   // Feature flags (string "true"/"false" or boolean — coerced below).
   ANDROID_NATIVE_CALL_UI?: boolean | string;
@@ -44,7 +44,7 @@ export const API_BASE_URL =
 export const WS_BASE_URL = extra.WS_BASE_URL ?? "wss://www.aino.org.in";
 
 export const TENOR_API_KEY = extra.TENOR_API_KEY ?? "";
-export const TENOR_CLIENT_KEY = extra.TENOR_CLIENT_KEY ?? "workpulse-chat";
+export const TENOR_CLIENT_KEY = extra.TENOR_CLIENT_KEY ?? "aino-chat";
 
 /** Full WebSocket endpoint (server listens on /ws). */
 export function wsUrl(token: string): string {
