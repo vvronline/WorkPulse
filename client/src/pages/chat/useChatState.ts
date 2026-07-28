@@ -23,6 +23,8 @@ import {
     mapRealtimeMessage,
     updateRealtimeMessage,
 } from "./chatRealtimeReducers";
+import useScrollPin from "./useScrollPin";
+import { NEAR_BOTTOM_PX } from "./chatUtils";
 import type { AnyRecord } from "../../types";
 
 type ChatMessage = AnyRecord & { id: number | string };
@@ -614,70 +616,15 @@ export default function useChatState() {
     }, [search]);
 
     // ─── Initial "open at the latest message" pin ───
-    //
-    // Opening a conversation MUST land at the newest message. The incremental
-    // auto-scroll effect below cannot do this: it fires the instant
-    // `setMessages` commits, at which point `loadingMsgs` is still true so the
-    // skeleton block is mounted, images/avatars have not laid out, and the
-    // container height is about to change completely. `scrollIntoView` computed
-    // a target against that stale layout and the thread ended up parked
-    // mid-history instead of at the bottom.
-    //
-    // Instead: wait until loading is finished (skeleton unmounted, real rows
-    // committed), then hard-set `scrollTop` — instant, no smooth animation to
-    // be stranded by a competing scroll — and re-pin as late-expanding content
-    // (images, link previews) changes the scroll height.
-    const userScrolledUpRef = useRef(false);
-    useEffect(() => {
-        userScrolledUpRef.current = false;
-    }, [activeConv?.id]);
-
-    useEffect(() => {
-        const container = messagesContainerRef.current;
-        if (!activeConv?.id || loadingMsgs || !container) return;
-        if (messages.length === 0) return;
-
-        const pin = () => {
-            const el = messagesContainerRef.current;
-            if (!el || userScrolledUpRef.current) return;
-            el.scrollTop = el.scrollHeight;
-        };
-
-        // First paint of the real rows.
-        const raf = requestAnimationFrame(() => {
-            pin();
-            // Second frame: catches rows whose height settled after the first.
-            requestAnimationFrame(pin);
-        });
-
-        // Keep the thread pinned while async content (images, previews) expands
-        // and grows the scroll height, until the user scrolls up themselves.
-        const observer = new ResizeObserver(() => pin());
-        observer.observe(container);
-        const stopObserving = setTimeout(() => observer.disconnect(), 3000);
-
-        const onUserScroll = () => {
-            const el = messagesContainerRef.current;
-            if (!el) return;
-            const distanceFromBottom =
-                el.scrollHeight - el.scrollTop - el.clientHeight;
-            if (distanceFromBottom > 160) userScrolledUpRef.current = true;
-        };
-        container.addEventListener("wheel", onUserScroll, { passive: true });
-        container.addEventListener("touchmove", onUserScroll, {
-            passive: true,
-        });
-
-        return () => {
-            cancelAnimationFrame(raf);
-            clearTimeout(stopObserving);
-            observer.disconnect();
-            container.removeEventListener("wheel", onUserScroll);
-            container.removeEventListener("touchmove", onUserScroll);
-        };
-        // Runs once per conversation, once its initial load has settled.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeConv?.id, loadingMsgs]);
+    // Extracted to useScrollPin so the scroll behaviour can be unit tested
+    // directly; see that hook for why the naive rAF-only approach left the
+    // thread parked mid-history on desktop.
+    const { userScrolledUpRef } = useScrollPin({
+        containerRef: messagesContainerRef,
+        conversationId: activeConv?.id ?? null,
+        loading: loadingMsgs,
+        isEmpty: messages.length === 0,
+    });
 
     // Scroll to bottom on new messages — Signal-style "smart" auto-scroll. We
     // only follow the conversation to the newest message when the user is
@@ -703,7 +650,7 @@ export default function useChatState() {
                 container.scrollHeight -
                 container.scrollTop -
                 container.clientHeight;
-            nearBottom = distanceFromBottom < 160;
+            nearBottom = distanceFromBottom < NEAR_BOTTOM_PX;
         }
         if (nearBottom || isOwn) {
             if (isOwn) userScrolledUpRef.current = false;

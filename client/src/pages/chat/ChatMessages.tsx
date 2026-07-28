@@ -11,6 +11,7 @@ import SystemMessage from "../../components/chat/SystemMessage";
 import MeetingCard from "../../components/chat/MeetingCard";
 import { buildTimelineRows } from "./timelineRows";
 import { isBeforeClearedAt } from "./chatLocalDeletes";
+import { NEAR_BOTTOM_PX } from "./chatUtils";
 import s from "./ChatMessages.module.css";
 
 interface ChatMessagesProps {
@@ -116,9 +117,14 @@ export default function ChatMessages({
   const rows = useMemo(() => buildTimelineRows(visibleMessages), [visibleMessages]);
 
   // Signal-style "scroll to bottom" affordance. Tracks how far the user has
-  // scrolled up from the bottom of the messages container; once they're more
-  // than ~1.5 screens up a floating button fades in to jump back to the
-  // newest message smoothly.
+  // scrolled up from the bottom of the messages container; once they're off
+  // the latest message a floating button fades in to jump back to it smoothly.
+  //
+  // This used a hard-coded 400px while the scroll logic in useChatState treated
+  // anything past 160px as "scrolled up". A thread parked in that 160-400px
+  // dead zone therefore stopped auto-following new messages AND offered no
+  // jump-to-latest button, so the only way back was to scroll by hand. Both
+  // now share NEAR_BOTTOM_PX so they cannot drift apart again.
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   useEffect(() => {
     const el = messagesContainerRef.current as HTMLDivElement | null;
@@ -126,7 +132,7 @@ export default function ChatMessages({
     const onScroll = () => {
       const distanceFromBottom =
         el.scrollHeight - el.scrollTop - el.clientHeight;
-      setShowScrollBtn(distanceFromBottom > 400);
+      setShowScrollBtn(distanceFromBottom > NEAR_BOTTOM_PX);
     };
     onScroll();
     el.addEventListener("scroll", onScroll, { passive: true });

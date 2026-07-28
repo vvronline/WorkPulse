@@ -4,8 +4,21 @@
    with a sensible minimum so tiny images don't collapse. */
 .imgWrap {
     display: block;
-    max-width: 280px;
+    width: 280px;
+    max-width: 100%;
     min-width: 120px;
+    /* Reserve the attachment's box BEFORE its bytes arrive. Previously the
+       <img> collapsed to `min-height: 80px` while loading and then expanded to
+       as much as 330px once decoded, so every image near the bottom of a
+       freshly-opened thread shoved the newest message down by up to ~250px
+       AFTER the "scroll to latest" pin had already run — leaving the chat
+       parked mid-history until the user scrolled down manually.
+
+       `--img-aspect` is set to the image's true ratio by FilePreview's onLoad
+       handler; until then the 4/3 default reserves a realistic box, so the
+       remaining shift is a few px instead of hundreds. */
+    aspect-ratio: var(--img-aspect, 4 / 3);
+    max-height: 330px;
     border-radius: 14px;
     overflow: hidden;
     cursor: pointer;
@@ -15,9 +28,7 @@
 .image {
     display: block;
     width: 100%;
-    max-width: 280px;
-    max-height: 330px;
-    min-height: 80px;
+    height: 100%;
     object-fit: cover;
     border-radius: 14px;
 }

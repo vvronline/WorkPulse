@@ -58,6 +58,10 @@ function fmtTime(sec: number): string {
 const SPEEDS = [1, 1.5, 2];
 const audioDurationCache = new Map<string, number>();
 const videoPosterCache = new Map<string, string>();
+// Intrinsic aspect ratio ("w / h") per image URL, remembered across mounts so a
+// re-opened conversation reserves the exact attachment height on the FIRST
+// paint instead of settling on it a frame later.
+const imageAspectCache = new Map<string, string>();
 
 interface AudioPlayerProps {
   fileUrl: string;
@@ -206,6 +210,12 @@ export default function FilePreview({
   const [videoPoster, setVideoPoster] = useState<string | null>(
     () => videoPosterCache.get(fileUrl) || null,
   );
+  // Drives the `--img-aspect` custom property on .imgWrap so the bubble
+  // reserves the image's real height. Falls back to the CSS 4/3 default until
+  // the first decode reports the intrinsic size.
+  const [imgAspect, setImgAspect] = useState<string | null>(
+    () => imageAspectCache.get(fileUrl) || null,
+  );
   // View-once: resolved URL fetched on demand when the recipient taps to view.
   const [revealedUrl, setRevealedUrl] = useState<string | null>(null);
   const [consumed, setConsumed] = useState(!!viewOnceConsumed);
@@ -262,6 +272,22 @@ export default function FilePreview({
       video.load();
     };
   }, [fileUrl, isVideo]);
+
+  // Record the decoded image's intrinsic ratio so .imgWrap holds exactly the
+  // right height from here on (and immediately on any future mount, via the
+  // module-level cache).
+  const handleImgLoad = useCallback(
+    (e: React.SyntheticEvent<HTMLImageElement>) => {
+      const img = e.currentTarget;
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      if (!w || !h) return;
+      const ratio = `${w} / ${h}`;
+      imageAspectCache.set(fileUrl, ratio);
+      setImgAspect((prev) => (prev === ratio ? prev : ratio));
+    },
+    [fileUrl],
+  );
 
   const openViewOnce = useCallback(async () => {
     if (loadingView) return;
@@ -334,12 +360,26 @@ export default function FilePreview({
   if (isImage && isMessage) {
     return (
       <>
-        <div className={s.imgWrap} onClick={() => setLightbox(true)}>
+        <div
+          className={s.imgWrap}
+          onClick={() => setLightbox(true)}
+          style={
+            imgAspect
+              ? ({ "--img-aspect": imgAspect } as React.CSSProperties)
+              : undefined
+          }
+        >
           <img
             src={fileUrl}
             alt={fileName}
             className={s.image}
-            loading="lazy"
+            // NOT lazy: an in-thread attachment sitting just above the newest
+            // message would otherwise start fetching only after the thread has
+            // been scrolled/painted, growing the timeline AFTER the
+            // "open at latest" pin ran and stranding the user mid-history.
+            // The full-screen viewer below is still loaded on demand.
+            decoding="async"
+            onLoad={handleImgLoad}
           />
         </div>
         {lightbox &&
