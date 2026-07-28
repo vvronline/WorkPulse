@@ -1,0 +1,75 @@
+# Files excluded from the EAS Build upload tarball.
+#
+# IMPORTANT: .easignore takes PRIORITY over .gitignore -- when this file
+# exists, .gitignore is ignored entirely for upload purposes. So it must
+# repeat the whole .gitignore (inlined below) and then add build-only
+# exclusions, otherwise things like node_modules/ get uploaded.
+#
+# ---------------- extra exclusions (not in .gitignore) ----------------
+#
+# EAS runs `expo prebuild` on the builder, so a local android/ or ios/ dir is
+# regenerated from app.config.ts and its plugins. Uploading the local one is
+# not just wasted bytes: this repo has a stale prebuild from before the AINO
+# rename (app.workpulse.mobile / workpulse26 / scheme "workpulse"), and
+# shipping it risks the builder picking up those identifiers.
+/android
+/ios
+
+# Build caches and logs -- never useful on the builder.
+**/build/
+**/.cxx/
+**/.gradle/
+/coverage
+
+# ---------------- inlined from .gitignore ----------------
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files - ignore ALL .env variants (they may hold EXPO_PUBLIC_*
+# secrets such as the Tenor key) but keep the committed template.
+.env*
+!.env.example
+
+# Firebase Cloud Messaging config (project aino-86bb6) - uploaded to EAS as the
+# GOOGLE_SERVICES_JSON file env var and read by
+# app.config.ts (android.googleServicesFile). Must never be committed.
+google-services.json
+google-services.*.json.bak
+GoogleService-Info.plist
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
