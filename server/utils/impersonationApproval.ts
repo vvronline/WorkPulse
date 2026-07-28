@@ -309,6 +309,39 @@ async function getActiveSession(tenantId: number): Promise<AccessRequestRow | nu
     return res.rows[0] || null;
 }
 
+/**
+ * Decide whether the caller may see tenant-private data for `tenant`.
+ *
+ * Platform admins may always see *platform* facts about a tenant: name, slug,
+ * status, plan, seat count, database size. Those run the business (billing,
+ * limit enforcement, lifecycle) and are needed to even find a tenant to
+ * request access to in the first place.
+ *
+ * Anything describing what the tenant's people are actually DOING - user rows
+ * (PII) and business-activity metrics - is tenant-private. For the default
+ * tenant the platform admin is a first-class member, so it is visible. For
+ * every other tenant it requires an approved, live, unrevoked session obtained
+ * through the consent flow.
+ */
+async function hasTenantDataConsent(
+    tenant: { id: number; is_default?: boolean } | null | undefined,
+    req: { userId?: number; impersonatedBy?: number },
+): Promise<boolean> {
+    if (!tenant) return false;
+    if (tenant.is_default) return true;
+    try {
+        const session = await getActiveSession(tenant.id);
+        if (!session) return false;
+        // The live session must belong to the caller - another inspector's
+        // approved session must never widen this admin's visibility.
+        const actorId = req.impersonatedBy || req.userId;
+        return Number(session.requested_by) === Number(actorId);
+    } catch (err) {
+        logger.warn({ err }, "tenant consent check failed; denying tenant-private data");
+        return false;
+    }
+}
+
 export {
     generateApprovalCode,
     hashApprovalCode,
@@ -318,5 +351,6 @@ export {
     computeEffectiveStatus,
     expireStaleRequests,
     getActiveSession,
+    hasTenantDataConsent,
     getOrCreateInspectorUser,
 };

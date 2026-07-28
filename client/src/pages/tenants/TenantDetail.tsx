@@ -189,9 +189,15 @@ export default function TenantDetail({ tenantId, onBack }: TenantDetailProps) {
                     // for privacy, every other tenant's user list is hidden here. The
                     // aggregate user count is still surfaced on the Overview tab.
                     ...(tenant.is_default ? [{ key: "users", label: `Users (${users.length})`, icon: Users }] : []),
-                    { key: "departments", label: "Departments", icon: Building },
-                    { key: "teams", label: "Teams", icon: UsersRound },
-                    { key: "chart", label: "Org Chart", icon: GitBranch },
+                    // Org structure is resolved from the caller's own tenant DB, so it
+                    // is only meaningful for the default tenant. For every other tenant
+                    // structure is managed inside the workspace itself, reachable only
+                    // through the consent-gated Request Access flow.
+                    ...(tenant.is_default ? [
+                        { key: "departments", label: "Departments", icon: Building },
+                        { key: "teams", label: "Teams", icon: UsersRound },
+                        { key: "chart", label: "Org Chart", icon: GitBranch },
+                    ] : []),
                     { key: "settings", label: "Settings", icon: Settings2 },
                 ].map(({ key, label, icon: Icon }) => (
                     <button key={key} onClick={() => setTab(key)}
@@ -209,11 +215,19 @@ export default function TenantDetail({ tenantId, onBack }: TenantDetailProps) {
                     <InfoCard icon={Users} label="Max Users" value={tenant.max_users || "∞"} />
                     <InfoCard icon={HardDrive} label="Max Storage" value={tenant.max_storage_mb ? `${tenant.max_storage_mb} MB` : "∞"} />
                     <InfoCard icon={Users} label="User Count" value={tenant.user_count || 0} />
-                    {stats && <>
+                    {stats && <InfoCard icon={Database} label="DB Size" value={`${(stats.db_size_bytes / 1024 / 1024).toFixed(1)} MB`} />}
+                    {/* Business-activity metrics are tenant-private: the server only
+                        returns them for the default tenant or during an approved
+                        access session. Hide the cards rather than show zeroes. */}
+                    {stats && !stats.activity_restricted && <>
                         <InfoCard icon={BarChart3} label="Tasks" value={stats.task_count} />
                         <InfoCard icon={ExternalLink} label="Messages" value={stats.message_count} />
-                        <InfoCard icon={Database} label="DB Size" value={`${(stats.db_size_bytes / 1024 / 1024).toFixed(1)} MB`} />
                     </>}
+                    {stats?.activity_restricted && (
+                        <div className={s.emptyMsg} style={{ gridColumn: "1 / -1" }}>
+                            Activity metrics are hidden. Request access to view this tenant's activity.
+                        </div>
+                    )}
                     {org && <>
                         <InfoCard icon={Clock} label="Work Hours" value={`${org.work_hours_per_day || 8}h / day`} />
                         <InfoCard icon={Calendar} label="Work Days" value={formatWorkDays(org.work_days)} />
@@ -246,14 +260,14 @@ export default function TenantDetail({ tenantId, onBack }: TenantDetailProps) {
                 </div>
             )}
 
-            {/* Departments */}
-            {tab === "departments" && org ? <Departments orgId={org.id} userRole="platform_admin" /> : tab === "departments" && <div className={s.emptyMsg}>No linked organization found</div>}
+            {/* Departments / Teams / Org Chart — default tenant only. The
+                `is_default` check is repeated here (not just in the tab list)
+                because `tab` state survives navigating between tenants. */}
+            {tab === "departments" && tenant.is_default && (org ? <Departments orgId={org.id} userRole="platform_admin" /> : <div className={s.emptyMsg}>No linked organization found</div>)}
 
-            {/* Teams */}
-            {tab === "teams" && org ? <Teams orgId={org.id} userRole="platform_admin" /> : tab === "teams" && <div className={s.emptyMsg}>No linked organization found</div>}
+            {tab === "teams" && tenant.is_default && (org ? <Teams orgId={org.id} userRole="platform_admin" /> : <div className={s.emptyMsg}>No linked organization found</div>)}
 
-            {/* Org Chart */}
-            {tab === "chart" && org ? <OrgChartView orgId={org.id} /> : tab === "chart" && <div className={s.emptyMsg}>No linked organization found</div>}
+            {tab === "chart" && tenant.is_default && (org ? <OrgChartView orgId={org.id} /> : <div className={s.emptyMsg}>No linked organization found</div>)}
 
             {/* Settings */}
             {tab === "settings" && (

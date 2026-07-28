@@ -30,6 +30,7 @@ const {
     generateApprovalCode, hashApprovalCode, verifyApprovalCode,
     getImpersonationPolicy, updateImpersonationPolicy,
     computeEffectiveStatus, expireStaleRequests, getActiveSession,
+    hasTenantDataConsent,
     getOrCreateInspectorUser,
 } = require("../utils/impersonationApproval");
 const {
@@ -38,6 +39,13 @@ const {
 const { invalidateMaintenanceCache } = require("../middleware/maintenanceMode");
 
 const router = express.Router();
+
+// Message returned alongside `activity_restricted` when tenant-private
+// activity metrics are withheld. See hasTenantDataConsent() in
+// utils/impersonationApproval for the full consent model.
+const NON_DEFAULT_ACTIVITY_MSG =
+    "Tenant activity data is only accessible via approved access.";
+
 router.use(auth, loadUserContext, requireRole("platform_admin"));
 
 interface ActorCheck {
@@ -1068,15 +1076,23 @@ router.get("/:id/stats", async (req: Request, res: Response) => {
         const tenant = await getTenantById(Number(req.params.id));
         if (!tenant) return res.status(404).json({ error: "Tenant not found" });
 
+        // Business-activity metrics describe what the tenant's staff are doing
+        // and serve no platform-operations purpose, so they follow the same
+        // consent model as user PII. Seat count and database size stay visible
+        // because max_users / max_storage_mb enforcement depends on them.
+        const activityAllowed = await hasTenantDataConsent(tenant, req);
+
         const db = await getTenantPool(tenant.db_name, tenant.db_host);
 
         const safeCount = (q: string) => db.query(q).then((r: any) => parseInt(r.rows[0].count, 10)).catch(() => 0);
         const [user_count, task_count, message_count, dbSize, lastActivity] = await Promise.all([
             safeCount("SELECT COUNT(*) AS count FROM users WHERE is_active = TRUE"),
-            safeCount("SELECT COUNT(*) AS count FROM tasks"),
-            safeCount("SELECT COUNT(*) AS count FROM messages"),
+            activityAllowed ? safeCount("SELECT COUNT(*) AS count FROM tasks") : Promise.resolve(null),
+            activityAllowed ? safeCount("SELECT COUNT(*) AS count FROM messages") : Promise.resolve(null),
             masterQuery(`SELECT pg_database_size($1) AS size`, [tenant.db_name]),
-            db.query('SELECT MAX("timestamp") AS last_activity FROM time_entries').catch(() => ({ rows: [{}] })),
+            activityAllowed
+                ? db.query('SELECT MAX("timestamp") AS last_activity FROM time_entries').catch(() => ({ rows: [{}] }))
+                : Promise.resolve({ rows: [{}] }),
         ]);
 
         res.json({
@@ -1084,7 +1100,11 @@ router.get("/:id/stats", async (req: Request, res: Response) => {
             task_count,
             message_count,
             db_size_bytes: parseInt(dbSize.rows[0].size, 10),
-            last_activity: lastActivity.rows[0]?.last_activity,
+            last_activity: lastActivity.rows[0]?.last_activity ?? null,
+            // Lets the Platform Console hide the activity cards instead of
+            // rendering misleading zeroes.
+            activity_restricted: !activityAllowed,
+            ...(activityAllowed ? {} : { activity_restricted_reason: NON_DEFAULT_ACTIVITY_MSG }),
         });
     } catch (err) {
         logger.error({ err }, "Tenant stats error");
@@ -1620,12 +1640,10 @@ router.get("/:id/impersonation-session", async (req: Request, res: Response) => 
 const NON_DEFAULT_USER_DATA_MSG =
     "User data for non-default tenants is only accessible via approved impersonation.";
 
-function ensureDefaultTenant(tenant: any, res: Response): boolean {
-    if (!tenant.is_default) {
-        res.status(403).json({ error: NON_DEFAULT_USER_DATA_MSG, code: "TENANT_USER_DATA_RESTRICTED" });
-        return false;
-    }
-    return true;
+async function ensureDefaultTenant(tenant: any, res: Response, req: Request): Promise<boolean> {
+    if (await hasTenantDataConsent(tenant, req)) return true;
+    res.status(403).json({ error: NON_DEFAULT_USER_DATA_MSG, code: "TENANT_USER_DATA_RESTRICTED" });
+    return false;
 }
 
 // GET /admin/tenants/:id/users
@@ -1634,7 +1652,7 @@ router.get("/:id/users", async (req: Request, res: Response) => {
         const tid = Number(req.params.id);
         const tenant = await getTenantById(tid);
         if (!tenant) return res.status(404).json({ error: "Tenant not found" });
-        if (!ensureDefaultTenant(tenant, res)) return;
+        if (!(await ensureDefaultTenant(tenant, res, req))) return;
 
         const db = await getTenantPool(tenant.db_name, tenant.db_host);
         const { search, limit: rawLimit, offset } = req.query as Record<string, string>;
@@ -1755,7 +1773,7 @@ router.put("/:tenantId/users/:userId/deactivate", async (req: Request, res: Resp
         const uid = Number(req.params.userId);
         const tenant = await getTenantById(tid);
         if (!tenant) return res.status(404).json({ error: "Tenant not found" });
-        if (!ensureDefaultTenant(tenant, res)) return;
+        if (!(await ensureDefaultTenant(tenant, res, req))) return;
 
         const db = await getTenantPool(tenant.db_name, tenant.db_host);
         const result = await db.query(
