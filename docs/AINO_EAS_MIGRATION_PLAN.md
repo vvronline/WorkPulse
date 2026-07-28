@@ -142,18 +142,74 @@ eas project:info          # → fullName @aino/aino
    ```
    (`eas env:create` still works but prints a deprecation notice.) Re-run this
    whenever the Firebase config changes — EAS holds its own copy.
-2. `eas.json` (written in Phase A): production → AAB (no `buildType`, Play
-   requires it) + `resourceClass: "large"` (the `withAndroidGradleMemory` plugin
-   exists because this build OOMs on the default heap); preview/development →
-   `apk`.
-3. `eas build:version:set -p android` → start `versionCode` at 1 (new package).
-4. `eas credentials -p android` → *Generate new keystore*.
-5. **Smoke test before spending a production build:**
+2. `eas.json`: production → AAB (no `buildType`, Play requires it);
+   preview/development → `apk`.
+
+   **Do not set `resourceClass: "large"`.** It is restricted to Production /
+   Enterprise / On-Demand plans, and this account is on the free tier — the
+   build is rejected before it starts. If the Android build OOMs (the
+   `withAndroidGradleMemory` plugin hints it might), tune the Gradle JVM heap
+   in that plugin rather than paying for a bigger worker.
+
+3. **`.easignore`.** The upload is a `git clone` of committed state, then
+   filtered. `.easignore` **takes priority over `.gitignore`** — where it
+   exists, `.gitignore` is not consulted — so it inlines the whole `.gitignore`
+   and adds `/android`, `/ios` and build caches. Without the inlined copy,
+   `node_modules/` (698 MB) would be uploaded.
+4. ⚠️ **Commit before every build.** EAS uploads a
+   `git clone --depth 1 file://<repo>` of **committed** state, not the working
+   directory. Uncommitted changes are silently absent — a build started before
+   the rename commit was already compiling `app.workpulse.mobile` and had to be
+   killed. Verify with:
+   ```sh
+   git status --porcelain     # must be empty
+   ```
+5. `versionCode` comes from EAS (`appVersionSource: "remote"` + `autoIncrement`)
+   and started at 1 automatically for the new package — no `build:version:set`
+   was needed.
+6. Credentials: the first non-interactive build **auto-generated** a keystore
+   (`Build Credentials ti5C-_V8AL`). Inspect with `eas credentials -p android`.
+   Back it up before the first Play submission.
+7. **Smoke test before spending a production build:**
    ```sh
    eas build -p android --profile preview
    ```
    Verify: FCM push (needs the §2 swap done), incoming calls, PiP, notification
    taps, and the new `aino://` deep links.
+
+### Installing a preview APK on a device
+
+`preview` is `distribution: internal`, so EAS hosts an install page — no Play
+Store, no cable, no `adb`.
+
+1. `eas build:list --platform android --limit 1` (or the build URL) → open the
+   **install page** on the phone and tap *Install*, or scan the QR code the CLI
+   prints when run without `--no-wait`.
+2. Android will warn about installing from an unknown source; allow it for the
+   browser. This is expected for internal distribution.
+3. Alternatively download the `.apk` and `adb install -r <file>.apk`.
+
+`app.aino.mobile` installs **alongside** any existing `app.workpulse.mobile`
+build — different package, so they coexist and do not share data.
+
+## Phase D.5 — Building from a GitHub push
+
+Two mechanisms, both requiring **one successful CLI build first**:
+
+| | Expo GitHub App | EAS Workflows |
+|---|---|---|
+| Setup | Dashboard → project → GitHub → install app, link repo, add a build trigger | commit `.eas/workflows/*.yml` |
+| Config | UI | YAML in the repo |
+| Best for | "build on push to `master`" | multi-step build → submit → update pipelines |
+
+Requirements for the GitHub App: set `"image": "latest"` on the profiles used,
+link the GitHub account under *Account settings → Connections*, and — since the
+app lives in `mobile/` — **set the Base directory to `mobile`**, or the trigger
+will not find `eas.json`. Triggers support branch/tag wildcards, PR labels, and
+an optional *Submit to store after build*.
+
+Because both build committed state, they sidestep the "forgot to commit" trap
+entirely — which is a good reason to prefer them once the flow is stable.
 
 ## Phase D — EAS Update (OTA)
 
