@@ -56,7 +56,7 @@
 | **Email** | Nodemailer (`utils/mailer.js`) — password resets, invites |
 | **PWA** | Service worker (`public/sw.js`), Web Manifest |
 | **Testing** | Vitest + React Testing Library (client), Jest + Supertest (server) |
-| **Deployment** | Docker / Railway, Caddy reverse proxy (see `Caddyfile`, `Dockerfile`) |
+| **Deployment** | Web/API on Railway; desktop releases on Cloudflare R2; mobile JS OTA on EAS Update; native mobile builds via EAS or signed GitHub Actions CI |
 
 ---
 
@@ -1266,6 +1266,50 @@ the sprint scheduler, and utilities (password, timeCalc, timezone, approver, geo
 ---
 
 ## Build & Deployment
+
+### Production delivery architecture
+
+```text
+Users
+├── Web/API/WebSocket ───────────────→ https://www.aino.org.in (Railway)
+├── Electron update check
+│   └── desktop/latest.json ─────────→ https://cdn.aino.org.in (Cloudflare R2)
+│       └── desktop/releases/vX.Y.Z/ → installers + electron-updater manifests
+└── Expo mobile
+    ├── compatible JS/assets OTA ────→ EAS Update (@aino/aino)
+    ├── native production binary ────→ signed AAB / Google Play (target channel)
+    └── optional signed APK mirror ──→ https://cdn.aino.org.in/mobile/...
+```
+
+`www.aino.org.in` is the application origin and must continue pointing to
+Railway. `cdn.aino.org.in` is the public Cloudflare R2 custom domain used only
+for release artifacts; it must not replace the `www` DNS record.
+
+Desktop releases are triggered by `vX.Y.Z` tags. The workflow uploads immutable
+versioned installers plus `latest*.yml`, then writes the no-store
+`desktop/latest.json` pointer and verifies it through the public CDN before the
+GitHub Release is published. The desktop updater uses that pointer to configure
+its generic `electron-updater` feed. GitHub remains a transition/recovery
+channel rather than the production update origin.
+
+Mobile has two deliberately separate update paths:
+
+- **EAS Update** serves only JavaScript, styling, and bundled assets compatible
+  with the installed fingerprint runtime. Profile → Check for Updates uses this
+  path and never installs an APK.
+- **Native builds** are required for native dependencies, config plugins,
+  permissions, or Android/iOS changes. EAS Build produces preview/Play builds;
+  the `mobile-vX.Y.Z` GitHub workflow also produces production-signed APK/AAB
+  artifacts and may mirror the APK to R2 for testing/manual recovery. The R2
+  mobile mirror is not an OTA mechanism and is not the Play Store channel.
+
+**Operational status (2026-07-29):** desktop OTA and R2 publication are working.
+The public pointer returned HTTP 200 for `v1.7.63` with the required no-cache
+policy. A mobile GitHub Actions build is in progress; its signed artifacts,
+optional R2 upload, and device smoke tests are not yet verified.
+
+See `docs/OTA_R2_MIGRATION_PLAN.md` for the rollout/rollback runbook and
+`mobile/RELEASE.md` for mobile release commands.
 
 ### Local Development
 

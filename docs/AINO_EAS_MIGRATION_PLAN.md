@@ -1,7 +1,10 @@
 # AINO migration: rename → EAS Build → EAS Update (OTA) → Play Store
 
-Status: **Phase A in progress.** Phases B–E require interactive EAS/Google
-auth and are run by a human — the exact commands are listed here.
+Status (2026-07-29): **AINO identity, EAS project linking, Firebase setup, and
+EAS Update integration are complete.** Desktop OTA/R2 delivery is operational.
+A production-signed mobile APK/AAB build is currently running in GitHub Actions;
+its artifacts, optional R2 mirror, physical-device checks, and Play submission
+remain pending. Interactive EAS/Google commands are still run by a human.
 
 This plan supersedes the "frozen identifiers" table in `REBRAND_AINO.md` §1 for
 the **mobile app only**. See §0 for why that freeze no longer applies.
@@ -79,7 +82,7 @@ changes.
 
 ---
 
-## Phase A — AINO identity (code; must precede any `eas submit`)
+## Phase A — AINO identity ✅ DONE (must precede any `eas submit`)
 
 - **A.1** `mobile/app.config.ts`: `slug` → `aino`; `android.package` and
   `ios.bundleIdentifier` → `app.aino.mobile`; `scheme` → `aino`; add
@@ -130,7 +133,7 @@ cd mobile
 eas project:info          # → fullName @aino/aino
 ```
 
-## Phase C — EAS Build (interactive)
+## Phase C — Native build validation (interactive / CI; in progress)
 
 1. ✅ **DONE.** `google-services.json` is gitignored, so EAS will not upload it.
    It is delivered as a secret file env var (read by `app.config.ts` via
@@ -177,6 +180,13 @@ eas project:info          # → fullName @aino/aino
    Verify: FCM push (needs the §2 swap done), incoming calls, PiP, notification
    taps, and the new `aino://` deep links.
 
+Current run (2026-07-29): `.github/workflows/mobile-release.yml` is building the
+production-signed APK/AAB via Expo prebuild + Gradle. This validates the signed
+CI/direct-download path but does not replace the EAS production build required
+for the planned Play submission. Do not mark Phase C complete until CI finishes,
+the certificate and artifacts are verified, and the APK passes the device smoke
+test above.
+
 ### Installing a preview APK on a device
 
 `preview` is `distribution: internal`, so EAS hosts an install page — no Play
@@ -211,7 +221,7 @@ an optional *Submit to store after build*.
 Because both build committed state, they sidestep the "forgot to commit" trap
 entirely — which is a good reason to prefer them once the flow is stable.
 
-## Phase D — EAS Update (OTA)
+## Phase D — EAS Update (OTA) ✅ CONFIGURED; DEVICE VERIFICATION PENDING
 
 ```sh
 npx expo install expo-updates
@@ -242,9 +252,12 @@ Publish (`--environment` is required on SDK 55+):
 eas update --channel production --message "..." --environment production
 ```
 
-Then retire `.github/workflows/mobile-release.yml` and rewrite `RELEASE.md`.
-The R2 `mobile/latest.json` path and `EXPO_PUBLIC_OTA_BASE_URL` / `R2_*` secrets
-become dead. **Desktop's `desktop/latest.json` is separate — leave it alone.**
+The GitHub mobile workflow is retained as a production-signed APK/AAB build and
+optional R2 recovery mirror. Its `mobile/latest.json` is only a direct-download
+manifest; it is not consumed by `expo-updates`. The stale
+`EXPO_PUBLIC_OTA_BASE_URL` was removed, while shared `R2_*` configuration remains
+valid for desktop delivery and the optional mobile mirror. **Desktop's
+`desktop/latest.json` is separate — leave it alone.**
 
 ## Phase E — Google Play (interactive; freezes the package name)
 

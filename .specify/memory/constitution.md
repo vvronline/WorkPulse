@@ -1,16 +1,16 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.0.0 → 1.1.0
-Deep project analysis on 2026-07-01 by GitHub Copilot (Claude Sonnet 4.6).
+Version change: 1.1.0 → 1.1.1
+Mobile release-path clarification on 2026-07-29.
 
-Version bump rationale: MINOR — new Principle VII (Mobile Platform Reliability) added;
-Technology Stack table materially expanded with mobile + TypeScript migration facts;
-server stats corrected (45 test suites, 30+ route modules); formalized WS utilities added.
+Version bump rationale: PATCH — clarify that native mobile release binaries may be
+built by EAS Build or the production-signed GitHub Actions Expo prebuild/Gradle path;
+EAS Update remains the only JavaScript OTA mechanism.
 
 Modified principles:
-- Principle III: Real-Time Reliability — added wsValidate requirement for WS input validation
-- (All others: wording/rationale refinements only, no semantic change)
+- Principle VII: Mobile Platform Reliability — documented the approved signed
+  GitHub Actions native-build path while keeping EAS Update as the only JS OTA path
 
 Added sections:
 - Principle VII: Mobile Platform Reliability (new; covers FCM/APNs, CallKeep/ConnectionService,
@@ -232,9 +232,12 @@ impact (client/mobile), and maintenance health (last release, open issues).
   integration tests.
 - **Secrets management**: No secrets, API keys, or credentials in source code or commit
   history; use environment variables loaded from `.env` (gitignored).
-- **Mobile builds**: Mobile releases MUST go through EAS Build (`eas build`); local bare
-  builds are for development only. `google-services.json` and APNs credentials MUST be
-  managed via EAS Secrets, never committed to source.
+- **Mobile builds**: Store releases SHOULD use EAS Build (`eas build`). The approved
+  GitHub Actions Expo prebuild/Gradle workflow MAY produce production-signed APK/AAB
+  artifacts for validation, recovery, and direct-download distribution; local bare
+  builds remain development-only. JavaScript OTA MUST use EAS Update, never APK
+  self-installation. `google-services.json`, signing keys, and APNs credentials MUST
+  be supplied by CI/EAS secret storage and never committed to source.
 - **Mobile versioning**: `mobile/package.json#version` and `app.config.ts` `buildNumber`/
   `versionCode` MUST be kept in sync; bump MUST accompany every EAS submission.
 - **Expo SDK upgrades**: Upgrading Expo SDK is a constitution-grade stack change and
@@ -255,4 +258,4 @@ All PRs and code reviews MUST verify compliance with the principles above. Compl
 additions MUST be justified against Principle VI. Use `ARCHITECTURE.md` for runtime
 development guidance on the full module map.
 
-**Version**: 1.1.0 | **Ratified**: 2026-05-20 | **Last Amended**: 2026-07-01
+**Version**: 1.1.1 | **Ratified**: 2026-05-20 | **Last Amended**: 2026-07-29

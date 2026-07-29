@@ -5,6 +5,10 @@
 > **R2 delivery host:** `https://cdn.aino.org.in`
 >
 > **Last repository and DNS review:** 2026-07-29
+>
+> **Rollout status:** Desktop OTA and R2 publication are working. The mobile
+> signed APK/AAB build is currently in progress; mobile publication and device
+> verification are still pending.
 
 This runbook replaces the original WorkPulse-era plan. The mobile architecture
 has changed since that plan was written: mobile JavaScript OTA updates now use
@@ -64,6 +68,11 @@ must-revalidate`.
 - [x] Desktop updater code can read `desktop/latest.json` and then configure an
       `electron-updater` generic feed.
 - [x] Mobile release artifacts have been renamed to `AINO-<version>.apk`.
+- [x] A desktop release has uploaded successfully to R2 and an installed desktop
+      client has completed an OTA update from the R2 channel.
+- [x] The public desktop pointer is live: on 2026-07-29 it returned HTTP 200,
+      `{ "version": "1.7.63", "tag": "v1.7.63" }`, with `Cache-Control:
+      no-cache, no-store, must-revalidate`.
 
 ### Remaining work and known blockers
 
@@ -87,18 +96,27 @@ must-revalidate`.
 | 1 | Move the `aino.org.in` DNS zone to Cloudflare without changing `www` behavior | **Complete and publicly verified** |
 | 2 | Create `aino-releases` and connect `cdn.aino.org.in` | **Complete and publicly verified** |
 | 3 | Configure cache, scoped R2 credentials, and GitHub Actions values | **Complete — owner confirmed** |
-| 4 | Ship the desktop R2 default and remove private-GitHub note lookup | **Implemented locally** |
-| 5 | Clean stale mobile OTA configuration/docs | **Implemented locally** |
-| 6 | Publish and verify two transitional desktop releases | **Next — merge these changes, then tag** |
-| 7 | Make GitHub optional/private and harden R2 publishing | Manual/code follow-up after successful transition |
+| 4 | Ship the desktop R2 default and remove private-GitHub note lookup | **Complete** |
+| 5 | Clean stale mobile OTA configuration/docs | **Complete** |
+| 6 | Publish and verify desktop OTA through R2 | **Complete — owner tested; public pointer independently verified at v1.7.63** |
+| 7 | Build signed mobile APK/AAB and optionally mirror the APK to R2 | **In progress — do not mark complete until CI, pointer, signature, and device checks pass** |
+| 8 | Verify EAS Update against the resulting compatible mobile runtime | Pending after the native build is installed |
+| 9 | Make GitHub optional/private and finish hardening | Follow-up after recovery-path verification |
 
-Public verification on 2026-07-29 found:
+Initial public verification on 2026-07-29 found:
 
 - the Cloudflare nameservers above are authoritative;
 - `https://www.aino.org.in/` returns HTTP 200 with Railway response headers;
 - `https://cdn.aino.org.in/does-not-exist` returns the Cloudflare R2 object 404;
-- both update pointer paths return 404 because no R2 release has been published
-  yet. The first transitional release must create `desktop/latest.json`.
+- both update pointer paths returned 404 before the first publication.
+
+After the desktop release, a second public check on 2026-07-29 found:
+
+- `https://cdn.aino.org.in/desktop/latest.json` returns HTTP 200 and identifies
+  `v1.7.63`;
+- the desktop pointer has `no-cache, no-store, must-revalidate`;
+- `https://cdn.aino.org.in/mobile/latest.json` still returns HTTP 404 while the
+  mobile build is in progress. This is expected until `publish-r2` completes.
 
 GitHub configuration values cannot be read back publicly, and the local GitHub
 CLI was not authenticated during verification. Their presence and values are
@@ -323,8 +341,10 @@ shown by `eas channel:view production`.
 
 ### Native mobile builds
 
-- Production native delivery should be an EAS/Play Store AAB.
-- `.github/workflows/mobile-release.yml` may continue publishing a signed APK to
+- Production store delivery should be an EAS/Play Store AAB.
+- `.github/workflows/mobile-release.yml`, triggered by a matching
+  `mobile-vX.Y.Z` tag, builds a production-signed arm64 APK and AAB with Expo
+  prebuild + Gradle. It publishes GitHub release assets and may mirror the APK to
   `cdn.aino.org.in/mobile/...` for testers and manual recovery.
 - The app must not download and self-install that APK. The current profile
   update button correctly uses EAS Update.
@@ -335,6 +355,20 @@ shown by `eas channel:view production`.
 
 The optional `mobile/latest.json` is a download-page manifest, not an EAS Update
 manifest and not the source used by `expo-updates`.
+
+**Current status (2026-07-29):** the mobile workflow build is in progress. A
+missing public `mobile/latest.json` is therefore not yet a failure. After CI
+finishes, require all of the following before recording success:
+
+1. the build and release jobs complete and signature verification reports the
+   expected AINO production certificate;
+2. the APK and AAB are attached to the GitHub Release;
+3. if R2 is enabled, `publish-r2` completes and `mobile/latest.json` returns the
+   built version and a reachable immutable APK URL;
+4. install the APK on a physical arm64 Android device and smoke-test login, FCM,
+   incoming calls, notification taps, PiP, and `aino://` deep links;
+5. publish a compatible EAS Update and confirm the installed build downloads and
+   reloads it from the production channel.
 
 ## 10. Step 8 — Publish a transitional desktop release
 
@@ -381,16 +415,19 @@ curl -I https://cdn.aino.org.in/mobile/releases/mobile-v<version>/AINO-<version>
 
 Expected results:
 
-- [ ] `desktop/latest.json` is HTTP 200, valid JSON, and identifies the release
+- [x] `desktop/latest.json` is HTTP 200, valid JSON, and identifies the release
       folder that actually exists.
-- [ ] Pointer responses are not stored by the CDN/browser cache.
+- [x] The desktop pointer response is not stored by the CDN/browser cache.
 - [ ] Versioned installer responses are HTTP 200 and immutable-cacheable.
 - [ ] `latest*.yml` paths and SHA-512 metadata match uploaded installers.
 - [ ] Windows, macOS, and Linux checks use the correct platform manifest.
-- [ ] An older desktop build updates completely from R2.
+- [x] An installed desktop build updates completely from R2 (owner-verified).
 - [ ] `www.aino.org.in`, `/api`, and WebSockets still work.
 - [ ] A production mobile build receives a compatible EAS Update.
 - [ ] A native mobile change is delivered through a new binary, not EAS Update.
+- [ ] The in-progress mobile workflow finishes, verifies its production
+      signature, and (when configured) publishes `mobile/latest.json` plus the
+      immutable APK to R2.
 - [ ] After a sixth release, each R2 channel retains only five version folders.
 
 ## 12. Step 10 — Cut over and harden
@@ -476,12 +513,14 @@ Do not overwrite an immutable release folder.
 - [x] Scoped R2 credentials and GitHub variables are configured (owner-confirmed;
       the first `r2-config` job is the CI verification).
 - [x] Desktop ships `https://cdn.aino.org.in` as its production update origin.
-- [ ] Transitional desktop release updates from GitHub, then the next release
-      updates from R2.
+- [x] Desktop OTA updates from R2 and the public pointer is live at v1.7.63.
 - [ ] Desktop updater no longer depends on unauthenticated GitHub APIs before the
       repository becomes private.
 - [x] Mobile JS OTA uses EAS Update; native updates use a new store binary.
 - [x] Stale mobile self-updater configuration/documentation is removed.
+- [ ] Current mobile APK/AAB build and optional R2 mirror complete successfully.
+- [ ] Resulting APK passes the physical-device smoke-test matrix and receives a
+      compatible production EAS Update.
 - [ ] Rollback and recovery procedures have been tested once.
 
 ## References

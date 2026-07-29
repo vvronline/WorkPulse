@@ -6,6 +6,11 @@ Google Play**. The in-app APK self-updater has been removed; the old
 mirror for testers and manual recovery. See `docs/AINO_EAS_MIGRATION_PLAN.md`
 for the full migration, including the identifier rename to `app.aino.mobile`.
 
+> **Current release status (2026-07-29):** the signed GitHub Actions APK/AAB
+> build is in progress. Do not treat the release or optional R2 mirror as
+> complete until the workflow, signature check, public pointer, and physical
+> device smoke tests all pass.
+
 ## Ship a JS-only change (OTA, seconds)
 
 ```sh
@@ -74,9 +79,9 @@ prebuild + native modules). Before cutting a release:
 
 ## App icon
 
-The launcher icon is the **same artwork as the desktop `.exe`**
-(`desktop/icons/icon-source.png`). The mobile launcher / splash / favicon PNGs in
-`mobile/assets/` are generated from that source by:
+The AINO launcher icon, in-app brand component, and platform variants share the
+same interconnected artwork. The mobile launcher / splash / favicon PNGs in
+`mobile/assets/` are generated from `mobile/assets/aino-mark.svg` by:
 
 ```bash
 cd mobile
@@ -86,7 +91,7 @@ npm run generate-icons   # writes assets/icon.png, splash-icon.png, favicon.png,
 
 These generated PNGs are committed and consumed by `expo prebuild` during the
 CI build, so the APK ships with the desktop logo. Re-run the script and commit
-whenever `desktop/icons/icon-source.png` changes.
+whenever `mobile/assets/aino-mark.svg` changes.
 
 ## Release decision and checklist
 
@@ -113,12 +118,28 @@ whenever `desktop/icons/icon-source.png` changes.
 
 ## Optional direct-download APK mirror
 
-`.github/workflows/mobile-release.yml` can still publish the production-signed
-`AINO-<version>.apk` to GitHub Releases and
+`.github/workflows/mobile-release.yml` is triggered by a `mobile-v<version>` tag
+matching `mobile/package.json`. It runs Expo prebuild as needed, builds an arm64
+production-signed APK and AAB with Gradle, verifies the APK certificate, and
+publishes both artifacts to GitHub Releases. When R2 credentials are configured,
+it also publishes the APK and a download manifest to
 `https://cdn.aino.org.in/mobile/...` for testers or manual recovery. A
-`mobile-v<version>` tag must match `mobile/package.json` for that legacy mirror
-workflow. This APK path is **not** EAS Update, is not used by the in-app update
-button, and must not replace Play Store delivery for production users.
+failed/skipped R2 mirror does not turn this path into an OTA service. This APK
+path is **not** EAS Update, is not used by the in-app update button, and must not
+replace Play Store delivery for production users.
+
+After the workflow finishes, verify:
+
+```sh
+curl -fsS https://cdn.aino.org.in/mobile/latest.json
+curl -I https://cdn.aino.org.in/mobile/releases/mobile-v<version>/AINO-<version>.apk
+```
+
+Then install the APK on a physical arm64 Android device and test login, FCM,
+incoming calls, notification taps, PiP, and `aino://` deep links. Finally publish
+a compatible production EAS Update and confirm Profile → Check for Updates can
+download and reload it. Until all checks pass, record the release as **in
+progress**, not shipped.
 
 R2 setup and verification for this optional mirror are documented in
 `docs/OTA_R2_MIGRATION_PLAN.md`.
