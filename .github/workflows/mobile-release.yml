@@ -1,0 +1,628 @@
+name: Mobile Release
+
+# Builds a signed Android APK with Expo prebuild + Gradle and attaches it to a
+# GitHub release. Triggered by tags of the form `mobile-vX.Y.Z` so it never
+# collides with the desktop release workflow (which uses `vX.Y.Z`).
+#
+# CI runs `expo prebuild` only when native-impacting files changed (or when
+# `mobile/android` is missing). This keeps release builds fast while still
+# regenerating native projects when configuration/plugins/dependencies require
+# it.
+#
+# SIGNING: artifacts are signed with the PRODUCTION keystore (alias
+# `aino-release`), decoded from the ANDROID_KEYSTORE_BASE64 secret and wired
+# into the generated build.gradle by the `withAndroidSigning` config plugin.
+# That plugin is REQUIRED because prebuild overwrites build.gradle on every
+# run, so a keystore configured via gradle.properties alone would not take
+# effect. See docs/ANDROID_SIGNING.md.
+#
+# Outputs BOTH an APK (sideloading / direct download) and an AAB (the format
+# the Play Store requires). Play submission itself is a separate, later step.
+
+on:
+  push:
+    tags:
+      - "mobile-v*" # e.g. mobile-v1.0.0, mobile-v1.2.3
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mobile-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate tag matches mobile/package.json version
+        id: check
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/mobile-v}"
+          PKG_VERSION=$(node -p "require('./mobile/package.json').version")
+          echo "Tag version: $TAG_VERSION"
+          echo "Package version: $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match mobile/package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: validate
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      # Backend targets baked into the JS bundle at build time. Override here (or
+      # via repo variables) if you ever ship a build pointing at a different API.
+      # Must be the `www.` host: the apex aino.org.in is a registrar redirect
+      # that is NOT served by Railway (it 404s on /api).
+      EXPO_PUBLIC_API_BASE_URL: https://www.aino.org.in/api
+      EXPO_PUBLIC_WS_BASE_URL: wss://www.aino.org.in
+      # OTA update source (Cloudflare R2 public custom domain). Baked into the JS
+      # bundle so the in-app updater reads mobile/latest.json from the CDN. When
+      # the repo variable is unset this is empty and the updater falls back to
+      # the GitHub releases API automatically.
+      EXPO_PUBLIC_OTA_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+      EXPO_ANDROID_GOOGLE_SERVICES_FILE: ./google-services.json
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Restore npm cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('mobile/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # The default `packages` input is "tools platform-tools". The obsolete
+          # "tools" (SDK Tools) package pulls down the Android Emulator and now
+          # fails with "Error on ZipFile unknown archive". It isn't needed for a
+          # Gradle APK build, so only install platform-tools here. Gradle/Expo
+          # download the required build-tools + platform SDK automatically.
+          packages: platform-tools
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Decide whether Expo prebuild is required
+        id: prebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NEED_PREBUILD=0
+          REASON="No native-impacting changes detected"
+
+          # If android/ is not committed in this branch, we MUST prebuild.
+          if [ ! -d mobile/android ]; then
+            NEED_PREBUILD=1
+            REASON="mobile/android is missing"
+          fi
+
+          CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+          PREV_TAG=$(git tag --sort=-creatordate | grep '^mobile-v' | grep -v "^${CURRENT_TAG}$" | head -n1 || true)
+
+          if [ "$NEED_PREBUILD" -eq 0 ]; then
+            if [ -z "${PREV_TAG}" ]; then
+              NEED_PREBUILD=1
+              REASON="No previous mobile tag to diff against"
+            else
+              # Check for actual dependency changes by comparing the dependencies section
+              # of package.json, not just any change. Version-only bumps don't require prebuild.
+              PREV_DEPS=$(git show "${PREV_TAG}:mobile/package.json" 2>/dev/null | jq -r '.dependencies // {}' 2>/dev/null || echo '{}')
+              CURR_DEPS=$(jq -r '.dependencies // {}' mobile/package.json 2>/dev/null || echo '{}')
+              DEPS_CHANGED=$([ "$PREV_DEPS" != "$CURR_DEPS" ] && echo "true" || echo "false")
+
+              # Check for changes to config and other native-impacting files
+              CHANGED_NATIVE_INPUTS=$(
+                git diff --name-only "${PREV_TAG}"..HEAD -- \
+                  mobile/app.config.ts \
+                  mobile/app.json \
+                  mobile/scripts \
+                  mobile/modules \
+                  | sed '/^$/d' || true
+              )
+
+              if [ "$DEPS_CHANGED" = "true" ]; then
+                NEED_PREBUILD=1
+                REASON="Dependencies changed since ${PREV_TAG}"
+              elif [ -n "${CHANGED_NATIVE_INPUTS}" ]; then
+                NEED_PREBUILD=1
+                REASON="Native-impacting files changed since ${PREV_TAG}"
+                echo "Detected native-impacting changes:"
+                echo "${CHANGED_NATIVE_INPUTS}"
+              fi
+            fi
+          fi
+
+          if [ "$NEED_PREBUILD" -eq 1 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "reason=${REASON}" >> "$GITHUB_OUTPUT"
+          echo "Prebuild decision: ${REASON} (run=${NEED_PREBUILD})"
+
+      # app.config.ts references android.googleServicesFile: "./google-services.json".
+      # The file is gitignored / not committed (it carries the FCM sender config),
+      # so we materialize it from the repo secret before prebuild. Without this the
+      # @react-native-firebase config plugins fail and FCM background/terminated
+      # push delivery (incoming calls + message status-bar notifications) breaks.
+      - name: Write google-services.json from secret
+        working-directory: mobile
+        env:
+          ANDROID_GOOGLE_SERVICES_JSON: ${{ secrets.ANDROID_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$ANDROID_GOOGLE_SERVICES_JSON" ]; then
+            echo "::error::ANDROID_GOOGLE_SERVICES_JSON secret is empty — Firebase Cloud Messaging will not be configured"
+            exit 1
+          fi
+          printf '%s' "$ANDROID_GOOGLE_SERVICES_JSON" > google-services.json
+          # Fail fast if the secret is not valid JSON.
+          node -e "JSON.parse(require('fs').readFileSync('google-services.json','utf8')); console.log('google-services.json written and valid')"
+
+      # Decode the production keystore OUTSIDE the working tree so it can never
+      # be caught by a glob, cached, or uploaded as a build artifact. The
+      # withAndroidSigning config plugin reads ANDROID_KEYSTORE_PATH during
+      # prebuild; see docs/ANDROID_SIGNING.md.
+      - name: Decode release keystore
+        id: keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is empty - cannot produce a release-signed build"
+            exit 1
+          fi
+          KEYSTORE_PATH="${RUNNER_TEMP}/aino-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          # Fail fast on a truncated/corrupt secret instead of deep inside Gradle.
+          if [ ! -s "$KEYSTORE_PATH" ]; then
+            echo "::error::decoded keystore is empty - check the base64 secret"
+            exit 1
+          fi
+          keytool -list -keystore "$KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" > /dev/null
+          echo "path=${KEYSTORE_PATH}" >> "$GITHUB_OUTPUT"
+          echo "Keystore decoded and verified"
+
+      - name: Expo prebuild (generate native android project)
+        if: steps.prebuild.outputs.run == 'true'
+        working-directory: mobile
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Skip Expo prebuild
+        if: steps.prebuild.outputs.run != 'true'
+        run: |
+          echo "Skipping expo prebuild: ${{ steps.prebuild.outputs.reason }}"
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          # Key on the lockfile (stable across prebuild) so the cache actually
+          # hits — android/*.gradle is regenerated by prebuild on every run.
+          key: ${{ runner.os }}-gradle-${{ hashFiles('mobile/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # Cache the native C++/CMake build outputs (Hermes, Fabric, TurboModules).
+      # These dominate the build time and are not covered by the Gradle cache.
+      - name: Cache native build (.cxx + RN codegen)
+        uses: actions/cache@v4
+        with:
+          path: |
+            mobile/android/app/.cxx
+            mobile/android/app/build/generated
+            ~/.gradle/caches/transforms-3
+          key: ${{ runner.os }}-rn-native-${{ hashFiles('mobile/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-rn-native-
+
+      - name: Build release APK
+        working-directory: mobile/android
+        env:
+          # Only build for 64-bit ARM (real devices / sideload). Dropping
+          # armeabi-v7a + x86 + x86_64 avoids compiling the native layer
+          # (Hermes/Fabric/TurboModules) 4× — the main reason builds took ~26m.
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+        run: ./gradlew assembleRelease --no-daemon --build-cache -PreactNativeArchitectures=arm64-v8a
+
+      # The Play Store only accepts App Bundles. Built in the same job so it
+      # reuses the warm Gradle/native caches (a separate job would repeat the
+      # expensive native compile). Unused until Play submission is wired up.
+      - name: Build release AAB (Play Store format)
+        working-directory: mobile/android
+        env:
+          ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+        run: ./gradlew bundleRelease --no-daemon --build-cache -PreactNativeArchitectures=arm64-v8a
+
+      - name: Stage artifacts with versioned names
+        id: stage
+        shell: bash
+        working-directory: mobile
+        run: |
+          SRC="android/app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$SRC" ]; then
+            echo "::error::Expected APK not found at $SRC"
+            find android/app/build/outputs -name '*.apk' || true
+            exit 1
+          fi
+          mkdir -p ../release-assets
+          OUT="../release-assets/AINO-${VERSION}.apk"
+          cp "$SRC" "$OUT"
+
+          AAB_SRC="android/app/build/outputs/bundle/release/app-release.aab"
+          if [ ! -f "$AAB_SRC" ]; then
+            echo "::error::Expected AAB not found at $AAB_SRC"
+            find android/app/build/outputs -name '*.aab' || true
+            exit 1
+          fi
+          cp "$AAB_SRC" "../release-assets/AINO-${VERSION}.aab"
+          ls -la ../release-assets/
+
+      # Guard against silently shipping a DEBUG-signed artifact: if the signing
+      # plugin ever fails to apply, Gradle happily falls back to the debug
+      # keystore and the Play Console would reject the upload much later.
+      - name: Verify release signature
+        shell: bash
+        working-directory: mobile
+        run: |
+          APK="../release-assets/AINO-${VERSION}.apk"
+          BUILD_TOOLS="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tee /tmp/certs.txt
+          if grep -qi 'CN=Android Debug' /tmp/certs.txt; then
+            echo "::error::APK is DEBUG-signed - the release signing config did not apply"
+            exit 1
+          fi
+          if ! grep -qi 'CN=AINO' /tmp/certs.txt; then
+            echo "::error::APK is not signed by the expected AINO release key"
+            exit 1
+          fi
+          echo "Release signature verified"
+
+      - name: Generate checksum
+        shell: bash
+        working-directory: release-assets
+        run: |
+          echo "## Checksums (SHA-256)" > checksums.txt
+          for f in *.apk *.aab; do
+            [ -f "$f" ] && sha256sum "$f" >> checksums.txt
+          done
+          cat checksums.txt
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-apk
+          path: release-assets/
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-apk
+          path: release-assets
+
+      - name: Generate release notes
+        id: notes
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          # Find the previous mobile tag (skip the current one).
+          PREV_TAG=$(git tag --sort=-creatordate | grep '^mobile-v' | sed -n '2p')
+
+          NOTES="## AINO Mobile v${VERSION}\n\n"
+
+          if [ -n "$PREV_TAG" ]; then
+            NOTES+="### Changes since ${PREV_TAG}\n\n"
+            FEATURES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --grep="^feat" --no-merges 2>/dev/null || true)
+            FIXES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --grep="^fix" --no-merges 2>/dev/null || true)
+            OTHER=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --invert-grep --grep="^feat" --grep="^fix" --no-merges 2>/dev/null | head -20 || true)
+
+            if [ -n "$FEATURES" ]; then
+              NOTES+="### ✨ Features\n${FEATURES}\n\n"
+            fi
+            if [ -n "$FIXES" ]; then
+              NOTES+="### 🐛 Bug Fixes\n${FIXES}\n\n"
+            fi
+            if [ -n "$OTHER" ]; then
+              NOTES+="### 📝 Other Changes\n${OTHER}\n\n"
+            fi
+          fi
+
+          NOTES+="### 📲 Installation\n"
+          NOTES+="Download \`AINO-${VERSION}.apk\` below and install it on your Android device (you may need to allow installs from unknown sources).\n\n"
+          NOTES+="> This build is signed with the AINO release key. If you have an older debug-signed or EAS-signed build installed, uninstall it first — Android refuses updates across different signing keys.\n\n"
+
+          NOTES+="### 🔒 Checksums (SHA-256)\n\`\`\`\n"
+          if [ -f release-assets/checksums.txt ]; then
+            NOTES+="$(cat release-assets/checksums.txt)\n"
+          fi
+          NOTES+="\`\`\`\n"
+
+          echo -e "$NOTES" > release-notes.md
+          cat release-notes.md
+
+      - name: Create or find the release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          RELEASE_ID=""
+          TMP=$(mktemp)
+          if gh api "repos/${{ github.repository }}/releases/tags/mobile-v${VERSION}" >"$TMP" 2>/dev/null; then
+            RELEASE_ID=$(jq -r '.id // empty' <"$TMP")
+            echo "Reusing existing release id=${RELEASE_ID} for mobile-v${VERSION} (via tag lookup)"
+          else
+            RELEASE_ID=$(gh api --paginate "repos/${{ github.repository }}/releases" \
+              --jq ".[] | select(.tag_name == \"mobile-v${VERSION}\") | .id" | head -1)
+            if [ -n "$RELEASE_ID" ]; then
+              echo "Reusing existing draft release id=${RELEASE_ID} for mobile-v${VERSION} (via list)"
+            fi
+          fi
+          rm -f "$TMP"
+
+          if [ -z "$RELEASE_ID" ]; then
+            echo "Creating fresh draft release for mobile-v${VERSION}"
+            RELEASE_ID=$(gh api -X POST \
+              "repos/${{ github.repository }}/releases" \
+              -f tag_name="mobile-v${VERSION}" \
+              -f name="Mobile v${VERSION}" \
+              -F draft=true \
+              -F prerelease=false \
+              --jq '.id')
+            echo "Created release id=${RELEASE_ID}"
+          fi
+
+          if ! [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::Got non-numeric RELEASE_ID='${RELEASE_ID}' for mobile-v${VERSION}"
+            exit 1
+          fi
+          echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Update release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          if gh api -X PATCH \
+            "repos/${{ github.repository }}/releases/${RELEASE_ID}" \
+            -F body=@release-notes.md; then
+            echo "Updated release notes"
+          else
+            echo "::warning::Failed to update release notes (id=${RELEASE_ID}); continuing"
+          fi
+
+      - name: Attach APK to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          shopt -s nullglob
+          FILES=(release-assets/*.apk)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "::error::No APK found to upload"
+            exit 1
+          fi
+
+          EXISTING=$(gh api --paginate \
+            "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" \
+            --jq '.[] | "\(.id)\t\(.name)"' || true)
+
+          urlencode() { jq -rn --arg v "$1" '$v|@uri'; }
+
+          FAIL=0
+          for f in "${FILES[@]}"; do
+            name=$(basename "$f")
+            existing_id=$(echo "$EXISTING" | awk -F'\t' -v n="$name" '$2 == n { print $1; exit }')
+            if [ -n "$existing_id" ]; then
+              echo "Deleting existing asset id=${existing_id} name=${name}"
+              gh api -X DELETE "repos/${{ github.repository }}/releases/assets/${existing_id}" || true
+            fi
+
+            encoded_name=$(urlencode "$name")
+            echo "Uploading ${name}..."
+            HTTP_CODE=$(curl -sS -o /tmp/upload-resp.json -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: token ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/vnd.android.package-archive" \
+              --data-binary "@${f}" \
+              "https://uploads.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets?name=${encoded_name}")
+            if [ "$HTTP_CODE" != "201" ]; then
+              echo "::error::Failed to upload ${name} (HTTP ${HTTP_CODE})"
+              cat /tmp/upload-resp.json || true
+              echo
+              FAIL=1
+            fi
+          done
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "::error::APK upload failed"
+            exit 1
+          fi
+
+          echo "Final asset list on release:"
+          gh api --paginate \
+            "repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" \
+            --jq '.[] | {name, size, download_count}'
+
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          if [ -z "$RELEASE_ID" ]; then
+            echo "::error::No RELEASE_ID was passed in from the create-or-find step"
+            exit 1
+          fi
+          echo "Publishing release id=${RELEASE_ID} for mobile-v${VERSION}"
+          if gh api \
+              -X PATCH \
+              "repos/${{ github.repository }}/releases/${RELEASE_ID}" \
+              -f tag_name="mobile-v${VERSION}" \
+              -f name="Mobile v${VERSION}" \
+              -F prerelease=false \
+              -F draft=false; then
+            echo "Published release mobile-v${VERSION} (id=${RELEASE_ID})"
+            exit 0
+          fi
+          echo "::error::Failed to publish release mobile-v${VERSION} (id=${RELEASE_ID})"
+          exit 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Publish the APK + version manifest to Cloudflare R2 (S3-compatible) so the
+  # in-app updater can deliver OTA updates while the GitHub repo stays PRIVATE.
+  # Keeps the newest 5 releases and prunes older ones. Runs in parallel with the
+  # GitHub `release` job during the transitional period; the GitHub job can be
+  # dropped once every device is on a build that reads from R2.
+  # ──────────────────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────────────────
+  # Detect whether Cloudflare R2 is configured. Secrets cannot be referenced in
+  # a job-level `if:`, so we surface a boolean output here and gate `publish-r2`
+  # on it. When R2 is not set up the R2 job is skipped entirely (the GitHub
+  # release still ships, and the app falls back to GitHub for updates).
+  # ──────────────────────────────────────────────────────────────────────────
+  r2-config:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check R2 configuration
+        id: check
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+        run: |
+          if [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] \
+             && [ -n "$R2_ACCOUNT_ID" ] && [ -n "$R2_BUCKET" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "R2 is configured; will publish to R2."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::R2 is not configured; skipping R2 publish (GitHub release still ships)."
+          fi
+
+  publish-r2:
+    needs: [validate, build, r2-config]
+    if: needs.r2-config.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      # Recent aws-cli v2 sends x-amz-checksum-* headers R2 can reject with 501.
+      # These disable that; older aws-cli simply ignores the vars.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      R2_BUCKET: ${{ vars.R2_BUCKET }}
+      R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-apk
+          path: release-assets
+
+      - name: Upload APK to R2 (immutable, long cache)
+        run: |
+          set -euo pipefail
+          TAG="mobile-v${VERSION}"
+          APK="release-assets/AINO-${VERSION}.apk"
+          test -f "$APK" || { echo "::error::Missing $APK"; exit 1; }
+          aws s3 cp "$APK" "s3://${R2_BUCKET}/mobile/releases/${TAG}/AINO-${VERSION}.apk" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/vnd.android.package-archive" \
+            --cache-control "public, max-age=31536000, immutable"
+
+      - name: Build release notes manifest
+        run: |
+          set -euo pipefail
+          PREV_TAG=$(git tag --sort=-creatordate | grep '^mobile-v' | sed -n '2p' || true)
+          NOTES=""
+          if [ -n "$PREV_TAG" ]; then
+            NOTES=$(git log "${PREV_TAG}"..HEAD --pretty=format:'- %s' --no-merges | head -30 || true)
+          fi
+          jq -n \
+            --arg version "$VERSION" \
+            --arg apkUrl  "${R2_PUBLIC_BASE_URL}/mobile/releases/mobile-v${VERSION}/AINO-${VERSION}.apk" \
+            --arg notes   "$NOTES" \
+            --arg releaseUrl "${R2_PUBLIC_BASE_URL}/mobile/releases/mobile-v${VERSION}/" \
+            '{version:$version, apkUrl:$apkUrl, notes:$notes, releaseUrl:$releaseUrl}' \
+            > latest.json
+          cat latest.json
+
+      - name: Write mobile latest.json (stable pointer, no-cache)
+        run: |
+          set -euo pipefail
+          aws s3 cp latest.json "s3://${R2_BUCKET}/mobile/latest.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Prune old mobile releases (keep newest 5)
+        run: |
+          set -euo pipefail
+          all=$(aws s3 ls "s3://${R2_BUCKET}/mobile/releases/" --endpoint-url "$R2_ENDPOINT" \
+                | awk '{print $2}' | sed 's#/##' | grep -E '^mobile-v[0-9]' || true)
+          if [ -z "$all" ]; then echo "Nothing to prune"; exit 0; fi
+          sorted=$(echo "$all" | sort -V)
+          total=$(echo "$sorted" | grep -c . || true)
+          if [ "${total:-0}" -gt 5 ]; then
+            for r in $(echo "$sorted" | head -n $((total - 5))); do
+              echo "Pruning mobile/releases/${r}"
+              aws s3 rm "s3://${R2_BUCKET}/mobile/releases/${r}/" --recursive --endpoint-url "$R2_ENDPOINT"
+            done
+          else
+            echo "Only ${total:-0} mobile releases; keeping all"
+          fi

@@ -210,6 +210,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // the release build (:app:mergeReleaseJavaResource → "Java heap space").
     // This plugin makes the higher limits survive prebuild.
     "./scripts/withAndroidGradleMemory",
+    // Injects the RELEASE signing config (keystore from ANDROID_KEYSTORE_*
+    // env vars) into the generated build.gradle. Same "prebuild clobbers it"
+    // reason as withAndroidGradleMemory above: Expo's template signs `release`
+    // with `signingConfigs.debug`, which the Play Store rejects. No-ops (keeps
+    // debug signing) when the env vars are unset, so local dev is unaffected.
+    "./scripts/withAndroidSigning",
     // Native Firebase Cloud Messaging. These config plugins generate the
     // native code that registers FCM and enables background/terminated-state
     // push delivery via setBackgroundMessageHandler.
