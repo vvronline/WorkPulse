@@ -63,11 +63,6 @@ jobs:
       # that is NOT served by Railway (it 404s on /api).
       EXPO_PUBLIC_API_BASE_URL: https://www.aino.org.in/api
       EXPO_PUBLIC_WS_BASE_URL: wss://www.aino.org.in
-      # OTA update source (Cloudflare R2 public custom domain). Baked into the JS
-      # bundle so the in-app updater reads mobile/latest.json from the CDN. When
-      # the repo variable is unset this is empty and the updater falls back to
-      # the GitHub releases API automatically.
-      EXPO_PUBLIC_OTA_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
       EXPO_ANDROID_GOOGLE_SERVICES_FILE: ./google-services.json
     steps:
       - uses: actions/checkout@v6
@@ -513,17 +508,14 @@ jobs:
           exit 1
 
   # ──────────────────────────────────────────────────────────────────────────
-  # Publish the APK + version manifest to Cloudflare R2 (S3-compatible) so the
-  # in-app updater can deliver OTA updates while the GitHub repo stays PRIVATE.
-  # Keeps the newest 5 releases and prunes older ones. Runs in parallel with the
-  # GitHub `release` job during the transitional period; the GitHub job can be
-  # dropped once every device is on a build that reads from R2.
-  # ──────────────────────────────────────────────────────────────────────────
+  # Optionally publish the APK + download manifest to Cloudflare R2 for testers
+  # and manual recovery. This is NOT the mobile app's OTA mechanism: compatible
+  # JavaScript updates use EAS Update and native production builds use Play.
+  # Keeps the newest 5 direct-download releases and prunes older ones.
   # ──────────────────────────────────────────────────────────────────────────
   # Detect whether Cloudflare R2 is configured. Secrets cannot be referenced in
   # a job-level `if:`, so we surface a boolean output here and gate `publish-r2`
-  # on it. When R2 is not set up the R2 job is skipped entirely (the GitHub
-  # release still ships, and the app falls back to GitHub for updates).
+  # on it. When R2 is not set up the optional APK mirror is skipped entirely.
   # ──────────────────────────────────────────────────────────────────────────
   r2-config:
     runs-on: ubuntu-latest

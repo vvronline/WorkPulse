@@ -267,7 +267,9 @@ jobs:
           if-no-files-found: error
 
   release-notes:
-    needs: [validate, build]
+    # Do not publish the GitHub Release until the production R2 channel and its
+    # public pointer have both been verified by publish-r2.
+    needs: [validate, build, publish-r2]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -555,10 +557,9 @@ jobs:
           exit 1
 
   # ──────────────────────────────────────────────────────────────────────────
-  # Detect whether Cloudflare R2 is configured. Secrets cannot be referenced in
-  # a job-level `if:`, so we surface a boolean output here and gate `publish-r2`
-  # on it. When R2 is not set up the R2 job is skipped entirely (the GitHub
-  # release still ships, and the apps fall back to GitHub for updates).
+  # Fail before publishing when the required R2 configuration is incomplete.
+  # Desktop clients ship the CDN as their production update origin, so silently
+  # skipping this channel would create a release they cannot discover from R2.
   # ──────────────────────────────────────────────────────────────────────────
   r2-config:
     runs-on: ubuntu-latest
@@ -572,21 +573,23 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
         run: |
           if [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] \
-             && [ -n "$R2_ACCOUNT_ID" ] && [ -n "$R2_BUCKET" ]; then
+             && [ -n "$R2_ACCOUNT_ID" ] && [ -n "$R2_BUCKET" ] \
+             && [ "$R2_PUBLIC_BASE_URL" = "https://cdn.aino.org.in" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
             echo "R2 is configured; will publish to R2."
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::R2 is not configured; skipping R2 publish (GitHub release still ships)."
+            echo "::error::R2 configuration is incomplete or R2_PUBLIC_BASE_URL is not https://cdn.aino.org.in"
+            exit 1
           fi
 
   # ──────────────────────────────────────────────────────────────────────────
   # Publish installers + electron-updater manifests (latest*.yml) to Cloudflare
   # R2 (S3-compatible) so the desktop auto-updater can deliver updates while the
   # GitHub repo stays PRIVATE. Keeps the newest 5 releases and prunes older ones.
-  # Skipped automatically when R2 is not configured (see r2-config above).
   # ──────────────────────────────────────────────────────────────────────────
   publish-r2:
     needs: [validate, build, r2-config]
@@ -602,6 +605,7 @@ jobs:
       AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
       R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
       R2_BUCKET: ${{ vars.R2_BUCKET }}
+      R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
       - name: Download all installers
@@ -639,6 +643,27 @@ jobs:
             --endpoint-url "$R2_ENDPOINT" \
             --content-type "application/json" \
             --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Verify the public desktop update pointer
+        run: |
+          set -euo pipefail
+          expected=$(cat latest.json)
+          url="${R2_PUBLIC_BASE_URL}/desktop/latest.json"
+          for attempt in 1 2 3 4 5; do
+            actual=$(curl --fail --silent --show-error \
+              -H "Cache-Control: no-cache" \
+              "${url}?verify=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}") || true
+            if [ "$actual" = "$expected" ]; then
+              echo "Verified ${url}: ${actual}"
+              exit 0
+            fi
+            echo "Attempt ${attempt}: public pointer has not propagated yet"
+            sleep 5
+          done
+          echo "::error::Public R2 pointer did not match the uploaded latest.json"
+          echo "Expected: ${expected}"
+          echo "Actual:   ${actual:-<request failed>}"
+          exit 1
 
       - name: Prune old desktop releases (keep newest 5)
         run: |

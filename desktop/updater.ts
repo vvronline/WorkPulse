@@ -31,14 +31,15 @@ function buildBadgeDataUrl(label: string, size: number): string {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`;
 }
 
-// Update assets can be served from two places:
-//   1. Cloudflare R2 (custom domain) — used when OTA_BASE_URL is baked in at
-//      build time. Lets a PRIVATE GitHub repo keep auto-updating.
-//   2. GitHub Releases — the fallback when R2 is not configured. The desktop
-//      release workflow already attaches `latest.yml` + installers to each
-//      `v*` GitHub release, so this works out of the box for a public repo.
-// If OTA_BASE_URL is empty we go straight to the GitHub fallback.
-const OTA_BASE_URL = (process.env.OTA_BASE_URL || "").replace(/\/+$/, "");
+// R2 is the shipped production update origin. Reading only an environment
+// variable here is insufficient: this code runs on the end user's machine, not
+// in GitHub Actions. Keep the override for local/staging diagnostics, but ensure
+// every normal packaged build can discover R2 without machine configuration.
+// GitHub release discovery remains a temporary fallback for the migration
+// release and can be removed after R2-only updating has been verified.
+const OTA_BASE_URL = (
+  process.env.OTA_BASE_URL || "https://cdn.aino.org.in"
+).replace(/\/+$/, "");
 
 // Desktop and mobile releases share the bucket but live under separate prefixes
 // (`desktop/` vs `mobile/`) with their own `latest.json`, so the two channels
@@ -476,49 +477,10 @@ function setupUpdater(mainWindow: BrowserWindow): void {
 
   ipcMain.handle("get-app-version", () => app.getVersion());
 
-  // Fetch release notes from GitHub API (fallback when electron-updater omits them)
-  ipcMain.handle(
-    "fetch-release-notes",
-    async (_event: IpcMainInvokeEvent, version: string) => {
-      try {
-        const tag = version.startsWith("v") ? version : `v${version}`;
-        const https = require("https");
-        const data = await new Promise<{ body?: string }>((resolve, reject) => {
-          const req = https.get(
-            `https://api.github.com/repos/vvronline/WorkPulse/releases/tags/${tag}`,
-            {
-              headers: {
-                "User-Agent": "WorkPulse-Desktop",
-                Accept: "application/vnd.github.v3+json",
-              },
-            },
-            (res: import("http").IncomingMessage) => {
-              let body = "";
-              res.on("data", (c: Buffer) => (body += c));
-              res.on("end", () => {
-                if (res.statusCode === 200) resolve(JSON.parse(body));
-                else reject(new Error(`GitHub ${res.statusCode}`));
-              });
-            },
-          );
-          req.on("error", reject);
-          req.setTimeout(10000, () => {
-            req.destroy();
-            reject(new Error("timeout"));
-          });
-        });
-        const notes = cleanReleaseNotes(data.body || "");
-        if (notes) pendingReleaseNotes = notes;
-        return notes || data.body || "";
-      } catch (err) {
-        console.error(
-          "[updater] Failed to fetch release notes:",
-          (err as Error)?.message,
-        );
-        return "";
-      }
-    },
-  );
+  // Preserve the renderer API without making an unauthenticated GitHub request.
+  // Release notes now come from electron-updater's latest*.yml metadata; an
+  // empty value is valid when a release does not include notes.
+  ipcMain.handle("fetch-release-notes", () => pendingReleaseNotes || "");
 
   // ─── Window management IPC handlers ───
   ipcMain.handle("is-maximized", (event: IpcMainInvokeEvent) => {

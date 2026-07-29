@@ -1,533 +1,492 @@
-# OTA Updates → Cloudflare R2 Migration Plan
+# AINO OTA and Cloudflare R2 Migration Runbook
 
-Move desktop (electron-updater) and mobile (in-app APK) OTA assets off GitHub
-Releases and onto **Cloudflare R2**, so the GitHub repository can be made
-**private** while end-user devices keep auto-updating. Retain the **last 5
-releases** per channel and prune older ones automatically on every publish.
+> **Domain:** `www.aino.org.in`
+>
+> **R2 delivery host:** `https://cdn.aino.org.in`
+>
+> **Last repository and DNS review:** 2026-07-29
 
----
+This runbook replaces the original WorkPulse-era plan. The mobile architecture
+has changed since that plan was written: mobile JavaScript OTA updates now use
+**EAS Update**, not an in-app APK installer. Cloudflare R2 remains the delivery
+origin for desktop installers and can optionally host directly downloadable
+Android APKs.
 
-## 1. Why this change is needed
+## 1. Final architecture
 
-Both updaters today depend on the repo being **public** in two ways:
+| Product | Update type | Production delivery service | Public endpoint |
+| --- | --- | --- | --- |
+| Desktop | Native Electron installers and `latest*.yml` | Cloudflare R2 | `https://cdn.aino.org.in/desktop/...` |
+| Mobile | Compatible JS, styling, and bundled assets | EAS Update | `https://u.expo.dev/dcccf532-ce8b-431c-bb2d-bc99866d14fd` |
+| Mobile | Native Android changes | Google Play / signed AAB | Play Store |
+| Mobile (optional) | Signed APK for testers/sideloading | Cloudflare R2 | `https://cdn.aino.org.in/mobile/...` |
+| Web/API/WebSocket | Application traffic | Existing Railway deployment | `https://www.aino.org.in` |
 
-| Channel | Version discovery | Asset download |
-| --- | --- | --- |
-| Desktop (`desktop/updater.ts`) | `GET api.github.com/.../releases` to find newest `v*` tag | `releases/download/<tag>/latest.yml` + installers (electron-updater generic feed) |
-| Mobile (`mobile/src/updater.ts`) | `GET api.github.com/.../releases` to find newest `mobile-v*` release | asset `browser_download_url` (`WorkPulse-<v>.apk`) |
+`www.aino.org.in` must remain the application host. Do **not** connect the R2
+bucket to `www.aino.org.in`, because that would replace the current Railway
+CNAME and break the website, `/api`, and WebSocket traffic. Use the unused
+`cdn.aino.org.in` subdomain for R2.
 
-When the repo goes private, both the unauthenticated API listing **and** the
-asset URLs start returning `404/403`. Embedding a GitHub token in shipped apps
-is not acceptable. The fix: host assets **and** a tiny version manifest on R2
-behind a **public** Cloudflare custom domain (no auth needed to read), and have
-the apps read from there instead of GitHub.
+### R2 object layout
 
-GitHub Releases can still be created for changelog/history if desired — they
-just stop being the delivery mechanism.
-
----
-
-## 2. Target architecture
-
-```
-Cloudflare R2 bucket:  workpulse-ota   (public via custom domain, e.g. https://cdn.workpulse.app)
-
-desktop/
-  latest.json                         # { "version": "1.6.95", "tag": "v1.6.95" }   (no-cache)
-  releases/
-    v1.6.95/
-      latest.yml                      # electron-updater manifest (Windows)
+```text
+aino-releases/                         # suggested bucket name
+  desktop/
+    latest.json                       # no-store; points to the latest vX.Y.Z
+    releases/v1.7.62/
+      latest.yml
       latest-mac.yml
       latest-linux.yml
-      WorkPulse-Setup-1.6.95.exe
-      WorkPulse-Setup-1.6.95.exe.blockmap
-      *.dmg / *.dmg.blockmap / *.zip / *.AppImage / *.deb
-    v1.6.94/ ...                       # last 5 kept, older pruned
-
-mobile/
-  latest.json                         # { "version": "1.0.29", "apkUrl": "...", "notes": "...", "releaseUrl": "..." }
-  releases/
-    mobile-v1.0.29/
-      WorkPulse-1.0.29.apk
-    mobile-v1.0.28/ ...                # last 5 kept, older pruned
+      *.exe, *.blockmap, *.dmg, *.zip, *.AppImage, *.deb
+  mobile/                              # optional direct-download channel
+    latest.json
+    releases/mobile-v2.0.73/
+      AINO-2.0.73.apk
 ```
 
-Update flow after migration:
+Versioned objects are immutable and may be cached for one year. Stable pointer
+files such as `latest.json` must use `Cache-Control: no-cache, no-store,
+must-revalidate`.
 
-```mermaid
-flowchart TD
-    A[App launches] --> B{Channel}
-    B -->|Desktop| C[GET cdn/desktop/latest.json]
-    B -->|Mobile| D[GET cdn/mobile/latest.json]
-    C --> E[setFeedURL generic to cdn/desktop/releases/&lt;tag&gt;/]
-    E --> F[electron-updater reads latest.yml + downloads installer]
-    D --> G[Compare semver, download apkUrl, launch installer]
-```
+## 2. Current repository state
 
-Design notes:
-- `latest.json` lives at a **stable** path and is served `Cache-Control: no-cache`
-  so devices always see new versions immediately.
-- Versioned folders are **immutable** and can be cached aggressively.
-- electron-updater only needs the feed URL to point at the folder containing
-  `latest.yml`; the `path:` entries inside resolve relative to it (this is
-  exactly how the current GitHub generic feed already works — only the base URL
-  changes).
-- R2 is **S3-compatible**, so GitHub Actions can use the preinstalled `aws` CLI
-  with `--endpoint-url`. No new action dependency required.
+### Already implemented
 
----
+- [x] `mobile/app.config.ts` installs/configures `expo-updates`, uses the EAS
+      project `@aino/aino`, and uses the fingerprint runtime policy.
+- [x] `mobile/eas.json` defines `development`, `preview`, and `production`
+      channels.
+- [x] `mobile/app/profile.tsx` checks, downloads, and reloads EAS updates with
+      `expo-updates`.
+- [x] The old mobile APK self-updater and `UpdateChecker` component are gone.
+- [x] Desktop and mobile release workflows contain R2 upload and five-release
+      pruning jobs.
+- [x] Desktop updater code can read `desktop/latest.json` and then configure an
+      `electron-updater` generic feed.
+- [x] Mobile release artifacts have been renamed to `AINO-<version>.apk`.
 
-## 3. Phase A — Cloudflare R2 setup (one-time, manual)
+### Remaining work and known blockers
 
-1. **Create the bucket**
-   - Cloudflare Dashboard → R2 → *Create bucket* → name `workpulse-ota`.
-   - Location: Automatic.
+- [x] `aino.org.in` uses Cloudflare authoritative nameservers
+      (`aiden.ns.cloudflare.com` and `braelyn.ns.cloudflare.com`).
+- [x] `cdn.aino.org.in` resolves through Cloudflare and serves the connected R2
+      bucket over TLS. An unknown object returns Cloudflare's R2 404 page.
+- [x] The bucket, cache configuration, scoped credentials, and GitHub Actions
+      values are configured (account configuration confirmed by the owner).
+- [x] Desktop ships `https://cdn.aino.org.in` as its default update origin while
+      retaining a temporary GitHub discovery fallback for transition.
+- [x] Desktop no longer fetches release notes from GitHub; it uses updater
+      manifest metadata and accepts empty notes.
+- [x] Stale mobile `EXPO_PUBLIC_OTA_BASE_URL` configuration and APK self-updater
+      documentation have been removed.
 
-2. **Expose it publicly via a custom domain** (recommended over the `r2.dev`
-   dev URL, which is rate-limited and not meant for production):
-   - Bucket → *Settings* → *Public access* → *Connect Domain* → e.g.
-     `cdn.workpulse.app` (must be a zone in your Cloudflare account).
-   - This creates the CDN-cached public origin. Note the base URL — call it
-     `R2_PUBLIC_BASE_URL` (e.g. `https://cdn.workpulse.app`).
-   - (Alternative for testing only: enable the `r2.dev` URL and use that as the
-     base.)
+### Execution status (follow in this order)
 
-3. **Set a default cache rule** (optional but nice): add a Cache Rule for
-   `cdn.workpulse.app/*/latest.json` → *Bypass cache* (belt-and-suspenders with
-   the per-object `no-cache` header set at upload time).
+| Order | Action | Owner/status |
+| --- | --- | --- |
+| 1 | Move the `aino.org.in` DNS zone to Cloudflare without changing `www` behavior | **Complete and publicly verified** |
+| 2 | Create `aino-releases` and connect `cdn.aino.org.in` | **Complete and publicly verified** |
+| 3 | Configure cache, scoped R2 credentials, and GitHub Actions values | **Complete — owner confirmed** |
+| 4 | Ship the desktop R2 default and remove private-GitHub note lookup | **Implemented locally** |
+| 5 | Clean stale mobile OTA configuration/docs | **Implemented locally** |
+| 6 | Publish and verify two transitional desktop releases | **Next — merge these changes, then tag** |
+| 7 | Make GitHub optional/private and harden R2 publishing | Manual/code follow-up after successful transition |
 
-4. **Create an R2 API token** (Account → R2 → *Manage R2 API Tokens* →
-   *Create API token*):
-   - Permissions: **Object Read & Write**, scoped to the `workpulse-ota` bucket.
-   - Save: **Access Key ID**, **Secret Access Key**, and your **Account ID**.
-   - S3 endpoint is `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`.
+Public verification on 2026-07-29 found:
 
-5. **CORS** (only needed because the mobile app fetches `latest.json` and the
-   APK via `fetch`/download from a different origin). Bucket → *Settings* →
-   *CORS policy*:
-   ```json
-   [
-     {
-       "AllowedOrigins": ["*"],
-       "AllowedMethods": ["GET", "HEAD"],
-       "AllowedHeaders": ["*"],
-       "MaxAgeSeconds": 3600
-     }
-   ]
+- the Cloudflare nameservers above are authoritative;
+- `https://www.aino.org.in/` returns HTTP 200 with Railway response headers;
+- `https://cdn.aino.org.in/does-not-exist` returns the Cloudflare R2 object 404;
+- both update pointer paths return 404 because no R2 release has been published
+  yet. The first transitional release must create `desktop/latest.json`.
+
+GitHub configuration values cannot be read back publicly, and the local GitHub
+CLI was not authenticated during verification. Their presence and values are
+therefore recorded as owner-confirmed; the fail-closed `r2-config` job performs
+the authoritative check during the first release.
+
+Do not make the GitHub repository private until the CDN setup is complete and
+the transitional release in Step 8 has been verified on real installations.
+
+## 3. Step 1 — Move authoritative DNS to Cloudflare
+
+Cloudflare R2's production custom-domain integration only accepts a domain in an
+active Cloudflare zone. A CNAME at GoDaddy pointing to an `r2.dev` URL is not a
+supported substitute; `r2.dev` is rate-limited and intended only for testing.
+
+1. In Cloudflare, select **Add a domain** and enter `aino.org.in`.
+2. Let Cloudflare import the existing DNS records.
+3. Before changing nameservers, compare every imported record with GoDaddy.
+   At minimum, preserve:
+   - `www` CNAME → `isyoncpi.up.railway.app`
+   - apex/root forwarding or records used for `aino.org.in`
+   - all MX, SPF, DKIM, DMARC, verification, and other TXT records
+   - any server, mail, TURN, or other application subdomains
+4. For the Railway `www` CNAME, start with **DNS only** while validating. Proxying
+   can be enabled later only after HTTP and WebSocket behavior is confirmed.
+5. At the registrar, replace the GoDaddy nameservers with the two nameservers
+   assigned by Cloudflare.
+6. Wait until Cloudflare reports the zone as **Active**.
+7. Verify the existing app before touching R2:
+
+   ```bash
+   nslookup -type=ns aino.org.in
+   nslookup www.aino.org.in
+   curl -I https://www.aino.org.in/
+   curl -I https://www.aino.org.in/api/health
    ```
-   (electron-updater on desktop is a Node HTTP client and is not subject to CORS,
-   but this is harmless and helps the mobile/web cases.)
 
----
+   Use the real health endpoint if `/api/health` is not defined. Also open the
+   web app and test login plus one WebSocket-driven feature.
 
-## 4. Phase B — GitHub repository secrets & variables
+Do not manually create `cdn` at GoDaddy before this move. After the zone is
+active, connecting the R2 custom domain in Step 2 lets Cloudflare create and
+manage the correct record and certificate. As verified on 2026-07-29, the live
+baseline is `www` CNAME → `isyoncpi.up.railway.app`; preserve that exact record.
 
-Add under *Settings → Secrets and variables → Actions*:
+**Exit criterion:** Cloudflare is authoritative and `www.aino.org.in` still
+serves the existing application without an API or WebSocket regression.
 
-**Secrets**
-| Name | Value |
-| --- | --- |
-| `R2_ACCOUNT_ID` | Cloudflare account id |
-| `R2_ACCESS_KEY_ID` | R2 API token access key id |
-| `R2_SECRET_ACCESS_KEY` | R2 API token secret |
+## 4. Step 2 — Create and expose the R2 bucket
 
-**Variables** (non-secret, so they can also be baked into client builds)
-| Name | Value |
-| --- | --- |
-| `R2_BUCKET` | `workpulse-ota` |
-| `R2_PUBLIC_BASE_URL` | `https://cdn.workpulse.app` |
+1. Cloudflare Dashboard → **R2 Object Storage** → **Create bucket**.
+2. Use `aino-releases` as the bucket name. Keeping an existing bucket name is
+   also valid; the exact value must match the GitHub `R2_BUCKET` variable.
+3. Leave location as Automatic unless there is a specific residency need.
+4. Bucket → **Settings** → **Custom Domains** → **Connect Domain**.
+5. Enter `cdn.aino.org.in` and complete the connection. Cloudflare creates and
+   manages the necessary DNS record and TLS certificate.
+6. Do not enable the public `r2.dev` URL for production. It may be temporarily
+   enabled for a smoke test, then disabled after the custom domain works.
+7. Verify TLS and the host (a missing object should return an R2/Cloudflare 404,
+   not Railway content):
 
-> Keep existing secrets (`GOOGLE_API_KEY`, `ANDROID_GOOGLE_SERVICES_JSON`) —
-> they are unrelated to this migration.
+   ```bash
+   curl -I https://cdn.aino.org.in/does-not-exist
+   ```
 
----
+**Exit criterion:** `cdn.aino.org.in` resolves over HTTPS to the R2 bucket while
+`www.aino.org.in` remains unchanged.
 
-## 5. Phase C — Reusable R2 upload + prune logic
+## 5. Step 3 — Configure cache and CORS
 
-Both workflows share the same upload/manifest/prune sequence. The snippet below
-is the canonical implementation; the per-channel sections plug their own paths
-into it. R2's S3 API is used via the runner's preinstalled `aws` CLI.
+### Cache
 
-Common env block (per job):
-```yaml
-env:
-  AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-  AWS_DEFAULT_REGION: auto
-  AWS_REQUEST_CHECKSUM_CALCULATION: when_required   # R2 rejects newer aws-cli default checksums; see note
-  AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-  R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-  R2_BUCKET: ${{ vars.R2_BUCKET }}
-  R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+The workflows already upload versioned assets with:
+
+```text
+Cache-Control: public, max-age=31536000, immutable
 ```
 
-> **aws-cli + R2 checksum note:** recent `aws-cli` v2 versions send
-> `x-amz-checksum-*` headers that R2 can reject with `501 Not Implemented`. The
-> two `*_CHECKSUM_*=when_required` env vars above disable that. If the runner's
-> `aws` is older and doesn't recognise them, they're simply ignored.
+and stable pointer manifests with:
 
-Generic prune helper (keep newest 5 version folders under a prefix):
-```bash
-# usage: prune_releases <s3-prefix> <grep-pattern>
-#   prune_releases "desktop/releases" '^v[0-9]'
-#   prune_releases "mobile/releases"  '^mobile-v[0-9]'
-prune_releases() {
-  local prefix="$1" pat="$2" keep=5
-  local all sorted total remove
-  all=$(aws s3 ls "s3://${R2_BUCKET}/${prefix}/" --endpoint-url "$R2_ENDPOINT" \
-        | awk '{print $2}' | sed 's#/##' | grep -E "$pat" || true)
-  [ -z "$all" ] && { echo "Nothing under ${prefix} to prune"; return 0; }
-  sorted=$(echo "$all" | sort -V)
-  total=$(echo "$sorted" | grep -c .)
-  if [ "$total" -le "$keep" ]; then
-    echo "Only ${total} releases under ${prefix}; keeping all"
-    return 0
-  fi
-  remove=$(echo "$sorted" | head -n $((total - keep)))
-  for r in $remove; do
-    echo "Pruning old release: ${prefix}/${r}"
-    aws s3 rm "s3://${R2_BUCKET}/${prefix}/${r}/" --recursive --endpoint-url "$R2_ENDPOINT"
-  done
-}
+```text
+Cache-Control: no-cache, no-store, must-revalidate
 ```
 
----
+Add a Cloudflare Cache Rule for host `cdn.aino.org.in`:
 
-## 6. Phase D — Desktop workflow changes (`.github/workflows/desktop-release.yml`)
+- If URI path ends with `/latest.json`: **Bypass cache**.
+- Optionally cache all other eligible R2 object types, respecting origin cache
+  control. Cloudflare does not cache every file type by default.
 
-The existing `build` job already stages installers as artifacts
-(`installers-<os>`). Add a new `publish-r2` job that runs **after** `build`
-(in parallel with, or instead of, `release-notes`).
+Do not purge immutable version folders during a normal release. If a released
+binary is wrong, publish a new version instead of overwriting the old folder.
 
-```yaml
-  publish-r2:
-    needs: [validate, build]
-    runs-on: ubuntu-latest
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: auto
-      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-      R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-      R2_BUCKET: ${{ vars.R2_BUCKET }}
-      VERSION: ${{ needs.validate.outputs.version }}
-    steps:
-      - name: Download all installers
-        uses: actions/download-artifact@v4
-        with:
-          pattern: installers-*
-          path: installers
-          merge-multiple: true
+### CORS
 
-      - name: Upload release assets to R2 (immutable, long cache)
-        run: |
-          set -euo pipefail
-          TAG="v${VERSION}"
-          DEST="s3://${R2_BUCKET}/desktop/releases/${TAG}/"
-          echo "Uploading $(ls -1 installers | wc -l) files to ${DEST}"
-          # Installers/blockmaps: cache forever (folder is immutable).
-          aws s3 cp installers/ "$DEST" --recursive \
-            --endpoint-url "$R2_ENDPOINT" \
-            --cache-control "public, max-age=31536000, immutable" \
-            --exclude "*.yml" --exclude "*.yaml"
-          # latest*.yml: still inside the versioned folder, but mark no-cache so a
-          # re-published same-version build is picked up.
-          aws s3 cp installers/ "$DEST" --recursive \
-            --endpoint-url "$R2_ENDPOINT" \
-            --content-type "text/yaml" \
-            --cache-control "no-cache" \
-            --exclude "*" --include "*.yml" --include "*.yaml"
+Electron and React Native native networking are not browser CORS clients, so
+CORS is not required for the current desktop updater or EAS Update. Configure
+read-only CORS only if browser pages will fetch files from the CDN:
 
-      - name: Write desktop latest.json (stable pointer, no-cache)
-        run: |
-          set -euo pipefail
-          printf '{"version":"%s","tag":"v%s"}' "$VERSION" "$VERSION" > latest.json
-          aws s3 cp latest.json "s3://${R2_BUCKET}/desktop/latest.json" \
-            --endpoint-url "$R2_ENDPOINT" \
-            --content-type "application/json" \
-            --cache-control "no-cache, no-store, must-revalidate"
-
-      - name: Prune old desktop releases (keep newest 5)
-        run: |
-          set -euo pipefail
-          all=$(aws s3 ls "s3://${R2_BUCKET}/desktop/releases/" --endpoint-url "$R2_ENDPOINT" \
-                | awk '{print $2}' | sed 's#/##' | grep -E '^v[0-9]' || true)
-          sorted=$(echo "$all" | sort -V); total=$(echo "$sorted" | grep -c . || true)
-          if [ "${total:-0}" -gt 5 ]; then
-            for r in $(echo "$sorted" | head -n $((total - 5))); do
-              echo "Pruning desktop/releases/${r}"
-              aws s3 rm "s3://${R2_BUCKET}/desktop/releases/${r}/" --recursive --endpoint-url "$R2_ENDPOINT"
-            done
-          else
-            echo "Only ${total:-0} desktop releases; keeping all"
-          fi
-```
-
-The `release-notes` job (GitHub Release creation) is now **optional**. Keep it
-for human-readable changelogs/history, or delete it. It no longer drives
-delivery.
-
-> No change is needed to `electron-builder.yml` for runtime correctness — the
-> generated `latest.yml` references installers by relative `path:`. Optionally
-> switch `publish.provider` to `generic` with
-> `url: ${R2_PUBLIC_BASE_URL}/desktop/releases/${version}/` for cleaner
-> semantics, but it is not required since the desktop app sets the feed URL at
-> runtime (see Phase F).
-
----
-
-## 7. Phase E — Mobile workflow changes (`.github/workflows/mobile-release.yml`)
-
-The `build` job already stages `release-assets/WorkPulse-<version>.apk` as the
-`mobile-apk` artifact. Add an R2 publish job:
-
-```yaml
-  publish-r2:
-    needs: [validate, build]
-    runs-on: ubuntu-latest
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: auto
-      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
-      R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-      R2_BUCKET: ${{ vars.R2_BUCKET }}
-      R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
-      VERSION: ${{ needs.validate.outputs.version }}
-    steps:
-      - uses: actions/checkout@v6
-        with: { fetch-depth: 0 }
-
-      - name: Download APK artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mobile-apk
-          path: release-assets
-
-      - name: Upload APK to R2
-        run: |
-          set -euo pipefail
-          TAG="mobile-v${VERSION}"
-          APK="release-assets/WorkPulse-${VERSION}.apk"
-          test -f "$APK" || { echo "::error::Missing $APK"; exit 1; }
-          aws s3 cp "$APK" "s3://${R2_BUCKET}/mobile/releases/${TAG}/WorkPulse-${VERSION}.apk" \
-            --endpoint-url "$R2_ENDPOINT" \
-            --content-type "application/vnd.android.package-archive" \
-            --cache-control "public, max-age=31536000, immutable"
-
-      - name: Build release notes JSON
-        id: notes
-        run: |
-          set -euo pipefail
-          PREV_TAG=$(git tag --sort=-creatordate | grep '^mobile-v' | sed -n '2p' || true)
-          NOTES=""
-          if [ -n "$PREV_TAG" ]; then
-            NOTES=$(git log "${PREV_TAG}"..HEAD --pretty=format:'- %s' --no-merges | head -30 || true)
-          fi
-          # JSON-escape the notes safely with jq.
-          jq -n \
-            --arg version "$VERSION" \
-            --arg apkUrl  "${R2_PUBLIC_BASE_URL}/mobile/releases/mobile-v${VERSION}/WorkPulse-${VERSION}.apk" \
-            --arg notes   "$NOTES" \
-            --arg releaseUrl "${R2_PUBLIC_BASE_URL}/mobile/releases/mobile-v${VERSION}/" \
-            '{version:$version, apkUrl:$apkUrl, notes:$notes, releaseUrl:$releaseUrl}' \
-            > latest.json
-          cat latest.json
-
-      - name: Write mobile latest.json (stable pointer, no-cache)
-        run: |
-          aws s3 cp latest.json "s3://${R2_BUCKET}/mobile/latest.json" \
-            --endpoint-url "$R2_ENDPOINT" \
-            --content-type "application/json" \
-            --cache-control "no-cache, no-store, must-revalidate"
-
-      - name: Prune old mobile releases (keep newest 5)
-        run: |
-          set -euo pipefail
-          all=$(aws s3 ls "s3://${R2_BUCKET}/mobile/releases/" --endpoint-url "$R2_ENDPOINT" \
-                | awk '{print $2}' | sed 's#/##' | grep -E '^mobile-v[0-9]' || true)
-          sorted=$(echo "$all" | sort -V); total=$(echo "$sorted" | grep -c . || true)
-          if [ "${total:-0}" -gt 5 ]; then
-            for r in $(echo "$sorted" | head -n $((total - 5))); do
-              echo "Pruning mobile/releases/${r}"
-              aws s3 rm "s3://${R2_BUCKET}/mobile/releases/${r}/" --recursive --endpoint-url "$R2_ENDPOINT"
-            done
-          else
-            echo "Only ${total:-0} mobile releases; keeping all"
-          fi
-```
-
-Keep or drop the existing GitHub `release` job as desired (history vs. pure R2).
-
----
-
-## 8. Phase F — App runtime code changes
-
-### 8.1 Desktop (`desktop/updater.ts`)
-
-Replace the GitHub-API discovery with a tiny `latest.json` fetch from R2.
-
-- Add a constant for the base URL (hardcode it, or read from an env baked at
-  build time):
-  ```ts
-  const OTA_BASE_URL = "https://cdn.workpulse.app"; // R2 public custom domain
-  ```
-- Replace `resolveLatestDesktopTag()` body: instead of
-  `GET api.github.com/.../releases`, do
-  `GET ${OTA_BASE_URL}/desktop/latest.json` and return its `.tag`
-  (e.g. `"v1.6.95"`). Keep the same null-on-failure contract.
-- Update `pointFeedAtLatestDesktopRelease()` to point at R2:
-  ```ts
-  autoUpdater.setFeedURL({
-    provider: "generic",
-    url: `${OTA_BASE_URL}/desktop/releases/${tag}/`,
-  });
-  ```
-- The rest of `setupUpdater()` (autoDownload, retries, IPC events) is unchanged
-  because electron-updater still just reads `latest.yml` from the feed folder.
-- `GITHUB_OWNER` / `GITHUB_REPO` / `DESKTOP_TAG_RE` / the releases-API plumbing
-  can be deleted once nothing references them.
-
-### 8.2 Mobile (`mobile/src/updater.ts`)
-
-Replace the GitHub releases-API call in `checkForMobileUpdate()` with a single
-`latest.json` fetch. `downloadAndInstallApk()` is unchanged (it already takes an
-arbitrary `apkUrl`).
-
-- Add the base URL via Expo public env so it can vary per build:
-  ```ts
-  const OTA_BASE_URL =
-    process.env.EXPO_PUBLIC_OTA_BASE_URL || "https://cdn.workpulse.app";
-  ```
-  …and set `EXPO_PUBLIC_OTA_BASE_URL` in the mobile workflow `build` job env
-  (alongside `EXPO_PUBLIC_API_BASE_URL`).
-- New `checkForMobileUpdate()` shape:
-  ```ts
-  const res = await fetch(`${OTA_BASE_URL}/mobile/latest.json`, {
-    headers: { Accept: "application/json" },
-    cache: "no-store",
-  });
-  if (!res.ok) return { available: false, currentVersion, reason: "error" };
-  const latest = (await res.json()) as {
-    version: string; apkUrl: string; notes?: string; releaseUrl?: string;
-  };
-  if (compareSemver(latest.version, currentVersion) <= 0) {
-    return { available: false, currentVersion, version: latest.version, reason: "up-to-date" };
+```json
+[
+  {
+    "AllowedOrigins": ["https://www.aino.org.in"],
+    "AllowedMethods": ["GET", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "MaxAgeSeconds": 3600
   }
-  return {
-    available: true,
-    version: latest.version,
-    currentVersion,
-    notes: cleanReleaseNotes(latest.notes || ""),
-    apkUrl: latest.apkUrl,
-    releaseUrl: latest.releaseUrl,
-  };
-  ```
-- `GITHUB_OWNER` / `GITHUB_REPO` / `MOBILE_TAG_RE` / `GitHubRelease` /
-  `GitHubAsset` / the per-asset `.apk` scan can be removed once unused.
-- `MobileUpdateInfo` and `UpdateChecker.tsx` need **no** changes — the public
-  shape (`apkUrl`, `notes`, `releaseUrl`, `reason`) is preserved.
-
-> **Version skew safety:** ship the runtime change (Phase F) **before** making
-> the repo private, in a release that is still delivered via GitHub. Otherwise
-> already-installed apps still pointing at GitHub will stop seeing updates the
-> moment the repo flips private. See rollout order below.
-
----
-
-## 9. Phase G — Rollout order (critical)
-
-Because installed apps only learn the new update source *after* they install a
-build that contains the Phase F code, the source switch must lead the repo
-privacy flip:
-
-1. **Implement** Phase A–F on a branch. R2 bucket live and reachable.
-2. **Publish a transitional release** (`v` and `mobile-v`) that:
-   - still uploads to GitHub Releases (so currently-installed apps update), **and**
-   - also uploads to R2 (so new installs work), **and**
-   - contains the Phase F runtime code that reads from R2.
-   Run both the old GitHub upload steps and the new R2 steps for this one release.
-3. **Verify** real devices on the transitional build successfully fetch from R2
-   (watch desktop updater logs / mobile UpdateChecker; confirm `latest.json` and
-   asset 200s in Cloudflare analytics).
-4. **Publish one more release delivered only via R2** and confirm both channels
-   update end-to-end from R2 only.
-5. **Make the repo private.** Optionally remove the GitHub upload steps from both
-   workflows.
-6. Decommission reliance on `api.github.com` (already removed in Phase F).
-
-Devices still on a pre-transitional build will be stranded on GitHub and must be
-updated manually once (download the new installer/APK directly from R2). This is
-unavoidable for the very first cutover.
-
----
-
-## 10. Phase H — Verification checklist
-
-- [ ] `curl -I https://cdn.workpulse.app/desktop/latest.json` → `200`,
-      `cache-control: no-cache`.
-- [ ] `curl -I https://cdn.workpulse.app/desktop/releases/v<ver>/latest.yml` → `200`.
-- [ ] Desktop app (older version) launched → updater logs show feed pinned to
-      `cdn.../desktop/releases/v<new>/`, downloads, prompts, installs.
-- [ ] `curl https://cdn.workpulse.app/mobile/latest.json` → correct `version` +
-      `apkUrl`.
-- [ ] Mobile app (older version) → UpdateChecker modal appears, APK downloads
-      with progress, installer launches.
-- [ ] After a 6th release, `aws s3 ls .../desktop/releases/` and
-      `.../mobile/releases/` show exactly **5** version folders each.
-- [ ] Repo set to **private**; a fresh device still updates from R2.
-
----
-
-## 11. Task list (tracking)
-
-### Cloudflare
-- [ ] Create R2 bucket `workpulse-ota`.
-- [ ] Attach public custom domain `cdn.workpulse.app` (note `R2_PUBLIC_BASE_URL`).
-- [ ] Add CORS policy (GET/HEAD, `*`).
-- [ ] Create scoped R2 API token (Object Read & Write).
-- [ ] (Optional) Cache rule: bypass cache for `*/latest.json`.
-
-### GitHub config
-- [ ] Add secrets `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`.
-- [ ] Add variables `R2_BUCKET`, `R2_PUBLIC_BASE_URL`.
-
-### Desktop
-- [ ] Add `publish-r2` job to `desktop-release.yml` (upload + latest.json + prune).
-- [ ] Update `desktop/updater.ts`: `OTA_BASE_URL`, read `desktop/latest.json`,
-      point feed at R2 folder; remove GitHub API code.
-- [ ] (Optional) Keep/trim `release-notes` GitHub job.
-
-### Mobile
-- [ ] Add `publish-r2` job to `mobile-release.yml` (upload + latest.json + prune).
-- [ ] Add `EXPO_PUBLIC_OTA_BASE_URL` to mobile build job env.
-- [ ] Update `mobile/src/updater.ts`: read `mobile/latest.json`; remove GitHub
-      API code. (`UpdateChecker.tsx` untouched.)
-- [ ] (Optional) Keep/trim `release` GitHub job.
-
-### Cutover
-- [ ] Ship transitional release to BOTH GitHub + R2 (contains Phase F code).
-- [ ] Verify devices update from R2.
-- [ ] Ship an R2-only release; verify.
-- [ ] Make repo private.
-- [ ] Remove GitHub upload steps (optional).
-
----
-
-## 12. Cost & operational notes
-
-- **Storage:** ~5 desktop releases × (~3 platforms × ~100–250 MB) + 5 APKs
-  (~80–150 MB each) ≈ a few GB. R2 free tier is 10 GB storage; well within it.
-- **Egress:** R2 has **zero egress fees** — the main reason it beats S3/GitHub
-  bandwidth for an OTA CDN.
-- **Class A ops** (writes/lists/deletes) happen only on release; negligible.
-- **Class B ops** (reads) are cheap and the first 10M/month are free.
-- Pruning keeps cost flat over time.
-- **Integrity:** consider also uploading the existing `checksums.txt` per release
-  and/or embedding SHA-256 in `latest.json`; electron-updater already verifies
-  via `latest.yml`'s `sha512`. For mobile you may add an optional checksum field
-  later and verify post-download before launching the installer.
+]
 ```
 
+Prefer the explicit website origin over `*`.
+
+## 6. Step 4 — Create least-privilege R2 credentials
+
+1. Cloudflare Dashboard → **R2** → **Manage R2 API Tokens**.
+2. Create a token with **Object Read & Write** scoped only to `aino-releases`.
+3. Record the Access Key ID and Secret Access Key once.
+4. Record the Cloudflare Account ID.
+5. Do not expose these values in source, logs, Expo public variables, or GitHub
+   repository variables.
+
+The S3 endpoint used by CI is:
+
+```text
+https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
+```
+
+Rotate the token immediately if a credential is printed or committed.
+
+## 7. Step 5 — Configure GitHub Actions
+
+Repository → **Settings** → **Secrets and variables** → **Actions**.
+
+### Secrets
+
+| Name | Value |
+| --- | --- |
+| `R2_ACCOUNT_ID` | Cloudflare account ID |
+| `R2_ACCESS_KEY_ID` | Scoped R2 token access key |
+| `R2_SECRET_ACCESS_KEY` | Scoped R2 token secret |
+
+### Variables
+
+| Name | Value |
+| --- | --- |
+| `R2_BUCKET` | `aino-releases` (or the actual bucket name) |
+| `R2_PUBLIC_BASE_URL` | `https://cdn.aino.org.in` (no trailing slash) |
+
+The desktop workflow now fails its `r2-config` job when any required secret or
+variable is absent, or when `R2_PUBLIC_BASE_URL` is not exactly
+`https://cdn.aino.org.in`. Mobile R2 publishing remains an optional APK mirror
+and may still skip when R2 configuration is unavailable.
+
+**Exit criterion:** all five names exist, secrets are masked, and
+`R2_PUBLIC_BASE_URL` contains exactly `https://cdn.aino.org.in`.
+
+## 8. Step 6 — Finish the desktop implementation
+
+These code changes were completed locally on 2026-07-29; retain this checklist
+for review before the first transitional release:
+
+1. [x] In `desktop/updater.ts`, give production builds a shipped default:
+
+   ```ts
+   const OTA_BASE_URL = (
+     process.env.OTA_BASE_URL || "https://cdn.aino.org.in"
+   ).replace(/\/+$/, "");
+   ```
+
+   A generated build-time config is also acceptable. Merely setting an
+   environment variable in GitHub Actions is not sufficient unless the build
+   process explicitly substitutes it into the packaged JavaScript.
+2. [x] Keep GitHub resolution as a temporary fallback for the transitional build.
+3. [x] Stop fetching release notes directly from GitHub, or accept empty release
+   notes when `latest*.yml` has none. A private repository will return 404/403 to
+   installed apps without a token.
+4. [x] Never embed a GitHub or R2 write token in the desktop app.
+5. Run:
+
+   ```powershell
+   cd D:\Learnings\WorkPulse\desktop
+   npm run typecheck
+   npm run build:main
+   ```
+
+6. Inspect compiled `desktop/updater.js` and confirm the CDN production default
+   is present.
+
+**Exit criterion:** an installed desktop app uses R2 without requiring a user to
+define `OTA_BASE_URL` on their machine.
+
+## 9. Step 7 — Clean up the mobile release path
+
+Mobile has two intentionally separate delivery paths:
+
+### EAS Update: JS and compatible assets
+
+Publish from the mobile directory:
+
+```bash
+cd mobile
+eas project:info
+eas update --channel production --message "Describe the change" --environment production
+```
+
+EAS Update can deliver only changes compatible with the installed build's
+runtime. The current fingerprint runtime policy prevents native-incompatible
+updates from reaching the wrong binary. Changes to native modules, config
+plugins, permissions, Android/iOS configuration, or native dependencies require
+a new store build.
+
+After publishing, verify the update group and monitor it:
+
+```bash
+eas update:list --branch production --json --non-interactive
+eas channel:insights --channel production --runtime-version <runtime> --json --non-interactive
+```
+
+If the production channel maps to a differently named branch, use the branch
+shown by `eas channel:view production`.
+
+### Native mobile builds
+
+- Production native delivery should be an EAS/Play Store AAB.
+- `.github/workflows/mobile-release.yml` may continue publishing a signed APK to
+  `cdn.aino.org.in/mobile/...` for testers and manual recovery.
+- The app must not download and self-install that APK. The current profile
+  update button correctly uses EAS Update.
+- [x] Remove stale `EXPO_PUBLIC_OTA_BASE_URL` from the mobile workflow because no
+  mobile source consumes it.
+- [x] Update `mobile/RELEASE.md` to remove references to `mobile/src/updater.ts`,
+  `UpdateChecker`, debug signing, and `WorkPulse-<version>.apk`.
+
+The optional `mobile/latest.json` is a download-page manifest, not an EAS Update
+manifest and not the source used by `expo-updates`.
+
+## 10. Step 8 — Publish a transitional desktop release
+
+This order is mandatory if the GitHub repository will become private.
+
+1. Finish Steps 1–7 on the default branch.
+2. Bump `desktop/package.json` and create the matching `vX.Y.Z` tag.
+3. Push the tag. The current workflow should publish the same installers to both
+   R2 and GitHub Releases. R2 upload and public-pointer verification must succeed
+   before the GitHub Release job is allowed to publish.
+4. In the workflow log, confirm:
+   - `r2-config` reports `enabled=true`;
+   - `publish-r2` uploads installers and all `latest*.yml` files;
+   - `desktop/latest.json` is written last;
+   - the public-pointer verification step matches the uploaded JSON through
+     `https://cdn.aino.org.in`;
+   - pruning retains the newest five version directories.
+5. Test an older desktop installation that still discovers the transitional
+   release through GitHub. Install it.
+6. From the transitional build, trigger another update check and confirm logs
+   reference `https://cdn.aino.org.in/desktop/...`.
+7. Publish one more desktop version and verify the transitional build discovers,
+   downloads, and installs it from R2.
+
+Only after both releases work may GitHub delivery be considered optional.
+
+## 11. Step 9 — Verification commands
+
+Replace placeholders with a release produced by the workflows.
+
+```bash
+# DNS and TLS
+nslookup cdn.aino.org.in
+curl -I https://cdn.aino.org.in/desktop/latest.json
+
+# Desktop pointer and feed
+curl -fsS https://cdn.aino.org.in/desktop/latest.json
+curl -I https://cdn.aino.org.in/desktop/releases/v<version>/latest.yml
+
+# Optional sideload APK
+curl -fsS https://cdn.aino.org.in/mobile/latest.json
+curl -I https://cdn.aino.org.in/mobile/releases/mobile-v<version>/AINO-<version>.apk
+```
+
+Expected results:
+
+- [ ] `desktop/latest.json` is HTTP 200, valid JSON, and identifies the release
+      folder that actually exists.
+- [ ] Pointer responses are not stored by the CDN/browser cache.
+- [ ] Versioned installer responses are HTTP 200 and immutable-cacheable.
+- [ ] `latest*.yml` paths and SHA-512 metadata match uploaded installers.
+- [ ] Windows, macOS, and Linux checks use the correct platform manifest.
+- [ ] An older desktop build updates completely from R2.
+- [ ] `www.aino.org.in`, `/api`, and WebSockets still work.
+- [ ] A production mobile build receives a compatible EAS Update.
+- [ ] A native mobile change is delivered through a new binary, not EAS Update.
+- [ ] After a sixth release, each R2 channel retains only five version folders.
+
+## 12. Step 10 — Cut over and harden
+
+After the transitional and R2-only desktop releases pass:
+
+1. Make the GitHub repository private if desired.
+2. Verify a fresh desktop install and an existing install can update while logged
+   out of GitHub.
+3. Remove desktop GitHub release discovery and HTML scraping. Retaining GitHub
+   Releases for internal changelog/history is optional.
+4. Change desktop release CI so missing R2 configuration is a hard failure.
+5. Keep GitHub Actions artifacts long enough for recovery even if public GitHub
+   Releases are removed.
+6. Add a scheduled monitor for:
+   - `https://cdn.aino.org.in/desktop/latest.json` availability and JSON shape;
+   - the referenced `latest*.yml` and installer objects;
+   - certificate expiry/TLS failures;
+   - accidental cache storage of `latest.json`.
+7. Rotate the R2 token on an operational schedule and whenever maintainers with
+   access leave the project.
+
+Old desktop installations that never receive the transitional build still point
+to GitHub and may be stranded after privatization. Keep a public recovery link
+to the latest signed installer on `cdn.aino.org.in` and document the one-time
+manual upgrade.
+
+## 13. Rollback procedures
+
+### Bad EAS Update
+
+1. Stop further publishing.
+2. In the EAS dashboard, republish the last known-good update to the production
+   branch, or use the current EAS CLI republish/rollback command shown by
+   `eas update --help` for that branch.
+3. Monitor update insights for launch failures/crashes and adoption.
+4. If the issue needs native code, publish a new binary; an OTA rollback cannot
+   change the installed native runtime.
+
+### Bad desktop release
+
+Do not overwrite an immutable release folder.
+
+1. Restore `desktop/latest.json` to the previous known-good `{version, tag}` or
+   publish a new patch release.
+2. Purge only `desktop/latest.json` from Cloudflare cache if necessary.
+3. Confirm the referenced folder and `latest*.yml` are still present before
+   announcing rollback completion.
+
+### R2/custom-domain outage
+
+1. Keep the GitHub fallback during the transition period.
+2. Check Cloudflare DNS, certificate status, bucket custom-domain status, and R2
+   service health.
+3. Do not point `cdn.aino.org.in` at `r2.dev`; Cloudflare documents that CNAME
+   path as unsupported.
+4. If necessary, distribute the signed desktop installer manually while the
+   stable R2 endpoint is restored.
+
+## 14. Security and cost notes
+
+- Public read access is intentional: updater artifacts cannot require a secret
+  embedded in client applications.
+- R2 API credentials are CI-only and bucket-scoped.
+- `electron-updater` verifies installer integrity using SHA-512 data in the YAML
+  manifest. Keep platform signing/notarization in addition to checksum checks.
+- A public APK must be production-signed, but Android signing alone does not make
+  self-installation an appropriate Play Store update mechanism.
+- Five desktop releases across three platforms can consume several GB. Review
+  current Cloudflare R2 pricing and actual object sizes rather than relying on
+  historical free-tier figures.
+- EAS Update is a separate paid service with plan limits; R2 storage does not
+  replace or proxy EAS Update traffic.
+
+## 15. Completion checklist
+
+- [x] Cloudflare is authoritative for `aino.org.in`; the owner confirmed the DNS
+      migration preserved the required records.
+- [x] `www.aino.org.in` serves the Railway application over Cloudflare.
+- [x] R2 bucket exists and `https://cdn.aino.org.in` is connected with valid TLS.
+- [x] Cache rules protect stable pointers and cache immutable release assets
+      (owner-confirmed; response headers will be checked after first publish).
+- [x] Scoped R2 credentials and GitHub variables are configured (owner-confirmed;
+      the first `r2-config` job is the CI verification).
+- [x] Desktop ships `https://cdn.aino.org.in` as its production update origin.
+- [ ] Transitional desktop release updates from GitHub, then the next release
+      updates from R2.
+- [ ] Desktop updater no longer depends on unauthenticated GitHub APIs before the
+      repository becomes private.
+- [x] Mobile JS OTA uses EAS Update; native updates use a new store binary.
+- [x] Stale mobile self-updater configuration/documentation is removed.
+- [ ] Rollback and recovery procedures have been tested once.
+
+## References
+
+- Cloudflare R2 public buckets and custom domains:
+  <https://developers.cloudflare.com/r2/buckets/public-buckets/>
+- Expo EAS Update introduction:
+  <https://docs.expo.dev/eas-update/introduction/>
