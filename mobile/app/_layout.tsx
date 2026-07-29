@@ -18,6 +18,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../src/auth/AuthContext";
 import ImpersonationBanner from "../src/components/ImpersonationBanner";
+import UpdateChecker from "../src/components/UpdateChecker";
 import IncomingCallListener from "../src/realtime/IncomingCallListener";
 import MeetingStartedListener from "../src/realtime/MeetingStartedListener";
 import RealtimeSoundListener from "../src/realtime/RealtimeSoundListener";
@@ -465,6 +466,7 @@ export default function RootLayout() {
                   <ChatOutboxSync />
                   <OngoingCallBanner />
                   <ImpersonationBanner />
+                  <UpdateChecker />
                 </>
               )}
               <ThemedStack />

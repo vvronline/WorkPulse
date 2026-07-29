@@ -1,12 +1,12 @@
 import type { ExpoConfig, ConfigContext } from "expo/config";
 // Single source of truth for the app version. The mobile release workflow
-// validates that the `mobile-vX.Y.Z` tag matches this value, and EAS Update
+// validates that the `mobile-vX.Y.Z` tag matches this value, and the R2 updater
 // surfaces it on the Profile screen — so it MUST reflect the real shipped version
 // (previously this was hardcoded to "1.0.0" which broke update comparisons).
 import { version as APP_VERSION } from "./package.json";
 
 // Default backend targets. Override per-build via environment variables
-// (EAS secrets / .env) without touching source.
+// (CI secrets / .env) without touching source.
 // Must be the `www.` host: the apex `aino.org.in` is a registrar redirect and
 // is NOT served by Railway (it 404s on /api). The legacy Railway origin still
 // resolves to the same server and must stay alive for already-installed builds
@@ -29,35 +29,24 @@ const ANDROID_GOOGLE_SERVICES_FILE =
 const ANDROID_NATIVE_CALL_UI =
   process.env.EXPO_PUBLIC_ANDROID_NATIVE_CALL_UI === "true";
 
-// EAS project id (@aino/aino) — required for EAS Update: the OTA
-// manifest lives at https://u.expo.dev/<projectId>. This project already
-// existed and was renamed to @aino/aino on EAS, so the id is stable and carries
-// the build history -- it is NOT re-created by `eas init`. Overridable by env
-// so CI can target a different project without editing source.
-const EAS_PROJECT_ID =
-  process.env.EAS_PROJECT_ID || "dcccf532-ce8b-431c-bb2d-bc99866d14fd";
+const versionParts = APP_VERSION.split(".").map(Number);
+if (
+  versionParts.length !== 3 ||
+  versionParts.some((part) => !Number.isInteger(part) || part < 0 || part > 999)
+) {
+  throw new Error(`mobile/package.json version must be numeric X.Y.Z: ${APP_VERSION}`);
+}
+// Android compares this integer, not versionName, when replacing an installed APK.
+const ANDROID_VERSION_CODE =
+  versionParts[0] * 1_000_000 + versionParts[1] * 1_000 + versionParts[2];
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: "AINO",
-  // EAS project identity. `slug` + `owner` resolve the project on EAS servers
-  // (build history, OTA channels, credentials). Renamed from "workpulse" while
-  // the project was still UNLINKED (`eas project:info` reported "not
-  // configured"), so nothing needed migrating. See docs/AINO_EAS_MIGRATION_PLAN.md §0.
+  // Expo project identity retained for config/plugin compatibility.
   slug: "aino",
   owner: "aino",
   version: APP_VERSION,
-  // EAS Update (OTA). The "fingerprint" policy derives the runtime version from
-  // a hash of everything that affects the native layer, so the runtime bumps
-  // AUTOMATICALLY whenever a config plugin, local native module or patch
-  // changes -- this project has 9 plugins, 4 local modules and patch-package,
-  // so the "appVersion" policy would silently ship JS that calls into native
-  // code the installed binary does not have. "nativeVersion" is not an option:
-  // it is incompatible with cli.appVersionSource="remote" in eas.json.
-  runtimeVersion: { policy: "fingerprint" },
-  ...(EAS_PROJECT_ID
-    ? { updates: { url: `https://u.expo.dev/${EAS_PROJECT_ID}` } }
-    : {}),
   // "default" lets the OS/device sensor control rotation so tablets (and phones
   // with auto-rotate enabled) can switch between portrait and landscape and the
   // UI re-aligns. Previously "portrait" injected android:screenOrientation="portrait"
@@ -77,6 +66,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     bundleIdentifier: "app.aino.mobile",
   },
   android: {
+    versionCode: ANDROID_VERSION_CODE,
     // FROZEN FROM THE FIRST `eas submit` ONWARDS. A Play Store package name is
     // permanent once published; this was renamed from `app.workpulse.mobile`
     // while the app had NEVER been published (distribution was sideloaded,
@@ -121,6 +111,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       "android.permission.ACCESS_NETWORK_STATE",
       "android.permission.ACCESS_FINE_LOCATION",
       "android.permission.ACCESS_COARSE_LOCATION",
+      // Direct-distribution builds download the signed APK from R2 and hand it
+      // to Android's package installer. Remove before Play-managed distribution.
+      "android.permission.REQUEST_INSTALL_PACKAGES",
     ],
   },
   web: {
@@ -351,9 +344,5 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // P3.15 — surfaced to src/config.ts so nativeCallService can gate the
     // Android react-native-callkeep branch behind this feature flag.
     ANDROID_NATIVE_CALL_UI,
-    // Written by `eas init`. expo-updates reads the project id from here at
-    // runtime to resolve the OTA manifest, so it must match the `updates.url`
-    // above and the project that `eas update` publishes to.
-    ...(EAS_PROJECT_ID ? { eas: { projectId: EAS_PROJECT_ID } } : {}),
   },
 });
