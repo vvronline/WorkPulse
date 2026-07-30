@@ -118,7 +118,7 @@ export default function UpdateChecker() {
 function makeStyles(theme: Theme) {
   return StyleSheet.create({
     overlay: { flex: 1, justifyContent: "center", padding: 24, backgroundColor: "rgba(0,0,0,0.65)" },
-    card: { maxHeight: "80%", borderRadius: 20, padding: 20, backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border },
+    card: { maxHeight: "80%", borderRadius: 20, padding: 20, backgroundColor: theme.bgElevated, borderWidth: 1, borderColor: theme.border },
     header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
     titleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
     title: { color: theme.text, fontSize: 18, fontWeight: "700" },
