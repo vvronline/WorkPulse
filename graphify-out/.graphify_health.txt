@@ -1,0 +1,1 @@
+1165 dangling-endpoint edges; 2 self-loop edges; 108 collapsed (directed) edges; 111 collapsed (undirected) edges

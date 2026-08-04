@@ -322,6 +322,24 @@ export default function Index() {
     };
   }, []);
 
+  // A call route arrived but the user is NOT authenticated yet — keep it
+  // stashed in memory so PendingCallNavigator can route it once login
+  // completes, then fall through to /login below.
+  //
+  // This MUST be an effect, not an inline `if (callRoute && !user)` in the
+  // render body (where it used to live). Mutating module state during render
+  // is impure: React 19 may discard and re-run a render, so the stash could
+  // fire for a render that never commits, or fire twice. The ref keeps it
+  // idempotent across the re-renders that DO commit.
+  const stashedPendingRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!callRoute || user) return;
+    const key = `${callRoute.callId}:${callRoute.conversationId}`;
+    if (stashedPendingRef.current === key) return;
+    stashedPendingRef.current = key;
+    setPendingCall(callRoute);
+  }, [callRoute, user]);
+
   // While we are still determining whether this was a cold-start CALL launch
   // (callRoute === undefined), render a DARK, call-styled placeholder that
   // matches the call screen background (#0a0a0a) instead of a white spinner on
@@ -431,11 +449,13 @@ export default function Index() {
     );
   }
 
-  // A call route arrived but the user isn't authenticated — keep it stashed so
-  // PendingCallNavigator can route once login completes, then fall through.
-  if (callRoute && !user) {
-    setPendingCall(callRoute);
-  }
+  // NOTE: the "call route arrived but the user isn't authenticated" case is
+  // handled by the `useEffect` above (stashPendingRef). It used to call
+  // `setPendingCall(callRoute)` inline HERE, in the render body — an impure
+  // render that mutates module state. Under React 19 concurrent rendering that
+  // render can be discarded and re-run, so the stash could fire twice or be
+  // performed for a render that is never committed. Effects are the only safe
+  // place for it.
 
   // Cold-start message-notification tap for an authenticated user → restore the
   // tab shell FIRST, then let the Chat tab push the exact thread. This keeps the

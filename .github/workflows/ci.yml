@@ -77,6 +77,13 @@ jobs:
         working-directory: mobile
         run: npm ci
 
+      # Fails the build on ESLint ERRORS only. Warnings (the pre-existing
+      # `as any` / empty-catch / console debt) are reported but non-blocking,
+      # so the ratchet can be tightened as that debt is paid down.
+      - name: Lint mobile
+        working-directory: mobile
+        run: npm run lint
+
       - name: Typecheck mobile (app)
         working-directory: mobile
         run: npm run typecheck

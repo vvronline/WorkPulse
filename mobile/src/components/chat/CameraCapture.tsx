@@ -35,6 +35,20 @@ import RecentMediaStrip, { type RecentMediaItem } from "./RecentMediaStrip";
  *   • onPickRecent    — a tapped recent-gallery item.
  *   • onOpenGallery   — the "Gallery" tile (full system picker).
  */
+// Resolve expo-camera ONCE at module scope (see file header for why it's
+// defensive). Doing this here rather than inside a `useMemo` guarantees the
+// permission-hook branches below are constant for the lifetime of the bundle,
+// which is what makes conditionally calling those hooks safe.
+const cameraMod: any = (() => {
+  try {
+    return require("expo-camera");
+  } catch {
+    return null;
+  }
+})();
+const useCameraPermissions = cameraMod?.useCameraPermissions;
+const useMicrophonePermissions = cameraMod?.useMicrophonePermissions;
+
 export default function CameraCapture({
   onClose,
   onCapturedPhoto,
@@ -64,27 +78,24 @@ export default function CameraCapture({
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
 
-  // Resolve expo-camera defensively (see file header).
-  const cameraMod = useMemo<any>(() => {
-    try {
-      return require("expo-camera");
-    } catch {
-      return null;
-    }
-  }, []);
   const CameraView = cameraMod?.CameraView;
-  const useCameraPermissions = cameraMod?.useCameraPermissions;
-  const useMicrophonePermissions = cameraMod?.useMicrophonePermissions;
 
-  // Permission hooks are only called when the module resolved. The rules-of-
-  // hooks exception is safe here because `cameraMod` is stable for the
-  // component's lifetime (a require result never changes between renders).
+  // Permission hooks are conditional on the native module having resolved.
+  // That is normally a rules-of-hooks violation, but it is SAFE here because
+  // `cameraMod` is resolved ONCE at module scope (see top of file), not per
+  // render — so these branches are constant for the entire lifetime of the JS
+  // bundle and the hook order can never change between renders of this
+  // component. Hoisting the require out of `useMemo` is what makes that
+  // guarantee explicit rather than merely incidental.
+  /* eslint-disable react-hooks/rules-of-hooks -- see the comment above: the
+     branch condition is module-scope constant, so hook order is stable. */
   const [camPerm, requestCamPerm] = useCameraPermissions
     ? useCameraPermissions()
     : [null, async () => null];
   const [micPerm, requestMicPerm] = useMicrophonePermissions
     ? useMicrophonePermissions()
     : [null, async () => null];
+  /* eslint-enable react-hooks/rules-of-hooks */
 
   const cameraRef = useRef<any>(null);
   const [facing, setFacing] = useState<"back" | "front">("back");

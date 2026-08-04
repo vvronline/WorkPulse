@@ -10,6 +10,20 @@
     // Skip type-checking of dependency .d.ts files: faster, and avoids spurious
     // errors from mismatched @types across the React Native / Expo dep tree.
     "skipLibCheck": true,
+    // Path aliases. There are ~391 deep relative imports in the app, some five
+    // levels of `../` deep — they break on every file move, obscure which layer
+    // a module belongs to, and make review diffs noisy. `@/…` is stable
+    // regardless of where the importing file lives.
+    //
+    // Resolution is wired in THREE places that must stay in sync:
+    //   1. here            → editor + `tsc --noEmit`
+    //   2. app.config.ts   → `experiments.tsconfigPaths` for the Metro bundler
+    //   3. jest.config.js  → `moduleNameMapper` for tests
+    // No `baseUrl`: it is deprecated in TypeScript 6 (TS5101) and unnecessary
+    // since TS 5.0, which resolves `paths` relative to this file's directory.
+    "paths": {
+      "@/*": ["./src/*"],
+    },
   },
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": ["**/__tests__/**", "**/*.test.ts", "**/*.test.tsx"],

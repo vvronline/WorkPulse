@@ -129,6 +129,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   // runtime built in, so no extra `react-compiler-runtime` dep is needed.
   experiments: {
     reactCompiler: true,
+    // Lets Metro resolve the `@/*` alias declared in tsconfig.json's `paths`.
+    // Without this the bundler fails on `@/…` imports even though `tsc` and
+    // the editor resolve them fine.
+    tsconfigPaths: true,
   },
   plugins: [
     "expo-router",

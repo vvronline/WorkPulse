@@ -11,6 +11,12 @@ module.exports = {
   setupFilesAfterEnv: ["<rootDir>/jest.setup.js"],
   // Only pick up the co-located __tests__ suites (exclude native build output).
   testMatch: ["**/__tests__/**/*.test.ts", "**/__tests__/**/*.test.tsx"],
+  // Mirrors the `@/*` alias from tsconfig.json (and `experiments.tsconfigPaths`
+  // in app.config.ts). Jest does not read tsconfig `paths`, so this mapping
+  // must be kept in sync with those two by hand.
+  moduleNameMapper: {
+    "^@/(.*)$": "<rootDir>/src/$1",
+  },
   testPathIgnorePatterns: [
     "/node_modules/",
     "/android/",

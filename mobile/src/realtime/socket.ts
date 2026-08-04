@@ -67,6 +67,17 @@ class RealtimeSocket {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private shouldRun = false;
   private appStateSub: { remove: () => void } | null = null;
+  // In-flight `open()` guard. `open()` awaits `getToken()` (a native keychain
+  // read), so the `isSocketLive()` check at its top is STALE by the time the
+  // socket is actually constructed. Without this, `connect()`, `onAppState`,
+  // `waitUntilConnected()` and the two un-awaited `this.open()` calls inside
+  // `sendWithBackoff()` can interleave across that await and each build their
+  // own WebSocket — the earlier one is overwritten by `this.ws = ws` and leaks
+  // (its `onclose` hits the `this.ws !== ws` guard, so it never reconnects
+  // either). Symptoms: duplicate realtime messages (double ring / double
+  // toast) plus one leaked connection per foreground cycle. Every caller now
+  // shares the SAME in-flight promise, so exactly one socket is created.
+  private openPromise: Promise<void> | null = null;
   private isSocketLive() {
     return !!this.ws && this.ws.readyState <= 1;
   }
@@ -107,16 +118,45 @@ class RealtimeSocket {
     }
   };
 
-  private async open() {
+  /**
+   * Serialized socket opener. Concurrent callers share the single in-flight
+   * attempt instead of each racing to construct their own WebSocket. See the
+   * `openPromise` field comment for why the naive version leaked sockets.
+   */
+  private open(): Promise<void> {
+    if (!this.shouldRun || this.isSocketLive()) return Promise.resolve();
+    if (this.openPromise) return this.openPromise;
+    const attempt = this.doOpen().finally(() => {
+      // Only clear if we're still the current attempt — a later open() that
+      // replaced us owns the slot from here on.
+      if (this.openPromise === attempt) this.openPromise = null;
+    });
+    this.openPromise = attempt;
+    return attempt;
+  }
+
+  private async doOpen() {
     if (!this.shouldRun || this.isSocketLive()) return;
     const token = await getToken();
-    if (!token) return;
+    // Re-check AFTER the await: `shouldRun` may have been flipped by
+    // disconnect() (logout) and another socket may have come up while the
+    // keychain read was in flight. Opening now would strand that socket.
+    if (!token || !this.shouldRun || this.isSocketLive()) return;
     let ws: WebSocket;
     try {
       ws = new WebSocket(wsUrl(token));
     } catch {
       this.scheduleReconnect();
       return;
+    }
+    // Defensive: if a socket somehow survived the checks above, close it
+    // explicitly rather than dropping the reference and leaking it.
+    if (this.ws && this.ws !== ws) {
+      try {
+        this.ws.close();
+      } catch {
+        /* ignore */
+      }
     }
     this.ws = ws;
 
@@ -329,6 +369,10 @@ class RealtimeSocket {
 
   disconnect() {
     this.shouldRun = false;
+    // Drop any in-flight open attempt: `doOpen()` re-checks `shouldRun` after
+    // its await, so the pending attempt will bail rather than resurrect the
+    // socket after logout.
+    this.openPromise = null;
     this.stopPing();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);

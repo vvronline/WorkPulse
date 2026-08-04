@@ -17,6 +17,9 @@ import { mmkvQueryPersister } from "../src/storage/queryPersister";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider } from "../src/auth/AuthContext";
+import ErrorBoundary from "../src/components/ErrorBoundary";
+import { shouldRetryRequest } from "../src/apiError";
+import { installRNQueryBridge } from "../src/query/rnQueryBridge";
 import ImpersonationBanner from "../src/components/ImpersonationBanner";
 import UpdateChecker from "../src/components/UpdateChecker";
 import IncomingCallListener from "../src/realtime/IncomingCallListener";
@@ -50,7 +53,21 @@ import {
 const ONE_DAY = 24 * 60 * 60 * 1000;
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 1, staleTime: 60_000, gcTime: ONE_DAY },
+    queries: {
+      // `retry: 1` retried EVERYTHING once — including 401/403/404, where the
+      // second attempt is guaranteed to fail and, on a slow connection, can
+      // burn the full 60s axios timeout before the user sees the error.
+      // `shouldRetryRequest` retries only genuinely transient failures
+      // (5xx, 429, network/timeout) and gives up after 3 attempts.
+      retry: shouldRetryRequest,
+      staleTime: 60_000,
+      gcTime: ONE_DAY,
+    },
+    mutations: {
+      // Writes are NOT retried automatically: without idempotency keys a
+      // retried POST can double-create a row.
+      retry: false,
+    },
   },
 });
 
@@ -364,6 +381,14 @@ export default function RootLayout() {
     installThemedAlertBridge();
   }, []);
 
+  // Make React Query network- and focus-aware. Without this, RN has no
+  // `online`/`visibilitychange` events, so the query layer believes it is
+  // permanently online and never focused: retries fire into a dead radio and
+  // `refetchOnWindowFocus` is dead code. Installed as early as possible (not
+  // deferred) because it only registers two listeners — the cost is trivial
+  // and queries begin the moment the first screen mounts.
+  useEffect(() => installRNQueryBridge(), []);
+
   useEffect(() => {
     // Foreground CallKeep setup. The FCM background message handler is
     // registered at the JS entry top-level (see `mobile/index.js`) so it also
@@ -438,6 +463,13 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      {/* Outermost boundary: catches render errors from ANY provider or screen
+          below. Without it a single bad render unmounts the whole tree and
+          leaves a permanently blank screen with no recovery path. It sits
+          INSIDE GestureHandlerRootView (which must own the root view) but
+          OUTSIDE the providers, so a failure in AuthProvider/ThemeProvider is
+          still caught — hence the fallback uses the static theme. */}
+      <ErrorBoundary scope="root">
       <PersistQueryClientProvider
         client={queryClient}
         persistOptions={{ persister: mmkvQueryPersister, maxAge: ONE_DAY }}
@@ -475,6 +507,7 @@ export default function RootLayout() {
           </ThemeProvider>
         </AuthProvider>
       </PersistQueryClientProvider>
+      </ErrorBoundary>
     </GestureHandlerRootView>
   );
 }

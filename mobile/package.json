@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "2.0.76",
+  "version": "2.0.77",
   "main": "index.js",
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.1",
@@ -70,12 +70,15 @@
     "@types/jest": "^29.5.14",
     "@types/react": "~19.2.2",
     "babel-preset-expo": "~57.0.0",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "^10.0.0",
     "eventemitter3": "^5.0.4",
     "jest": "^29.7.0",
     "jest-expo": "^57.0.2",
     "patch-package": "^8.0.0",
     "postinstall-postinstall": "^2.1.0",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.66.0"
   },
   "scripts": {
     "postinstall": "patch-package",
@@ -88,7 +91,9 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "generate-icons": "node scripts/generate-icons.cjs",
-    "generate-call-sounds": "node scripts/generate-call-sounds.cjs"
+    "generate-call-sounds": "node scripts/generate-call-sounds.cjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "private": true
 }

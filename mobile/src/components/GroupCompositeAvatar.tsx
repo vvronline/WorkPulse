@@ -16,10 +16,13 @@ export default function GroupCompositeAvatar({
   memberAvatars,
   size = 48,
 }: Props) {
-  if (avatar) {
-    return <ChatAvatar name={name} avatar={avatar} size={size} />;
-  }
-
+  // NOTE: every hook must run BEFORE any early return. This `useMemo` used to
+  // sit after the `if (avatar)` bail-out, so the hook count changed between
+  // renders whenever `avatar` flipped between set and unset (e.g. right after
+  // a group avatar upload, or when the list re-renders with a partial record).
+  // React matches hooks positionally, so that mismatch throws
+  // "Rendered fewer hooks than expected" and unmounts the tree — which, with
+  // no error boundary previously in place, blanked the whole screen.
   const tiles = useMemo(
     () =>
       Array.from(
@@ -31,6 +34,11 @@ export default function GroupCompositeAvatar({
       ).slice(0, 4),
     [memberAvatars],
   );
+
+  // An explicit group avatar always wins over the composite.
+  if (avatar) {
+    return <ChatAvatar name={name} avatar={avatar} size={size} />;
+  }
 
   if (tiles.length === 0) {
     return <ChatAvatar name={name} size={size} />;
