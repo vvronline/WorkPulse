@@ -6,6 +6,7 @@
  * based on notification type (call vs message).
  */
 
+import { describe, test, beforeEach, expect, jest } from '@jest/globals';
 import { EventEmitter } from 'eventemitter3';
 
 interface NotificationPayload {
@@ -44,7 +45,13 @@ class PushNotificationListener extends EventEmitter {
     } else if (payload.type === 'call' && actionId === 'reject') {
       this.emit('call:reject', payload);
     } else if (payload.type === 'message') {
-      this.badgeCount = payload.unreadCount || this.badgeCount - 1;
+      if (payload.unreadCount !== undefined) {
+        this.badgeCount = payload.unreadCount;
+        this.emit('badge:updated', { count: this.badgeCount });
+      } else {
+        this.badgeCount = Math.max(0, this.badgeCount - 1);
+        this.emit('badge:updated', { count: this.badgeCount });
+      }
       this.emit('navigate:chat', { conversationId: payload.conversationId });
     }
   }
