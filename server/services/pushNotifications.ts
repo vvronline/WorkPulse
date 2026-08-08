@@ -76,19 +76,34 @@ class PushNotificationService {
     }
 
     private assertRoutingPayloadContract(
-        notificationType: "call" | "message",
+        notificationType: "call" | "message" | "call_cancel",
         data: Record<string, string>,
     ): void {
-        const presentFields =
-            notificationType === "call"
-                ? ["type", "callId", "conversationId", "callerId", "dedupeKey", "expiresAt", "sentAt"]
-                : ["type", "conversationId", "messageId", "senderId", "dedupeKey", "sentAt"];
-        // For calls, callerName/callerAvatar are required only if hideSensitiveContent is false (i.e., when they are present in the payload).
-        // For messages, senderName/senderAvatar are always required (message preview is always shown in the current implementation).
-        const nonEmptyFields =
-            notificationType === "call"
-                ? ["type", "callId", "conversationId", "callerId", "dedupeKey", "expiresAt", "sentAt"]
-                : ["type", "conversationId", "messageId", "senderId", "senderName", "dedupeKey", "sentAt"];
+        // `call_cancel` is the DATA-ONLY teardown push (`call_handled_elsewhere`)
+        // that dismisses a ring on a backgrounded/locked/killed device. It is a
+        // DIFFERENT shape from both an incoming call and a chat message: it
+        // deliberately carries no caller/sender display fields (see
+        // sendCallCancellation), so it MUST NOT be validated against either of
+        // those contracts.
+        const FIELDS: Record<typeof notificationType, { present: string[]; nonEmpty: string[] }> = {
+            call: {
+                present: ["type", "callId", "conversationId", "callerId", "dedupeKey", "expiresAt", "sentAt"],
+                // For calls, callerName/callerAvatar are required only if hideSensitiveContent
+                // is false (i.e., when they are present in the payload).
+                nonEmpty: ["type", "callId", "conversationId", "callerId", "dedupeKey", "expiresAt", "sentAt"],
+            },
+            message: {
+                present: ["type", "conversationId", "messageId", "senderId", "dedupeKey", "sentAt"],
+                // For messages, senderName is always required (the preview is always shown).
+                nonEmpty: ["type", "conversationId", "messageId", "senderId", "senderName", "dedupeKey", "sentAt"],
+            },
+            call_cancel: {
+                present: ["type", "callId", "conversationId", "dedupeKey", "sentAt"],
+                nonEmpty: ["type", "callId", "conversationId", "dedupeKey", "sentAt"],
+            },
+        };
+
+        const { present: presentFields, nonEmpty: nonEmptyFields } = FIELDS[notificationType];
 
         const missing = presentFields.filter((field) => !(field in data));
         const empty = nonEmptyFields.filter((field) => !data[field]);
@@ -98,6 +113,9 @@ class PushNotificationService {
             if (data.type !== "incoming_call") invalid.push("type");
             if (!/^call:\d+$/.test(data.dedupeKey || "")) invalid.push("dedupeKey");
             if (Number.isNaN(Date.parse(data.expiresAt || ""))) invalid.push("expiresAt");
+        } else if (notificationType === "call_cancel") {
+            if (data.type !== "call_handled_elsewhere") invalid.push("type");
+            if (!/^call_cancel:\d+$/.test(data.dedupeKey || "")) invalid.push("dedupeKey");
         } else {
             if (data.type !== "chat_message") invalid.push("type");
             if (!/^msg:\d+$/.test(data.dedupeKey || "")) invalid.push("dedupeKey");
@@ -433,7 +451,40 @@ class PushNotificationService {
                 },
             },
         };
-        this.assertRoutingPayloadContract("message", payload.data);
+        // ROOT-CAUSE FIX ("receiver keeps ringing after the caller hung up"):
+        // this previously asserted the "message" (chat) contract against a
+        // call-teardown payload, which can NEVER satisfy it (no messageId /
+        // senderId / senderName, type is `call_handled_elsewhere`, dedupeKey is
+        // `call_cancel:<id>`). The assert therefore threw on EVERY invocation,
+        // before sendToDevices was reached, so the dismissal push was never
+        // delivered. Every one of the 14 call sites swallows the rejection in a
+        // `.catch()` that only logs at warn level, so this failed silently.
+        //
+        // Consequence: when the caller hung up (or the callee answered on
+        // another device), a BACKGROUNDED/LOCKED/KILLED callee never got the
+        // dismiss signal. Android freezes the JS thread + WebSocket while
+        // backgrounded, so the WS `call_ended` frame cannot reach it either —
+        // this push is the ONLY teardown path in that state. The native ring
+        // kept playing until the Notifee 45s timeout / stale-call sweep.
+        //
+        // The contract is now the correct `call_cancel` variant AND is
+        // non-fatal: dismissing a live ring is strictly more important than
+        // payload purity, so a future contract drift can never again silently
+        // leave a device ringing. We log loudly and still dispatch.
+        try {
+            this.assertRoutingPayloadContract("call_cancel", payload.data);
+        } catch (err: any) {
+            logger.error(
+                {
+                    event: "push_contract_violation",
+                    notificationType: "call_cancel",
+                    err: err?.message,
+                    callId: cancelData.callId,
+                    conversationId: cancelData.conversationId,
+                },
+                "Call-cancellation push failed contract validation; dispatching anyway to guarantee ring teardown",
+            );
+        }
 
         logger.info(
             {

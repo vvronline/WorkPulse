@@ -283,3 +283,148 @@ describe("pushNotifications.sendCallNotification", () => {
         expect(sent.data).toHaveProperty("type", "incoming_call");
     });
 });
+
+/**
+ * REGRESSION: "receiver keeps ringing after the caller hung up".
+ *
+ * `sendCallCancellation` used to validate its DATA-ONLY teardown payload against
+ * the "message" (chat) contract, which it can never satisfy — no messageId /
+ * senderId / senderName, type is `call_handled_elsewhere`, and dedupeKey is
+ * `call_cancel:<id>` rather than `msg:<id>`. The assert threw on EVERY call
+ * BEFORE sendEachForMulticast was reached, and all 14 call sites swallow the
+ * rejection in a warn-level `.catch()`, so the dismissal push was silently never
+ * delivered.
+ *
+ * A backgrounded/locked/killed Android callee has its JS thread + WebSocket
+ * frozen, so the WS `call_ended` frame cannot reach it — this push is the ONLY
+ * teardown path in that state. Without it the native ring kept playing until the
+ * Notifee 45s timeout / stale-call sweep.
+ *
+ * These tests assert the push is ACTUALLY DISPATCHED for every teardown reason.
+ */
+describe("pushNotifications.sendCallCancellation", () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        sendEachForMulticast.mockClear();
+    });
+
+    test("REGRESSION: actually dispatches the teardown push (previously threw on the wrong contract)", async () => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }, { device_token: "token2" }] });
+
+        const result = await pushNotifications.sendCallCancellation(
+            mockQuery,
+            1,
+            1,
+            { callId: 400, conversationId: 40, reason: "cancelled" },
+        );
+
+        // The bug: this never ran, so the callee never stopped ringing.
+        expect(sendEachForMulticast).toHaveBeenCalledTimes(1);
+        expect(result).toEqual({ succeeded: 2, failed: 0 });
+    });
+
+    test("sends a data-only high-priority push so the headless handler can dismiss the ring", async () => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }] });
+
+        await pushNotifications.sendCallCancellation(
+            mockQuery,
+            1,
+            1,
+            { callId: 401, conversationId: 41, reason: "cancelled" },
+        );
+
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        // Data-only: an `android.notification` block would let the OS render it
+        // without waking the headless handler that dismisses the ring.
+        expect(sent.notification).toBeUndefined();
+        expect(sent.android).toEqual({ priority: "high" });
+        expect(sent.android.notification).toBeUndefined();
+        expect(sent.data).toMatchObject({
+            type: "call_handled_elsewhere",
+            callId: "401",
+            conversationId: "41",
+            reason: "cancelled",
+            dedupeKey: "call_cancel:401",
+            tenantId: "1",
+        });
+        expect(Number.isNaN(Date.parse(sent.data.sentAt))).toBe(false);
+    });
+
+    test("uses a background/silent APNs push so iOS can dismiss CallKit", async () => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }] });
+
+        await pushNotifications.sendCallCancellation(
+            mockQuery,
+            1,
+            1,
+            { callId: 402, conversationId: 42, reason: "ended" },
+        );
+
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        expect(sent.apns.headers["apns-priority"]).toBe("10");
+        expect(sent.apns.headers["apns-push-type"]).toBe("background");
+    });
+
+    test.each([
+        ["cancelled", 410],
+        ["rejected", 411],
+        ["ended", 412],
+        ["handled_elsewhere", 413],
+    ])("dispatches for reason=%s (every server teardown path)", async (reason, callId) => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }] });
+
+        const result = await pushNotifications.sendCallCancellation(
+            mockQuery,
+            1,
+            1,
+            { callId, conversationId: 44, reason },
+        );
+
+        expect(sendEachForMulticast).toHaveBeenCalledTimes(1);
+        expect(result).toEqual({ succeeded: 1, failed: 0 });
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        expect(sent.data.reason).toBe(reason);
+        expect(sent.data.dedupeKey).toBe(`call_cancel:${callId}`);
+    });
+
+    test("defaults the reason to handled_elsewhere when omitted", async () => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }] });
+
+        await pushNotifications.sendCallCancellation(
+            mockQuery,
+            1,
+            1,
+            { callId: 420, conversationId: 45 },
+        );
+
+        const sent = sendEachForMulticast.mock.calls[0][0];
+        expect(sent.data.reason).toBe("handled_elsewhere");
+    });
+
+    test("handles no device tokens gracefully", async () => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [] });
+
+        const result = await pushNotifications.sendCallCancellation(
+            mockQuery,
+            999,
+            1,
+            { callId: 430, conversationId: 46, reason: "cancelled" },
+        );
+
+        expect(result).toEqual({ succeeded: 0, failed: 0 });
+        expect(sendEachForMulticast).not.toHaveBeenCalled();
+    });
+
+    test("does NOT reject — a throwing teardown push would leave the callee ringing", async () => {
+        const mockQuery = jest.fn().mockResolvedValue({ rows: [{ device_token: "token1" }] });
+
+        await expect(
+            pushNotifications.sendCallCancellation(
+                mockQuery,
+                1,
+                1,
+                { callId: 440, conversationId: 47, reason: "cancelled" },
+            ),
+        ).resolves.toEqual({ succeeded: 1, failed: 0 });
+    });
+});
