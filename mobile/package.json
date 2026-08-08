@@ -1,6 +1,6 @@
 {
   "name": "mobile",
-  "version": "2.0.78",
+  "version": "2.0.79",
   "main": "index.js",
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.1",
@@ -26,6 +26,7 @@
     "expo-document-picker": "~57.0.0",
     "expo-file-system": "~57.0.0",
     "expo-font": "~57.0.0",
+    "expo-haptics": "~57.0.1",
     "expo-image": "~57.0.1",
     "expo-image-manipulator": "~57.0.2",
     "expo-image-picker": "~57.0.2",

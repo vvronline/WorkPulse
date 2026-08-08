@@ -21,6 +21,7 @@ import {
 } from "../../src/icons";
 import { useAuth, userHasFeature } from "../../src/auth/AuthContext";
 import { useTheme } from "../../src/theme/ThemeProvider";
+import { haptics } from "../../src/lib/haptics";
 import TopBar from "../../src/components/TopBar";
 import { getConversations } from "../../src/features";
 import { socket } from "../../src/realtime/socket";
@@ -53,13 +54,22 @@ function TabBarButton({
   testID,
   style,
 }: TabBarButtonProps) {
+  // Fire a selection tick on every tab switch — but ONLY when moving to a
+  // different tab. Re-tapping the already-selected tab is a scroll-to-top /
+  // pop-to-root gesture, and buzzing for a no-op makes the whole bar feel
+  // noisy rather than responsive.
+  const handlePress = (e: GestureResponderEvent) => {
+    if (!accessibilityState?.selected) haptics.selection();
+    onPress?.(e);
+  };
+
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={accessibilityState}
       accessibilityLabel={accessibilityLabel}
       testID={testID}
-      onPress={onPress}
+      onPress={handlePress}
       onLongPress={onLongPress}
       android_ripple={null}
       style={({ pressed }) => [

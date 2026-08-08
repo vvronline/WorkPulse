@@ -1,9 +1,8 @@
-import { useCallback, useMemo } from "react";
-import { Pressable, StyleSheet, Text, View, Image } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { StyleSheet, Text, View, Image } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Bell } from "../icons";
-import { useEffect, useState } from "react";
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import { useAuth } from "../auth/AuthContext";
@@ -13,6 +12,7 @@ import { socket } from "../realtime/socket";
 import { chatUnreadManager } from "../realtime/chatUnreadEvents";
 import { pushNotificationService } from "../services/pushNotificationService";
 import StatusDot from "./StatusDot";
+import PressableScale from "./ui/PressableScale";
 
 function initials(name?: string) {
   if (!name) return "?";
@@ -85,31 +85,57 @@ export default function TopBar() {
             resizeMode="cover"
           />
         </View>
-        <Text style={styles.title}>AINO</Text>
+        {/* Cap the wordmark's growth under large system font settings —
+            unbounded scaling pushes the bell/avatar off the bar at the largest
+            accessibility text sizes. Body copy elsewhere should still scale
+            freely; only fixed-height chrome needs a ceiling. */}
+        <Text style={styles.title} maxFontSizeMultiplier={1.2}>
+          AINO
+        </Text>
       </View>
 
       {/* Right: notifications + profile */}
       <View style={styles.right}>
-        <Pressable
+        <PressableScale
           style={styles.iconBtn}
           onPress={() => router.push("/notifications")}
-          hitSlop={6}
+          // The visible button is 38pt; hitSlop pads the touch target past the
+          // 44pt accessibility minimum without inflating the bar's layout.
+          hitSlop={8}
+          activeScale={0.9}
+          accessibilityRole="button"
+          // Icon-only control: without an explicit label a screen reader
+          // announces nothing useful. Fold the unread count into the label so
+          // the badge isn't information available only to sighted users.
+          accessibilityLabel={
+            unread > 0
+              ? `Notifications, ${unread} unread`
+              : "Notifications"
+          }
         >
           <Bell size={20} color={theme.textSecondary} />
           {unread > 0 ? (
             <View style={styles.badge}>
-              <Text style={styles.badgeText}>{unread > 99 ? "99+" : unread}</Text>
+              <Text style={styles.badgeText} maxFontSizeMultiplier={1.1}>
+                {unread > 99 ? "99+" : unread}
+              </Text>
             </View>
           ) : null}
-        </Pressable>
+        </PressableScale>
 
-        <Pressable onPress={() => router.push("/profile")} hitSlop={6}>
+        <PressableScale
+          onPress={() => router.push("/profile")}
+          hitSlop={8}
+          activeScale={0.9}
+          accessibilityRole="button"
+          accessibilityLabel="Your profile"
+        >
           <View style={styles.avatarWrap}>
             <View style={styles.avatar}>
               {uploadUrl(user?.avatar) ? (
                 <Image source={{ uri: uploadUrl(user?.avatar)! }} style={styles.avatarImg} />
               ) : (
-                <Text style={styles.avatarText}>
+                <Text style={styles.avatarText} maxFontSizeMultiplier={1.1}>
                   {initials(user?.full_name || user?.username)}
                 </Text>
               )}
@@ -120,7 +146,7 @@ export default function TopBar() {
               </View>
             ) : null}
           </View>
-        </Pressable>
+        </PressableScale>
       </View>
     </View>
   );
@@ -185,7 +211,7 @@ const makeStyles = (theme: Theme) =>
     borderWidth: 2,
     borderColor: theme.bgSecondary,
   },
-  badgeText: { color: "#fff", fontSize: 9, fontWeight: "700" },
+  badgeText: { color: theme.onAccent, fontSize: 9, fontWeight: "700" },
   avatarWrap: { width: 34, height: 34 },
   avatar: {
     width: 34,
@@ -198,5 +224,5 @@ const makeStyles = (theme: Theme) =>
   },
   avatarStatus: { position: "absolute", bottom: -1, right: -1 },
   avatarImg: { width: 34, height: 34, borderRadius: 17 },
-  avatarText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  avatarText: { color: theme.onAccent, fontSize: 12, fontWeight: "700" },
 });

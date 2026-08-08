@@ -282,6 +282,69 @@ export function makeTheme(
     // used the Pacifico script face, which suits a lowercase cursive word but
     // renders an all-caps acronym poorly. AINO uses the bold UI face instead.
     fontBrand: FONTS.brand,
+
+    // ── Spacing scale ──
+    // A 4pt grid. Screens/cards previously used ad-hoc numbers (12/14/16/18),
+    // which is why padding drifts between screens. Use these tokens instead of
+    // raw numbers so vertical rhythm stays consistent app-wide.
+    space: {
+      xs: 4,
+      sm: 8,
+      md: 12,
+      lg: 16,
+      xl: 24,
+      xxl: 32,
+    },
+
+    // ── Type scale ──
+    // Pairs a size with the line-height it should be rendered at. Using a
+    // fixed ramp (rather than per-screen fontSize literals) keeps headings and
+    // body copy visually consistent, and gives one place to tune density.
+    // Weight comes from the `font*` family tokens above (Android selects a
+    // custom font's weight by family NAME, not `fontWeight`).
+    type: {
+      // Screen titles / greeting banners
+      title: { fontSize: 22, lineHeight: 28, letterSpacing: -0.4 },
+      // Card headers, section headings
+      heading: { fontSize: 17, lineHeight: 22, letterSpacing: -0.2 },
+      // Default body copy
+      body: { fontSize: 15, lineHeight: 20 },
+      // Secondary/supporting copy, list subtitles
+      callout: { fontSize: 13, lineHeight: 18 },
+      // Timestamps, metadata, badge text
+      caption: { fontSize: 11, lineHeight: 14 },
+    },
+
+    // ── Elevation ──
+    // Cross-platform shadow presets (iOS shadow* + Android elevation). Spread
+    // these onto a style rather than hand-rolling shadow values per component.
+    elevation: {
+      // Resting cards — barely-there separation from the page.
+      low: {
+        shadowColor: "#000",
+        shadowOpacity: mode === "dark" ? 0.3 : 0.06,
+        shadowRadius: 3,
+        shadowOffset: { width: 0, height: 1 },
+        elevation: 1,
+      },
+      // Sheets, popovers, floating action buttons.
+      high: {
+        shadowColor: "#000",
+        shadowOpacity: mode === "dark" ? 0.45 : 0.12,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 6 },
+        elevation: 8,
+      },
+    },
+
+    // ── Motion ──
+    // Shared durations so transitions/microinteractions feel like one system
+    // instead of each component inventing its own timing.
+    duration: {
+      fast: 120,
+      normal: 200,
+      slow: 320,
+    },
   };
 }
 

@@ -13,6 +13,7 @@ import {
 import type { Theme } from "../theme";
 import { useTheme } from "../theme/ThemeProvider";
 import { useDialog } from "../hooks/useDialog";
+import { haptics } from "../lib/haptics";
 import { formatTime, formatTimeSec } from "../utils/time";
 import {
   breakEnd,
@@ -205,10 +206,20 @@ export default function WorkTimerCard() {
 
   async function run(name: string, fn: () => Promise<unknown>) {
     setAction(name);
+    // Clocking in/out and starting/ending a break are the highest-consequence
+    // actions in the app — a medium impact on commit makes the transition
+    // physically perceptible instead of a silent button dim. `run` is the
+    // single funnel for all four, so every tracker action gets it for free.
+    haptics.medium();
     try {
       await fn();
       await refresh();
+      // Distinct success notification once the server confirms. Users glance
+      // away while the request is in flight; the pattern tells them it landed
+      // without their needing to look back at the card.
+      haptics.success();
     } catch (e: any) {
+      haptics.error();
       alert("Error", e?.response?.data?.error || "Action failed");
     } finally {
       setAction(null);
@@ -362,7 +373,15 @@ export default function WorkTimerCard() {
                 <View style={styles.modeToggle}>
                   <Pressable
                     style={[styles.modeBtn, workMode === "office" && styles.modeBtnActive]}
-                    onPress={() => setWorkMode("office")}
+                    // `selected` state so a screen reader announces WHICH mode
+                    // is active — the accent fill alone conveys that visually.
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: workMode === "office" }}
+                    accessibilityLabel="Work from office"
+                    onPress={() => {
+                      haptics.selection();
+                      setWorkMode("office");
+                    }}
                   >
                     <Building2
                       size={13}
@@ -379,7 +398,13 @@ export default function WorkTimerCard() {
                   </Pressable>
                   <Pressable
                     style={[styles.modeBtn, workMode === "remote" && styles.modeBtnActive]}
-                    onPress={() => setWorkMode("remote")}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: workMode === "remote" }}
+                    accessibilityLabel="Work remotely"
+                    onPress={() => {
+                      haptics.selection();
+                      setWorkMode("remote");
+                    }}
                   >
                     <House
                       size={13}
@@ -399,6 +424,11 @@ export default function WorkTimerCard() {
                   style={[styles.btn, styles.btnSuccess, styles.btnLogin]}
                   onPress={handleLogin}
                   disabled={!!action}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Clock in, ${workMode === "office" ? "office" : "remote"}`}
+                  // `busy` keeps assistive tech in step with the in-flight
+                  // request instead of re-announcing a stale idle button.
+                  accessibilityState={{ disabled: !!action, busy: action === "clockIn" }}
                 >
                   <Play size={14} color="#fff" />
                   <Text style={styles.btnText}>
@@ -418,6 +448,9 @@ export default function WorkTimerCard() {
                   style={[styles.btn, styles.btnWarning, styles.btnFlex]}
                   onPress={() => run("breakStart", breakStart)}
                   disabled={!!action}
+                  accessibilityRole="button"
+                  accessibilityLabel="Start break"
+                  accessibilityState={{ disabled: !!action, busy: action === "breakStart" }}
                 >
                   <Coffee size={14} color="#fff" />
                   <Text style={styles.btnText}>Break</Text>
@@ -426,6 +459,9 @@ export default function WorkTimerCard() {
                   style={[styles.btn, styles.btnDanger, styles.btnFlex]}
                   onPress={onLogout}
                   disabled={!!action}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clock out"
+                  accessibilityState={{ disabled: !!action, busy: action === "clockOut" }}
                 >
                   <LogOut size={14} color="#fff" />
                   <Text style={styles.btnText}>Logout</Text>
@@ -439,6 +475,9 @@ export default function WorkTimerCard() {
                   style={[styles.btn, styles.btnSuccess, styles.btnFlex]}
                   onPress={() => run("breakEnd", breakEnd)}
                   disabled={!!action}
+                  accessibilityRole="button"
+                  accessibilityLabel="Resume work from break"
+                  accessibilityState={{ disabled: !!action, busy: action === "breakEnd" }}
                 >
                   <Play size={14} color="#fff" />
                   <Text style={styles.btnText}>Resume</Text>
@@ -447,6 +486,9 @@ export default function WorkTimerCard() {
                   style={[styles.btn, styles.btnDanger, styles.btnFlex]}
                   onPress={onLogout}
                   disabled={!!action}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clock out"
+                  accessibilityState={{ disabled: !!action, busy: action === "clockOut" }}
                 >
                   <LogOut size={14} color="#fff" />
                   <Text style={styles.btnText}>Logout</Text>

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -19,6 +18,8 @@ import TodayEventsCard from "../../src/components/TodayEventsCard";
 import TasksSummaryCard from "../../src/components/TasksSummaryCard";
 import SprintProgressCard from "../../src/components/SprintProgressCard";
 import PendingApprovalsCard from "../../src/components/PendingApprovalsCard";
+import { SkeletonCard } from "../../src/components/ui/Skeleton";
+import { haptics } from "../../src/lib/haptics";
 import {
   getActiveAnnouncements,
   getCalendarEvents,
@@ -156,6 +157,9 @@ export default function Dashboard() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    // Confirm the pull gesture registered the instant it fires, rather than
+    // leaving the user watching a spinner wondering whether it took.
+    haptics.light();
     try {
       await refetch();
     } finally {
@@ -194,8 +198,17 @@ export default function Dashboard() {
                 {announcements.map((_, i) => (
                   <Pressable
                     key={i}
-                    hitSlop={6}
-                    onPress={() => setAnnouncementIndex(i)}
+                    // The dot is only 6pt — far below the 44pt minimum target.
+                    // A generous hitSlop makes it reliably tappable without
+                    // enlarging the visual indicator.
+                    hitSlop={14}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Show announcement ${i + 1} of ${announcements.length}`}
+                    accessibilityState={{ selected: i === announcementIndex }}
+                    onPress={() => {
+                      haptics.selection();
+                      setAnnouncementIndex(i);
+                    }}
                   >
                     <View
                       style={[
@@ -215,7 +228,14 @@ export default function Dashboard() {
       <WorkTimerCard />
 
       {isLoading ? (
-        <ActivityIndicator color={theme.primary} style={{ marginTop: 12 }} />
+        // Skeletons instead of a lone spinner: these mirror the shape of the
+        // cards below, so when the data lands it fades into a layout that is
+        // already the right size — no shift, no jump.
+        <>
+          <SkeletonCard lines={2} />
+          <SkeletonCard lines={3} />
+          <SkeletonCard lines={2} />
+        </>
       ) : (
         <>
           {/* Today's Events (meetings + events + tomorrow) */}
@@ -251,12 +271,17 @@ const makeStyles = (theme: Theme) =>
       gap: 4,
     },
     greetingText: {
-      fontSize: 20,
-      fontWeight: "800",
+      // Type scale rather than ad-hoc sizes, so the greeting matches every
+      // other screen title in the app.
+      ...theme.type.title,
+      fontFamily: theme.fontBold,
       color: theme.text,
-      letterSpacing: -0.5,
     },
-    greetingDate: { fontSize: 13, color: theme.textMuted, fontWeight: "500" },
+    greetingDate: {
+      ...theme.type.callout,
+      color: theme.textMuted,
+      fontFamily: theme.fontMedium,
+    },
     announcement: {
       marginTop: 12,
       backgroundColor: theme.surface,
@@ -265,9 +290,8 @@ const makeStyles = (theme: Theme) =>
       gap: 8,
     },
     announcementText: {
-      fontSize: 13,
+      ...theme.type.callout,
       color: theme.textSecondary,
-      lineHeight: 18,
       fontStyle: "italic",
     },
     dots: { flexDirection: "row", gap: 6, alignSelf: "center" },
