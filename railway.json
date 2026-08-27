@@ -6,7 +6,7 @@
   },
   "deploy": {
     "preDeployCommand": "node migrate.js",
-    "startCommand": "sh -c \"node scripts/migrate-uploads-to-r2.js && node index.js\"",
+    "startCommand": "node index.js",
     "healthcheckPath": "/readyz",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
