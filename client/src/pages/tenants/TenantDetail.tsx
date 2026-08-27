@@ -29,6 +29,41 @@ function InfoCard({ icon: Icon, label, value }: { icon: any; label: string; valu
     );
 }
 
+/** Bytes -> the largest sensible unit. Mirrors the server-side formatter. */
+function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+    return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}
+
+/**
+ * Live upload usage, with quota consumption when a limit is set.
+ *
+ * `storage_bytes` is null when usage could not be measured (local dev, or R2
+ * unreachable). The caller must not render the card at all in that case — a
+ * "0 MB" would read as "no uploads" rather than "not measured".
+ */
+function StorageValue({ bytes, objects, quotaMb }: {
+    bytes: number; objects: number | null; quotaMb?: number | null;
+}) {
+    const pct = quotaMb ? Math.round((bytes / 1024 / 1024 / quotaMb) * 100) : null;
+    // Warn before the quota actually bites, not after uploads start failing.
+    const colour = pct === null ? undefined
+        : pct >= 90 ? "var(--danger)"
+            : pct >= 75 ? "var(--warning)" : undefined;
+
+    return (
+        <span style={colour ? { color: colour } : undefined}>
+            {formatBytes(bytes)}
+            {pct !== null && ` (${pct}% of ${quotaMb} MB)`}
+            {objects !== null && (
+                <span className={s.infoCardHint}> · {objects} file{objects === 1 ? "" : "s"}</span>
+            )}
+        </span>
+    );
+}
+
 function Badge({ status }: { status?: string }) {
     const colors: Record<string, { bg: string; fg: string }> = {
         active: { bg: "color-mix(in srgb, var(--success) 14%, transparent)", fg: "var(--success)" },
@@ -216,6 +251,20 @@ export default function TenantDetail({ tenantId, onBack }: TenantDetailProps) {
                     <InfoCard icon={HardDrive} label="Max Storage" value={tenant.max_storage_mb ? `${tenant.max_storage_mb} MB` : "∞"} />
                     <InfoCard icon={Users} label="User Count" value={tenant.user_count || 0} />
                     {stats && <InfoCard icon={Database} label="DB Size" value={`${(stats.db_size_bytes / 1024 / 1024).toFixed(1)} MB`} />}
+                    {/* Live R2 upload usage. Hidden (not zeroed) when unmeasurable —
+                        see tenantStorageStatsFields on the server. Uploads are what
+                        max_storage_mb meters, and they dwarf the database. */}
+                    {stats?.storage_bytes != null && (
+                        <InfoCard
+                            icon={HardDrive}
+                            label="Upload Storage"
+                            value={<StorageValue
+                                bytes={stats.storage_bytes}
+                                objects={stats.storage_objects ?? null}
+                                quotaMb={tenant.max_storage_mb}
+                            />}
+                        />
+                    )}
                     {/* Business-activity metrics are tenant-private: the server only
                         returns them for the default tenant or during an approved
                         access session. Hide the cards rather than show zeroes. */}

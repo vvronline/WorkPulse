@@ -37,6 +37,7 @@ const {
     getPlatformConfig, updatePlatformConfig,
 } = require("../utils/platformConfig");
 const { invalidateMaintenanceCache } = require("../middleware/maintenanceMode");
+const { tenantStorageStatsFields } = require("../services/tenantStorageUsage");
 
 const router = express.Router();
 
@@ -1078,14 +1079,12 @@ router.get("/:id/stats", async (req: Request, res: Response) => {
 
         // Business-activity metrics describe what the tenant's staff are doing
         // and serve no platform-operations purpose, so they follow the same
-        // consent model as user PII. Seat count and database size stay visible
-        // because max_users / max_storage_mb enforcement depends on them.
+        // consent model as user PII. Seat count, database size and storage
+        // usage stay visible: max_users / max_storage_mb enforcement needs them.
         const activityAllowed = await hasTenantDataConsent(tenant, req);
-
         const db = await getTenantPool(tenant.db_name, tenant.db_host);
-
         const safeCount = (q: string) => db.query(q).then((r: any) => parseInt(r.rows[0].count, 10)).catch(() => 0);
-        const [user_count, task_count, message_count, dbSize, lastActivity] = await Promise.all([
+        const [user_count, task_count, message_count, dbSize, lastActivity, storage] = await Promise.all([
             safeCount("SELECT COUNT(*) AS count FROM users WHERE is_active = TRUE"),
             activityAllowed ? safeCount("SELECT COUNT(*) AS count FROM tasks") : Promise.resolve(null),
             activityAllowed ? safeCount("SELECT COUNT(*) AS count FROM messages") : Promise.resolve(null),
@@ -1093,6 +1092,7 @@ router.get("/:id/stats", async (req: Request, res: Response) => {
             activityAllowed
                 ? db.query('SELECT MAX("timestamp") AS last_activity FROM time_entries').catch(() => ({ rows: [{}] }))
                 : Promise.resolve({ rows: [{}] }),
+            tenantStorageStatsFields(Number(req.params.id)), // live R2 usage
         ]);
 
         res.json({
@@ -1100,9 +1100,9 @@ router.get("/:id/stats", async (req: Request, res: Response) => {
             task_count,
             message_count,
             db_size_bytes: parseInt(dbSize.rows[0].size, 10),
+            ...storage,
             last_activity: lastActivity.rows[0]?.last_activity ?? null,
-            // Lets the Platform Console hide the activity cards instead of
-            // rendering misleading zeroes.
+            // Lets the Console hide activity cards rather than show false zeroes.
             activity_restricted: !activityAllowed,
             ...(activityAllowed ? {} : { activity_restricted_reason: NON_DEFAULT_ACTIVITY_MSG }),
         });

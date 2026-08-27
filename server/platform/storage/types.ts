@@ -74,6 +74,15 @@ export interface StorageAdapter {
      */
     deletePrefix(prefix: string): Promise<number>;
 
+    /**
+     * List every object under a prefix (metadata only, no bodies).
+     *
+     * Used for per-tenant storage metering against `tenants.max_storage_mb`.
+     * Optional: backends that cannot enumerate cheaply may omit it, and callers
+     * must treat its absence as "usage unknown" rather than zero.
+     */
+    list?(prefix: string): Promise<StoredObject[]>;
+
     /** True when the key exists. */
     exists(key: string): Promise<boolean>;
 

@@ -458,6 +458,14 @@
   margin-top: 2px;
 }
 
+/* Secondary detail inside a card value (e.g. the file count next to a size).
+   Deliberately de-emphasised so the primary figure stays the focal point. */
+.infoCardHint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
 .iconAccent {
   color: var(--accent);
   flex-shrink: 0;

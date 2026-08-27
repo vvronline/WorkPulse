@@ -129,6 +129,39 @@ export class R2Adapter implements StorageAdapter {
         return deleted;
     }
 
+    /**
+     * List objects under a prefix, paging through the full result set.
+     *
+     * Metadata only — bodies are never fetched, so cost is one Class A
+     * operation per 1,000 keys. Callers should cache; see
+     * services/tenantStorageUsage.ts.
+     */
+    async list(prefix: string): Promise<StoredObject[]> {
+        const out: StoredObject[] = [];
+        let token: string | undefined;
+
+        do {
+            const page = await this.client.send(new ListObjectsV2Command({
+                Bucket: this.bucket,
+                Prefix: prefix,
+                ContinuationToken: token,
+            }));
+
+            for (const obj of page.Contents || []) {
+                if (!obj.Key) continue;
+                out.push({
+                    key: obj.Key,
+                    size: obj.Size || 0,
+                    lastModified: obj.LastModified,
+                });
+            }
+
+            token = page.IsTruncated ? page.NextContinuationToken : undefined;
+        } while (token);
+
+        return out;
+    }
+
     async exists(key: string): Promise<boolean> {
         try {
             await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
