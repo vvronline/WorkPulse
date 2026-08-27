@@ -44,6 +44,11 @@ data/
 .vite/
 coverage/
 
+# Graphify code-graph reports and caches are generated analysis artifacts.
+# Keep them local; source code and architecture docs are the repository truth.
+graphify-out/
+**/graphify-out/
+
 # ── Environment / secrets ─────────────────────────────
 # Google geolocation API key (injected at build time from CI secrets)
 desktop/google-api-key.txt

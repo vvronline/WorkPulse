@@ -1,0 +1,132 @@
+name: Web SPA — Publish to R2 (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type PUBLISH to upload the SPA'
+        required: true
+        default: ''
+
+concurrency:
+  group: web-spa-production
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event.inputs.confirm == 'PUBLISH'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      # MUST be a public SPA bucket, separate from private aino-uploads and
+      # public release artifacts (ADR-004).
+      R2_WEB_BUCKET: ${{ vars.R2_WEB_BUCKET }}
+      SPA_PUBLIC_ORIGIN: ${{ vars.SPA_PUBLIC_ORIGIN }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Validate configuration
+        run: |
+          set -euo pipefail
+          test -n "$AWS_ACCESS_KEY_ID"
+          test -n "$AWS_SECRET_ACCESS_KEY"
+          test -n "${{ secrets.R2_ACCOUNT_ID }}"
+          test -n "$R2_WEB_BUCKET"
+          test -n "$SPA_PUBLIC_ORIGIN"
+          if [ "$R2_WEB_BUCKET" = "aino-uploads" ]; then
+            echo "::error::Private user uploads and the public SPA must never share a bucket."
+            exit 1
+          fi
+
+      - name: Install and build client
+        working-directory: client
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Verify build integrity and service-worker policy
+        run: node scripts/verify-spa-build.mjs client/dist
+
+      # Publish immutable/hashable files first. Existing release assets are NOT
+      # deleted here: old cached HTML must remain usable during rollout.
+      - name: Upload immutable assets first
+        run: |
+          set -euo pipefail
+          aws s3 sync client/dist/assets/ "s3://${R2_WEB_BUCKET}/assets/" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --cache-control "public, max-age=31536000, immutable"
+
+          for dir in emoji img mediapipe models; do
+            if [ -d "client/dist/${dir}" ]; then
+              aws s3 sync "client/dist/${dir}/" "s3://${R2_WEB_BUCKET}/${dir}/" \
+                --endpoint-url "$R2_ENDPOINT" \
+                --cache-control "public, max-age=31536000, immutable"
+            fi
+          done
+
+      - name: Upload stable public files
+        run: |
+          set -euo pipefail
+          find client/dist -maxdepth 1 -type f \
+            ! -name 'index.html' ! -name 'sw.js' ! -name 'manifest.json' -print0 \
+            | while IFS= read -r -d '' file; do
+                aws s3 cp "$file" "s3://${R2_WEB_BUCKET}/$(basename "$file")" \
+                  --endpoint-url "$R2_ENDPOINT" \
+                  --cache-control "no-cache"
+              done
+
+      - name: Verify every index asset exists before promotion
+        run: |
+          set -euo pipefail
+          node scripts/verify-spa-build.mjs client/dist
+          grep -oE '(src|href)="/[^"]+"' client/dist/index.html \
+            | cut -d'"' -f2 \
+            | while read -r ref; do
+                key="${ref#/}"
+                aws s3api head-object --bucket "$R2_WEB_BUCKET" --key "$key" \
+                  --endpoint-url "$R2_ENDPOINT" >/dev/null
+              done
+
+      # Mutable shell LAST: once index.html is visible, all referenced assets
+      # are guaranteed to exist.
+      - name: Promote manifest, service worker, then HTML shell
+        run: |
+          set -euo pipefail
+          for file in manifest.json sw.js index.html; do
+            aws s3 cp "client/dist/${file}" "s3://${R2_WEB_BUCKET}/${file}" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --cache-control "no-cache, no-store, must-revalidate"
+          done
+
+      - name: Verify public SPA origin
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -H 'Cache-Control: no-cache' \
+            "${SPA_PUBLIC_ORIGIN}/index.html?verify=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            | grep -q '<div id="root"></div>'
+          echo "SPA shell verified at ${SPA_PUBLIC_ORIGIN}"
+
+      - name: Upload build as rollback artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-spa-${{ github.sha }}
+          path: client/dist/
+          retention-days: 30

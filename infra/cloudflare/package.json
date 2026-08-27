@@ -1,0 +1,12 @@
+{
+  "name": "aino-edge-router",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.34.0"
+  }
+}

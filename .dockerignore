@@ -8,6 +8,7 @@ client/dist/
 dist/
 build/
 coverage/
+**/graphify-out/
 
 # Logs
 logs

@@ -1,6 +1,12 @@
-# WorkPulse — Railway Deployment Guide
+# AINO — Railway Deployment Guide
 
-Production deployment on [Railway](https://railway.com) with managed PostgreSQL, automatic HTTPS, persistent file storage, and GitHub-driven CI/CD.
+Production deployment on Railway with managed PostgreSQL, Redis, Cloudflare R2,
+role-specific services, and GitHub-driven CI/CD.
+
+> 🔴 **Before pushing to `master`, follow the authoritative ordered checklist in
+> [`PRE_PUSH_DEPLOYMENT_RUNBOOK.md`](PRE_PUSH_DEPLOYMENT_RUNBOOK.md).** A push
+> automatically deploys production. This guide describes the target shape; the
+> runbook contains the safety gates, backup/data-copy order and rollback steps.
 
 ---
 
@@ -14,10 +20,15 @@ Internet
 │   Railway Project               │
 │                                 │
 │  ┌───────────────────────────┐  │
-│  │  App Service (Docker)     │  │ ← Express + React SPA
-│  │  workpulse-production     │  │   port 5000
-│  │  .up.railway.app          │  │
+│  ┌───────────────────────────┐  │ ← ROLE=web (HTTP API)
+│  │  aino-web                 │  │
 │  └────────────┬──────────────┘  │
+│  ┌───────────────────────────┐  │ ← ROLE=realtime (WS + collab)
+│  │  aino-realtime            │  │
+│  └───────────────────────────┘  │
+│  ┌───────────────────────────┐  │ ← ROLE=worker (BullMQ + probes)
+│  │  aino-worker              │  │
+│  └───────────────────────────┘  │
 │               │ DATABASE_URL    │
 │  ┌────────────▼──────────────┐  │
 │  │  PostgreSQL Plugin        │  │ ← Managed, no external port
@@ -25,17 +36,21 @@ Internet
 │  └───────────────────────────┘  │
 │                                 │
 │  ┌───────────────────────────┐  │
-│  │  Persistent Volume        │  │ ← /app/server/uploads
-│  │  (Hobby plan+)            │  │   survives redeploys
+│  │  Redis + PgBouncer        │  │ ← shared cache/queue + DB pooling
 │  └───────────────────────────┘  │
 └─────────────────────────────────┘
+
+Cloudflare routes `/api` + authenticated `/uploads` to web, `/ws` + `/collab`
+to realtime, and public SPA paths to a dedicated R2 bucket. Tenant uploads live
+in the separate **private** `aino-uploads` bucket.
 ```
 
 **What Railway handles automatically:**
 - HTTPS / TLS certificates (no Caddy or Nginx needed)
-- Managed PostgreSQL with `DATABASE_URL` injection
+- Managed PostgreSQL and Redis with private reference variables
 - Deployments triggered on every push to `master`
-- Health checks via `/api/health`
+- Pre-deploy migrations via `node migrate.js` (failure blocks promotion)
+- Health checks via `/readyz`; liveness via `/healthz`
 - Container restarts on crash
 
 ---
@@ -79,9 +94,23 @@ In your app service → **Variables** tab, add:
 | `NODE_ENV` | `production` |
 | `PORT` | `5000` |
 | `USE_HTTPS` | `false` |
-| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+| `DATABASE_URL` | PgBouncer private URL after canary; direct Postgres before then |
+| `DIRECT_DATABASE_URL` | `${{Postgres.DATABASE_URL}}` for pre-deploy migrations |
+| `REDIS_URL` | `${{Redis.REDIS_URL}}` — mandatory in production |
+| `ROLE` | `all`, `web`, `realtime`, or `worker` |
+| `STORAGE_DRIVER` | `r2` |
+| `R2_UPLOADS_BUCKET` | `aino-uploads` |
 
 > `${{Postgres.DATABASE_URL}}` is Railway's **reference variable** syntax — it pulls the live connection string from the PostgreSQL service. The name `Postgres` must match your PostgreSQL service name exactly (check the service title in your project).
+
+Optional — observability (Phase H). Safe to omit; the app runs without them:
+
+| Variable | Value |
+|---|---|
+| `METRICS_TOKEN` | Bearer token a Prometheus scraper must send to `GET /metrics`. **Without it `/metrics` returns 404 in production** (fail-closed). Use the same value on every service. |
+| `METRICS_TENANT_TOP_N` | Tenants that get their own metric label before the rest fold into `other`. Default `20`. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP collector URL. **Setting this enables tracing**; leave unset to disable. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | e.g. `authorization=Bearer <token>` |
 
 Optional — only needed if you use email features:
 
@@ -103,19 +132,18 @@ Optional — only needed if you use email features:
 In your app service → **Settings**:
 
 - **Port**: `5000`
-- **Health Check Path**: `/api/health`
+- **Health Check Path**: `/readyz`
+- **Pre-deploy Command**: `node migrate.js`
+- **Start Command**: `node index.js`
 
 ---
 
-## Step 6: Add Persistent Volume for Uploads
+## Step 6: Configure Private R2 Upload Storage
 
-User avatars and file attachments are stored in `/app/server/uploads`. Without a volume, they are wiped on every redeploy.
-
-> Persistent volumes require the **Hobby plan ($5/mo)** or above.
-
-1. App service → **Volumes** tab → **+ Add Volume**
-2. **Mount Path**: `/app/server/uploads`
-3. Save — Railway will redeploy automatically
+Uploads are stored in private Cloudflare R2. The old `/app/server/uploads`
+volume is rollback-only during migration and must be detached after the R2 copy
+and two-replica verification. See the pre-push runbook; do not create a new
+application upload volume.
 
 ---
 

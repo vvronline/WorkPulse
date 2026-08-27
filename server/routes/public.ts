@@ -115,9 +115,7 @@ router.get("/branding", async (req: Request, res: Response) => {
 });
 
 router.get("/branding/logo", async (req: Request, res: Response) => {
-    const fs = require("fs");
-    const path = require("path");
-    const UPLOADS_ROOT = path.resolve(__dirname, "..", "uploads");
+    const { getStorage, urlToKey } = require("../platform/storage");
 
     const LOGO_SQL = `SELECT b.logo_url
                FROM org_branding b
@@ -152,12 +150,8 @@ router.get("/branding/logo", async (req: Request, res: Response) => {
 
     if (!logoUrl) return res.status(404).json({ error: "No logo" });
 
-    const stripped = logoUrl.replace(/^\/+/, "").replace(/^uploads\//, "");
-    const abs = path.resolve(UPLOADS_ROOT, stripped);
-    if (!abs.startsWith(fs.realpathSync(UPLOADS_ROOT))) {
-        return res.status(403).json({ error: "Forbidden" });
-    }
-    if (!fs.existsSync(abs)) return res.status(404).json({ error: "Not found" });
+    const key = urlToKey(logoUrl);
+    if (!key) return res.status(403).json({ error: "Forbidden" });
 
     // Logos can be SVG, which the browser will execute as an active document
     // (inline <script>) if opened directly — a stored-XSS vector on this
@@ -165,7 +159,24 @@ router.get("/branding/logo", async (req: Request, res: Response) => {
     // sandbox the response so any embedded script can't run.
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
-    res.sendFile(abs);
+
+    // A3: read from object storage. This endpoint is intentionally public (it
+    // powers the login-page logo), but we still stream the bytes rather than
+    // redirecting to a presigned URL — the sandbox headers above must apply to
+    // the response the browser actually renders, and a 302 to R2 would drop them.
+    try {
+        const storage = getStorage();
+        const body = await storage.get(key);
+        if (!body) return res.status(404).json({ error: "Not found" });
+
+        const meta = await storage.stat(key);
+        if (meta?.contentType) res.setHeader("Content-Type", meta.contentType);
+        res.setHeader("Cache-Control", "public, max-age=300");
+        return res.send(body);
+    } catch (err) {
+        req.log?.warn?.({ err: (err as Error).message, key }, "Public logo fetch failed");
+        return res.status(404).json({ error: "Not found" });
+    }
 });
 
 router.get("/notes/:token", async (req: Request, res: Response) => {

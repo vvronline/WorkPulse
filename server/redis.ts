@@ -6,6 +6,8 @@ type RedisClient = Redis;
 let client: RedisClient | null = null;
 let subscriber: RedisClient | null = null; // dedicated connection for Pub/Sub
 let isReady = false;
+let subscriberReady = false;
+let initPromise: Promise<void> | null = null;
 
 // TTLs in seconds
 const TTL = {
@@ -51,19 +53,26 @@ function attachFailFast(c: RedisClient, label: string): void {
         if (attempts >= 3 && !killed) {
             killed = true;
             try { c.disconnect(); } catch { /* ignore */ }
-            // Mark as not-ready forever; the rest of the app silently uses
-            // its in-memory fallbacks (rate-limit MemoryStore, in-proc
-            // cache for org config + user context, etc.).
+            if (process.env.NODE_ENV === "production") {
+                logger.fatal({ label }, "Redis connection lost in production — exiting to avoid split-brain state");
+                setTimeout(() => process.exit(1), 100);
+            }
         }
     });
 }
 
-function initRedis(): void {
+function initRedis(): Promise<void> {
+    if (initPromise) return initPromise;
     const url = process.env.REDIS_URL || null;
     if (!url) {
-        logger.info("REDIS_URL not set — running without Redis cache");
-        return;
+        if (process.env.NODE_ENV === "production") {
+            return Promise.reject(new Error("REDIS_URL is required in production"));
+        }
+        logger.info("REDIS_URL not set — running without Redis cache (development only)");
+        return Promise.resolve();
     }
+
+    initPromise = (async () => {
 
     const options = {
         // Railway private networking (*.railway.internal) resolves to IPv6
@@ -100,21 +109,18 @@ function initRedis(): void {
     client = new Redis(url, options);
 
     client.on("connect", () => {
-        isReady = true;
         redisErrorLogged = false;
-        logger.info("Redis connected");
+        logger.info("Redis TCP connected");
     });
     client.on("ready", () => { isReady = true; });
     client.on("close", () => { isReady = false; });
     client.on("end", () => { isReady = false; });
     attachFailFast(client, "client");
 
-    client.connect().catch((err: Error) => {
-        if (!redisErrorLogged) {
-            logger.warn({ err: err.message }, "Redis initial connection failed — running without cache");
-            redisErrorLogged = true;
-        }
-    });
+    await client.connect();
+    await client.ping();
+    isReady = true;
+    logger.info("Redis command connection ready");
 
     // Dedicated subscriber connection for Pub/Sub.
     //
@@ -123,8 +129,25 @@ function initRedis(): void {
     // can't be replayed by the caller. We still want to stop the
     // *reconnect loop* though, so we apply the same fail-fast guard.
     subscriber = new Redis(url, { ...options, maxRetriesPerRequest: null });
+    subscriber.on("ready", () => { subscriberReady = true; });
+    subscriber.on("close", () => { subscriberReady = false; });
+    subscriber.on("end", () => { subscriberReady = false; });
     attachFailFast(subscriber, "subscriber");
-    subscriber.connect().catch(() => { /* logged via 'error' */ });
+    await subscriber.connect();
+    await subscriber.ping();
+    subscriberReady = true;
+    logger.info("Redis subscriber connection ready");
+    })().catch((err: Error) => {
+        isReady = false;
+        subscriberReady = false;
+        initPromise = null;
+        if (process.env.NODE_ENV === "production") {
+            logger.fatal({ err: err.message }, "Redis initialization failed in production");
+            throw err;
+        }
+        logger.warn({ err: err.message }, "Redis initialization failed — development fallback active");
+    });
+    return initPromise;
 }
 
 // -- core helpers (all gracefully degrade) --
@@ -167,6 +190,13 @@ async function delPattern(pattern: string): Promise<void> {
 
 function getSubscriber(): RedisClient | null { return subscriber; }
 function getClient(): RedisClient | null { return client; }
+function isRedisReady(): boolean { return isReady; }
+function isSubscriberReady(): boolean { return subscriberReady; }
+
+async function ping(): Promise<boolean> {
+    if (!isReady || !client) return false;
+    try { return (await client.ping()) === "PONG"; } catch { return false; }
+}
 
 async function publish(channel: string, data: unknown): Promise<void> {
     if (!isReady || !client) return;
@@ -401,6 +431,11 @@ async function shutdown(): Promise<void> {
     if (client) {
         try { await client.quit(); } catch { /* ignore */ }
     }
+    isReady = false;
+    subscriberReady = false;
+    client = null;
+    subscriber = null;
+    initPromise = null;
 }
 
 export {
@@ -414,6 +449,9 @@ export {
     delPattern,
     getClient,
     getSubscriber,
+    isRedisReady,
+    isSubscriberReady,
+    ping,
     publish,
     // Token version
     getTokenVersion,

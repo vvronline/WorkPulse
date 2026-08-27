@@ -8,7 +8,8 @@ const { loadUserContext } = require("../middleware/rbac");
 const { sendToUser, emitCallHistoryMessage } = require("../utils/ws");
 const redis = require("../redis");
 const { requireTenant, requireFeature } = require("../middleware/tenant");
-const { getUploadDir, getUploadUrl } = require("../utils/uploadPath");
+const { getUploadKey, getUploadUrl, getKeyFromUrl } = require("../utils/uploadPath");
+const { getStorage } = require("../platform/storage");
 const { getLocalToday, getTzModifier } = require("../utils/timezone");
 import { enqueueChatMediaPipelineJob } from "../jobs";
 import {
@@ -71,27 +72,11 @@ const ALLOWED_TYPES: Record<string, string> = {
   "text/csv": "csv",
 };
 
-const storage = multer.diskStorage({
-  destination: (req: Request, _file: UploadedFile, cb: MulterCb<string>) => {
-    try {
-      // Per-tenant layout: uploads/tenant_<tid>/org_<oid>/chat/
-      // requireTenant guarantees req.tenantId; loadUserContext on the
-      // route handler guarantees req.userOrgId.
-      const dir = getUploadDir(req.tenantId, req.userOrgId, "chat");
-      cb(null, dir);
-    } catch (err) {
-      cb(err as Error);
-    }
-  },
-  filename: (req: Request, file: UploadedFile, cb: MulterCb<string>) => {
-    // Use canonical extension from MIME type — never trust originalname extension
-    const ext = ALLOWED_TYPES[file.mimetype] || "bin";
-    cb(null, `${req.userId}_${Date.now()}.${ext}`);
-  },
-});
-
+// A3: buffered in memory, then written to object storage. Disk storage pinned
+// the app to one Railway instance (a volume attaches to a single container),
+// which made horizontal scaling impossible.
 const chatUpload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: (_req: Request, file: UploadedFile, cb: MulterCb<boolean>) => {
     if (!ALLOWED_TYPES[file.mimetype]) {
@@ -100,6 +85,23 @@ const chatUpload = multer({
     cb(null, true);
   },
 });
+
+/** Server-generated filename; extension comes from the validated MIME type. */
+function chatFilename(userId: number | undefined, mimetype: string): string {
+  const ext = ALLOWED_TYPES[mimetype] || "bin";
+  return `${userId}_${Date.now()}.${ext}`;
+}
+
+/** Best-effort delete of a chat attachment object. */
+async function deleteChatObject(fileUrl: string | null | undefined): Promise<void> {
+  const key = getKeyFromUrl(fileUrl);
+  if (!key) return;
+  try {
+    await getStorage().delete(key);
+  } catch {
+    /* best-effort: an orphaned object is harmless */
+  }
+}
 
 // ─── Helper: verify participant ───
 async function verifyParticipant(
@@ -1750,12 +1752,31 @@ router.post(
           .replace(/[/\\]/g, "_") // no path separators
           .slice(0, 255) || "file";
 
+      const storedName = chatFilename(req.userId, req.file.mimetype);
+      const fileKey = getUploadKey(
+        req.tenantId,
+        req.userOrgId,
+        "chat",
+        storedName,
+      );
       const fileUrl = getUploadUrl(
         req.tenantId,
         req.userOrgId,
         "chat",
-        req.file.filename,
+        storedName,
       );
+
+      // Store the object BEFORE inserting the message so a row can never
+      // reference a key that does not exist.
+      try {
+        await getStorage().put(fileKey, req.file.buffer, {
+          contentType: req.file.mimetype,
+        });
+      } catch (err) {
+        req.log.error({ err, key: fileKey }, "Chat attachment upload failed");
+        return res.status(500).json({ error: "Failed to store attachment" });
+      }
+
       const content = req.body.content || null;
       const replyToId = req.body.replyToId
         ? parseInt(req.body.replyToId, 10)
@@ -2317,13 +2338,7 @@ router.delete("/messages/:id", auth, async (req: Request, res: Response) => {
       });
     }
 
-    if (msg.file_url) {
-      const filePath = path.join(__dirname, "..", msg.file_url);
-      const resolved = path.resolve(filePath);
-      if (resolved.startsWith(path.resolve(__dirname, "..", "uploads"))) {
-        fs.unlink(resolved, () => {});
-      }
-    }
+    await deleteChatObject(msg.file_url);
 
     res.json({ ok: true });
   } catch (err) {

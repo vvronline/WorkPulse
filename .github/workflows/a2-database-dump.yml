@@ -1,0 +1,104 @@
+name: A2 — Database Dump (manual)
+
+# =============================================================================
+# Runs scripts/a2-dump-databases.sh on a GitHub runner, which has pg_dump
+# preinstalled and unrestricted egress — unlike the dev workstation, where the
+# corporate network blocks Postgres/21659 and SSH/22.
+#
+# SETUP (one time):
+#   Repo -> Settings -> Secrets and variables -> Actions -> New repository secret
+#     Name:  DATABASE_PUBLIC_URL
+#     Value: the Railway Postgres PUBLIC connection string
+#            (Railway -> Postgres -> Connect -> Public Network)
+#
+# RUN:
+#   Actions tab -> "A2 — Database Dump (manual)" -> Run workflow
+#   -> type CONFIRM in the box -> Run
+#
+# OUTPUT:
+#   A private workflow artifact "a2-dumps" retained for 7 days, containing:
+#     master-<ts>.sql          <- YOUR IDENTITY (platform_users, tenants)
+#     master-verify-<ts>.txt   <- proof the admin is captured
+#     tenant-default-<ts>.sql  <- rollback artifact
+#     0001_baseline-<ts>.sql   <- the squashed baseline for A2.4
+#
+# SAFETY: read-only. Only pg_dump + psql SELECTs. Nothing is dropped or altered.
+#
+# AFTER DOWNLOADING: delete the artifact. It contains full database contents
+# including password hashes. Long-term storage belongs in the private R2 bucket.
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type CONFIRM to run the dump'
+        required: true
+        default: ''
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    # Guard against an accidental click.
+    if: ${{ github.event.inputs.confirm == 'CONFIRM' }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify the confirmation input
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "CONFIRM" ]; then
+            echo "::error::You must type CONFIRM to run this workflow."
+            exit 1
+          fi
+
+      # Railway runs Postgres 18 (image ghcr.io/railwayapp-templates/postgres-ssl:18).
+      # pg_dump REFUSES to dump a server newer than itself, so the client major
+      # version must be >= the server major version. A client-16 runner fails with
+      # "server version: 18.x; pg_dump version: 16.x — aborting".
+      # If Railway upgrades the Postgres image, bump PG_MAJOR to match.
+      - name: Install PostgreSQL 18 client
+        env:
+          PG_MAJOR: '18'
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "postgresql-client-${PG_MAJOR}"
+          pg_dump --version
+
+      - name: Run A2 dumps
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_PUBLIC_URL }}
+          OUT_DIR: ./a2-dumps
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Secret DATABASE_PUBLIC_URL is not set. See the header of this workflow."
+            exit 1
+          fi
+          chmod +x scripts/a2-dump-databases.sh
+          sh scripts/a2-dump-databases.sh
+
+      - name: Summarise output
+        run: |
+          echo "### A2 dump artifacts" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -lh a2-dumps >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Verification (A2.2):**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat a2-dumps/master-verify-*.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload dumps as a private artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2-dumps
+          path: a2-dumps/
+          retention-days: 7
+          if-no-files-found: error

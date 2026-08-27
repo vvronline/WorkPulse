@@ -12,7 +12,8 @@ const auth = require('../../middleware/auth');
 const { loadUserContext } = require('../../middleware/rbac');
 const { notifyByEmail } = require('../../utils/mailer');
 const { sendToUser } = require('../../utils/ws');
-const { getUploadDir, getUploadUrl } = require('../../utils/uploadPath');
+const { getUploadKey, getUploadUrl } = require('../../utils/uploadPath');
+const { getStorage } = require('../../platform/storage');
 
 const { logHistory } = require('./_helpers/logHistory');
 const { canAccessTask } = require('./_helpers/access');
@@ -33,25 +34,10 @@ const ALLOWED_TYPES: Record<string, string> = {
     'text/plain': 'txt', 'text/csv': 'csv',
 };
 
-const storage = multer.diskStorage({
-    destination: (req: Request, file: any, cb: any) => {
-        try {
-            // Per-tenant layout: uploads/tenant_<tid>/org_<oid>/task-comments/
-            const dir = getUploadDir(req.tenantId, req.userOrgId, 'task-comments');
-            cb(null, dir);
-        } catch (err) {
-            cb(err);
-        }
-    },
-    filename: (req: Request, file: any, cb: any) => {
-        // Use canonical extension from MIME type — never trust originalname.
-        const ext = ALLOWED_TYPES[file.mimetype] || 'bin';
-        cb(null, `${req.userId}_${Date.now()}.${ext}`);
-    },
-});
-
+// A3: buffered in memory, then written to object storage so the app stays
+// stateless and can run on multiple replicas.
 const commentUpload = multer({
-    storage,
+    storage: multer.memoryStorage(),
     limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
     fileFilter: (req: Request, file: any, cb: any) => {
         if (!ALLOWED_TYPES[file.mimetype]) {
@@ -60,6 +46,12 @@ const commentUpload = multer({
         cb(null, true);
     },
 });
+
+/** Server-generated filename; extension from the validated MIME type. */
+function commentFilename(userId: number | undefined, mimetype: string): string {
+    const ext = ALLOWED_TYPES[mimetype] || 'bin';
+    return `${userId}_${Date.now()}.${ext}`;
+}
 
 // ─── Get comments for a task ──────────────────────────────────────────────
 router.get('/:id/comments', auth, loadUserContext, async (req: Request, res: Response) => {
@@ -98,17 +90,17 @@ const handleUpload = (req: Request, res: Response, next: NextFunction) => {
 };
 
 router.post('/:id/comments', auth, loadUserContext, handleUpload, async (req: Request, res: Response) => {
-    // Helper to remove an orphaned upload if the request fails after the file
-    // was already written to disk.
+    // A3: the file is held in memory until every validation passes, so an
+    // early return simply discards the buffer — there is no orphan to clean up.
+    // `uploadedKey` is only set once the object has actually been stored.
+    let uploadedKey: string | null = null;
     const cleanupFile = async () => {
-        if (req.file?.path) {
-            try { await fsPromises.unlink(req.file.path); } catch { /* ignore */ }
-        }
+        if (!uploadedKey) return;
+        try { await getStorage().delete(uploadedKey); } catch { /* ignore */ }
     };
     try {
         const task = (await req.db!.query('SELECT * FROM tasks WHERE id = $1', [req.params.id])).rows[0];
         if (!await canAccessTask(task, req.userId, req.userOrgId, req.db, req.userRole)) {
-            await cleanupFile();
             return res.status(404).json({ error: 'Task not found' });
         }
 
@@ -120,14 +112,22 @@ router.post('/:id/comments', auth, loadUserContext, handleUpload, async (req: Re
             return res.status(400).json({ error: 'Comment cannot be empty' });
         }
         if (content.length > 2000) {
-            await cleanupFile();
             return res.status(400).json({ error: 'Comment must be 2000 characters or less' });
         }
 
-        // Build the canonical per-tenant file URL when a file was uploaded.
+        // Store the object (after validation) and build its canonical URL.
         let fileUrl = null, fileName = null, fileType = null, fileSize = null;
         if (hasFile) {
-            fileUrl = getUploadUrl(req.tenantId, req.userOrgId, 'task-comments', req.file!.filename);
+            const storedName = commentFilename(req.userId, req.file!.mimetype);
+            const key = getUploadKey(req.tenantId, req.userOrgId, 'task-comments', storedName);
+            try {
+                await getStorage().put(key, req.file!.buffer, { contentType: req.file!.mimetype });
+                uploadedKey = key;
+            } catch (err) {
+                req.log.error({ err, key }, 'Task comment attachment upload failed');
+                return res.status(500).json({ error: 'Failed to store attachment' });
+            }
+            fileUrl = getUploadUrl(req.tenantId, req.userOrgId, 'task-comments', storedName);
             fileName = req.file!.originalname;
             fileType = req.file!.mimetype;
             fileSize = req.file!.size;

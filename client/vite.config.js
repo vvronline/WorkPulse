@@ -20,6 +20,10 @@ export default defineConfig({
             '/ws': {
                 target: 'ws://localhost:5000',
                 ws: true
+            },
+            '/collab': {
+                target: 'ws://localhost:5000',
+                ws: true
             }
         },
     }

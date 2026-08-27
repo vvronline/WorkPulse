@@ -65,7 +65,23 @@
       - GMAIL_CLIENT_ID=${GMAIL_CLIENT_ID:-}
       - GMAIL_CLIENT_SECRET=${GMAIL_CLIENT_SECRET:-}
       - GMAIL_REFRESH_TOKEN=${GMAIL_REFRESH_TOKEN:-}
+      # A3 — object storage. Defaults to `local` so this compose stack works
+      # offline with no R2 credentials; set STORAGE_DRIVER=r2 (plus the R2_*
+      # vars) to exercise the production path.
+      - STORAGE_DRIVER=${STORAGE_DRIVER:-local}
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_UPLOADS_BUCKET=${R2_UPLOADS_BUCKET:-aino-uploads}
+      # H — observability. Unset by default: /metrics is open on this internal
+      # network, and tracing stays off until an OTLP collector is configured.
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
+      - METRICS_TENANT_TOP_N=${METRICS_TENANT_TOP_N:-20}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
     volumes:
+      # Only used by STORAGE_DRIVER=local. With STORAGE_DRIVER=r2 the container
+      # is fully stateless and this mount can be deleted.
       - ./server/uploads:/app/server/uploads
     networks:
       - workpulse-internal

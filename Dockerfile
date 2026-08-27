@@ -18,8 +18,10 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app/server
 
-# Install dumb-init for PID 1 signal handling and su-exec for privilege drop
-RUN apk add --no-cache dumb-init su-exec
+# dumb-init handles PID 1 signal forwarding (so SIGTERM reaches Node and the
+# graceful shutdown runs). su-exec is no longer needed: A3 removed the volume,
+# so there is no root-owned mount to chown before dropping privileges.
+RUN apk add --no-cache dumb-init
 
 # Create non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
@@ -40,11 +42,14 @@ COPY --from=frontend-builder /app/client/dist /app/client/dist
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Create uploads directory so it exists even without a volume mount
-RUN mkdir -p /app/server/uploads/avatars && chown -R appuser:appgroup /app/server/uploads
+# A3: uploads live in Cloudflare R2, so no volume is mounted here.
+# This directory only backs STORAGE_DRIVER=local (development); in production
+# it stays empty. Owned by appuser at build time, so no runtime chown is needed.
+RUN mkdir -p /app/server/uploads && chown -R appuser:appgroup /app/server/uploads
 
-# Do NOT switch to appuser here — entrypoint.sh handles the privilege drop
-# so it can fix volume mount ownership at runtime before starting the app
+# The container is now stateless — there is no root-owned volume to fix up, so
+# we can drop privileges at build time instead of doing it in the entrypoint.
+USER appuser
 
 EXPOSE 5000
 
@@ -52,4 +57,4 @@ ENV NODE_ENV=production
 ENV PORT=5000
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["sh", "-c", "node migrate.js && node index.js"]
+CMD ["node", "index.js"]

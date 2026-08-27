@@ -25,6 +25,9 @@ const cookie = require("cookie");
 const { masterQuery } = require("../db");
 const { getTenantPool, getTenantById } = require("./tenantManager");
 const redis = require("../redis");
+import * as signalStore from "../realtime/signalStore";
+import * as membershipCache from "../realtime/membershipCache";
+import * as meetingLeaveStore from "../realtime/meetingLeaveStore";
 const statusService = require("../services/status");
 const wsMetrics = require("./wsMetrics");
 
@@ -133,44 +136,42 @@ function clientKey(
 // authenticated tenant user could inject signaling/control frames to an
 // arbitrary userId. A removed/revoked participant is shut out within
 // MEMBERSHIP_TTL_MS. Checks fail CLOSED on DB error.
-const _membershipCache = new Map<string, { ok: boolean; expiresAt: number }>();
-const MEMBERSHIP_TTL_MS = 10_000;
-const MEMBERSHIP_CACHE_MAX = 5000;
-
 async function _checkMembership(
   db: DbLike,
-  key: string,
+  tenantId: number | null | undefined,
+  kind: "conversation" | "meeting",
+  roomId: number,
+  userId: number,
   sql: string,
   params: unknown[],
 ): Promise<boolean> {
-  const now = Date.now();
-  const cached = _membershipCache.get(key);
-  if (cached && cached.expiresAt > now) return cached.ok;
+  const cached = await membershipCache.getMembership(tenantId, kind, roomId, userId);
+  if (cached !== null) return cached;
   let ok = false;
   try {
     ok = !!(await db.query(sql, params)).rows[0];
   } catch (err: any) {
-    logger.warn({ err: err.message, key }, "ws membership check failed");
+    logger.warn({ err: err.message, tenantId, kind, roomId, userId }, "ws membership check failed");
     return false; // fail closed — don't relay if we can't verify
   }
-  _membershipCache.set(key, { ok, expiresAt: now + MEMBERSHIP_TTL_MS });
-  if (_membershipCache.size > MEMBERSHIP_CACHE_MAX) {
-    const oldest = _membershipCache.keys().next().value;
-    if (oldest !== undefined) _membershipCache.delete(oldest);
-  }
+  await membershipCache.setMembership(tenantId, kind, roomId, userId, ok);
   return ok;
 }
 
 /** Is `userId` a participant of the given conversation? (cached) */
 async function isConversationMember(
   db: DbLike,
+  tenantId: number | null | undefined,
   conversationId: number,
   userId: number,
 ): Promise<boolean> {
   if (!conversationId || !userId) return false;
   return _checkMembership(
     db,
-    `conv:${conversationId}:${userId}`,
+    tenantId,
+    "conversation",
+    conversationId,
+    userId,
     "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
     [conversationId, userId],
   );
@@ -179,265 +180,41 @@ async function isConversationMember(
 /** Is `userId` a participant (joined or invited) of the given meeting? (cached) */
 async function isMeetingMember(
   db: DbLike,
+  tenantId: number | null | undefined,
   meetingId: number,
   userId: number,
 ): Promise<boolean> {
   if (!meetingId || !userId) return false;
   return _checkMembership(
     db,
-    `meet:${meetingId}:${userId}`,
+    tenantId,
+    "meeting",
+    meetingId,
+    userId,
     `SELECT 1 FROM meeting_participants WHERE meeting_id = $1 AND user_id = $2 AND status IN ('joined','invited')`,
     [meetingId, userId],
   );
 }
 
-// ── Per-call WebRTC signal buffer (Signal-Android reliable-delivery parity) ──
-// ROOT-CAUSE FIX for "answered but never connects / black screen / can't connect
-// from push": `call_signal` was a pure fire-and-forget relay (deliverLocal only
-// writes to OPEN sockets and drops the frame otherwise). When the callee answers
-// from a push / lock-screen / cold start, the caller emits its OFFER the instant
-// `call_accepted` arrives — but the callee's call screen needs 1–5s to mount,
-// acquire media and subscribe to `call_signal`. The offer (and early ICE) landed
-// before the callee was listening and was SILENTLY DROPPED, so the callee never
-// answered and the call hung forever.
-//
-// We now BUFFER the latest offer + any ICE candidates destined for a user who
-// has no open socket (or hasn't signalled readiness yet), keyed per call, and
-// REPLAY them the moment that user subscribes (`call_subscribe`), accepts
-// (`call_accept`), or signals `call_ready`. This is the direct analogue of
-// Signal's reliable signaling delivery. Buffers auto-expire and are cleared on
-// any terminal call transition.
-interface BufferedCallSignals {
-  // Latest offer destined for each target user (keyed by targetUserId). A
-  // newer offer (e.g. ICE-restart / relay rebuild) supersedes the previous one.
-  offerByUser: Map<number, { fromUserId: number; signal: any }>;
-  // Ordered ICE candidates destined for each target user, awaiting their
-  // remote description / subscription.
-  iceByUser: Map<number, Array<{ fromUserId: number; signal: any }>>;
-  expiresAt: number;
-}
-
-const CALL_SIGNAL_BUFFER_TTL_MS = 60_000;
-const CALL_SIGNAL_BUFFER_MAX_CALLS = 2000;
-const CALL_SIGNAL_BUFFER_MAX_ICE_PER_USER = 80;
-const _callSignalBuffers = new Map<number, BufferedCallSignals>();
-
-function _pruneCallSignalBuffers(now: number): void {
-  for (const [callId, buf] of _callSignalBuffers) {
-    if (buf.expiresAt <= now) _callSignalBuffers.delete(callId);
-  }
-  // Hard cap: drop the oldest entry if we somehow exceed the ceiling.
-  if (_callSignalBuffers.size > CALL_SIGNAL_BUFFER_MAX_CALLS) {
-    const oldest = _callSignalBuffers.keys().next().value;
-    if (oldest !== undefined) _callSignalBuffers.delete(oldest);
-  }
-}
-
-function _getOrCreateCallBuffer(callId: number): BufferedCallSignals {
-  const now = Date.now();
-  let buf = _callSignalBuffers.get(callId);
-  if (!buf || buf.expiresAt <= now) {
-    buf = {
-      offerByUser: new Map(),
-      iceByUser: new Map(),
-      expiresAt: now + CALL_SIGNAL_BUFFER_TTL_MS,
-    };
-    _callSignalBuffers.set(callId, buf);
-    _pruneCallSignalBuffers(now);
-  } else {
-    buf.expiresAt = now + CALL_SIGNAL_BUFFER_TTL_MS;
-  }
-  return buf;
-}
-
-/** Buffer an offer/ice signal destined for a target user with no live socket. */
-function bufferCallSignal(
-  callId: number,
-  fromUserId: number,
-  targetUserId: number,
-  signal: any,
-): void {
-  if (!callId || !targetUserId || !signal) return;
-  if (signal.type !== "offer" && signal.type !== "ice-candidate") return;
-  const buf = _getOrCreateCallBuffer(callId);
-  if (signal.type === "offer") {
-    // Keep only the LATEST offer — a newer one (ICE-restart / relay rebuild)
-    // makes the previous one obsolete.
-    buf.offerByUser.set(targetUserId, { fromUserId, signal });
-    // An offer marks a fresh negotiation: drop stale ICE buffered against the
-    // PREVIOUS offer so we never replay candidates from a dead transport.
-    buf.iceByUser.delete(targetUserId);
-  } else {
-    let list = buf.iceByUser.get(targetUserId);
-    if (!list) {
-      list = [];
-      buf.iceByUser.set(targetUserId, list);
-    }
-    list.push({ fromUserId, signal });
-    if (list.length > CALL_SIGNAL_BUFFER_MAX_ICE_PER_USER) list.shift();
-  }
-}
-
-/**
- * Replay any buffered offer + ICE candidates for a target user (called when they
- * subscribe / accept / signal ready). Delivers the offer FIRST, then the ICE
- * candidates in arrival order, via the supplied deliver() callback. Consumed
- * entries are removed so a later replay doesn't double-deliver.
- */
-function replayCallSignals(
+// Durable WebRTC reliable-delivery state is owned by Redis.
+async function replayCallSignals(
+  tenantId: number | null | undefined,
   callId: number,
   targetUserId: number,
   deliver: (fromUserId: number, signal: any) => void,
-): void {
-  const buf = _callSignalBuffers.get(callId);
-  if (!buf) return;
-  const offer = buf.offerByUser.get(targetUserId);
-  if (offer) {
-    deliver(offer.fromUserId, offer.signal);
-    buf.offerByUser.delete(targetUserId);
-  }
-  const ice = buf.iceByUser.get(targetUserId);
-  if (ice && ice.length) {
-    for (const c of ice) deliver(c.fromUserId, c.signal);
-    buf.iceByUser.delete(targetUserId);
-  }
+): Promise<void> {
+  const entries = await signalStore.drainCallSignals(tenantId, callId, targetUserId);
+  for (const entry of entries) deliver(entry.fromUserId, entry.signal);
 }
 
-/** Clear the entire signal buffer for a call (terminal transition). */
-function clearCallBuffer(callId: number): void {
-  if (!callId) return;
-  _callSignalBuffers.delete(callId);
-}
-
-// ── Per-meeting WebRTC MESH signal buffer (group-call reliable delivery) ──
-// The 1:1 buffer above fixed the "answered but never connects" class of bugs
-// for two-party calls. The N-party mesh (`meeting_signal`) was still a pure
-// fire-and-forget relay: an offer/ICE destined for a peer who is mid-join,
-// cold-starting, or briefly reconnecting (within MEETING_DISCONNECT_GRACE_MS)
-// is silently dropped, so that one pair never connects while the rest of the
-// mesh does (the "one tile stuck on Connecting…" group-call bug). We buffer
-// the LATEST offer + ordered ICE candidates destined for an offline target,
-// keyed by meeting → target → sender, and replay them the instant the target
-// (re)joins, subscribes, or signals ready. Mirrors the proven 1:1 design.
-interface BufferedMeetingPeerSignals {
-  // Latest offer from `fromUserId` to the target (a newer offer — ICE-restart
-  // or relay rebuild — supersedes the previous one).
-  offer?: any;
-  // Ordered ICE candidates from `fromUserId`, awaiting the target's remote
-  // description / subscription.
-  ice: Array<any>;
-}
-interface BufferedMeetingSignals {
-  // targetUserId → (fromUserId → buffered signals from that sender)
-  byTarget: Map<number, Map<number, BufferedMeetingPeerSignals>>;
-  expiresAt: number;
-}
-
-const MEETING_SIGNAL_BUFFER_TTL_MS = 60_000;
-const MEETING_SIGNAL_BUFFER_MAX_MEETINGS = 2000;
-const MEETING_SIGNAL_BUFFER_MAX_ICE_PER_PEER = 80;
-const _meetingSignalBuffers = new Map<number, BufferedMeetingSignals>();
-
-function _pruneMeetingSignalBuffers(now: number): void {
-  for (const [meetingId, buf] of _meetingSignalBuffers) {
-    if (buf.expiresAt <= now) _meetingSignalBuffers.delete(meetingId);
-  }
-  if (_meetingSignalBuffers.size > MEETING_SIGNAL_BUFFER_MAX_MEETINGS) {
-    const oldest = _meetingSignalBuffers.keys().next().value;
-    if (oldest !== undefined) _meetingSignalBuffers.delete(oldest);
-  }
-}
-
-function _getOrCreateMeetingBuffer(meetingId: number): BufferedMeetingSignals {
-  const now = Date.now();
-  let buf = _meetingSignalBuffers.get(meetingId);
-  if (!buf || buf.expiresAt <= now) {
-    buf = {
-      byTarget: new Map(),
-      expiresAt: now + MEETING_SIGNAL_BUFFER_TTL_MS,
-    };
-    _meetingSignalBuffers.set(meetingId, buf);
-    _pruneMeetingSignalBuffers(now);
-  } else {
-    buf.expiresAt = now + MEETING_SIGNAL_BUFFER_TTL_MS;
-  }
-  return buf;
-}
-
-/**
- * Buffer a mesh offer/candidate destined for a target peer with no live socket.
- * Mesh signal types are "offer" | "answer" | "candidate". We only buffer the
- * negotiation-critical "offer" and "candidate": an "answer" is a response to an
- * offer, and if the offerer was offline when it arrived they re-offer on
- * reconnect (via `meeting_peer_ready`), so buffering answers would only risk
- * replaying a stale SDP against a fresh transport.
- */
-function bufferMeetingSignal(
-  meetingId: number,
-  fromUserId: number,
-  targetUserId: number,
-  signal: any,
-): void {
-  if (!meetingId || !fromUserId || !targetUserId || !signal) return;
-  if (signal.type !== "offer" && signal.type !== "candidate") return;
-  const buf = _getOrCreateMeetingBuffer(meetingId);
-  let perTarget = buf.byTarget.get(targetUserId);
-  if (!perTarget) {
-    perTarget = new Map();
-    buf.byTarget.set(targetUserId, perTarget);
-  }
-  let entry = perTarget.get(fromUserId);
-  if (!entry) {
-    entry = { ice: [] };
-    perTarget.set(fromUserId, entry);
-  }
-  if (signal.type === "offer") {
-    // Keep only the LATEST offer from this sender; a new offer obsoletes the
-    // ICE buffered against the previous one (different transport).
-    entry.offer = signal;
-    entry.ice = [];
-  } else {
-    entry.ice.push(signal);
-    if (entry.ice.length > MEETING_SIGNAL_BUFFER_MAX_ICE_PER_PEER)
-      entry.ice.shift();
-  }
-}
-
-/**
- * Replay every buffered offer + ICE candidate destined for `targetUserId` in a
- * meeting (called when they join / subscribe / signal ready). For each sender we
- * deliver the offer FIRST, then that sender's ICE in arrival order. Consumed
- * entries are removed so a later replay can't double-deliver.
- */
-function replayMeetingSignals(
+async function replayMeetingSignals(
+  tenantId: number | null | undefined,
   meetingId: number,
   targetUserId: number,
   deliver: (fromUserId: number, signal: any) => void,
-): void {
-  const buf = _meetingSignalBuffers.get(meetingId);
-  if (!buf) return;
-  const perTarget = buf.byTarget.get(targetUserId);
-  if (!perTarget) return;
-  for (const [fromUserId, entry] of perTarget) {
-    if (entry.offer) deliver(fromUserId, entry.offer);
-    for (const c of entry.ice) deliver(fromUserId, c);
-  }
-  buf.byTarget.delete(targetUserId);
-}
-
-/** Drop all buffered signals (both directions) involving a user in a meeting. */
-function clearMeetingUserBuffer(meetingId: number, userId: number): void {
-  if (!meetingId || !userId) return;
-  const buf = _meetingSignalBuffers.get(meetingId);
-  if (!buf) return;
-  buf.byTarget.delete(userId);
-  for (const perTarget of buf.byTarget.values()) perTarget.delete(userId);
-}
-
-/** Clear the entire mesh signal buffer for a meeting (terminal transition). */
-function clearMeetingBuffer(meetingId: number): void {
-  if (!meetingId) return;
-  _meetingSignalBuffers.delete(meetingId);
+): Promise<void> {
+  const entries = await signalStore.drainMeetingSignals(tenantId, meetingId, targetUserId);
+  for (const entry of entries) deliver(entry.fromUserId, entry.signal);
 }
 
 /**
@@ -521,7 +298,7 @@ function hasOpenSocket(
   return false;
 }
 
-function setupWebSocket(server: HTTPServer): any {
+async function setupWebSocket(server: HTTPServer): Promise<any> {
   const wss = new WebSocketServer({
     server,
     path: "/ws",
@@ -566,13 +343,10 @@ function setupWebSocket(server: HTTPServer): any {
   // ── Redis Pub/Sub: subscribe to user message channels ──
   const sub = redis.getSubscriber();
   if (sub) {
-    sub.subscribe("ws:broadcast", (err: any) => {
-      if (err)
-        logger.warn(
-          { err: err.message },
-          "Redis subscribe failed for ws:broadcast",
-        );
-    });
+    // bootstrap() has awaited Redis readiness. Await subscription too so the
+    // realtime role never reports ready while cross-instance fan-out is dark.
+    await sub.subscribe("ws:broadcast");
+    logger.info("Redis subscribed to ws:broadcast");
     sub.on("message", (channel: string, raw: string) => {
       try {
         const envelope = JSON.parse(raw);
@@ -846,7 +620,7 @@ function setupWebSocket(server: HTTPServer): any {
       }
     });
 
-    ws.on("close", () => {
+    ws.on("close", async () => {
       const set = clients.get(ck);
       if (set) {
         set.delete(ws);
@@ -894,12 +668,21 @@ function setupWebSocket(server: HTTPServer): any {
       if (ws._activeMeetingId) {
         const mid = ws._activeMeetingId;
         ws._activeMeetingId = null;
-        scheduleMeetingDisconnectCleanup({
-          db,
-          tenantId,
-          userId,
-          meetingId: mid,
-        });
+        try {
+          await scheduleMeetingDisconnectCleanup({
+            db,
+            tenantId,
+            userId,
+            meetingId: mid,
+          });
+        } catch (err: any) {
+          // In production Redis loss is already process-fatal. Log this frame
+          // explicitly so the meeting state risk is visible before restart.
+          logger.error(
+            { err: err.message, tenantId, userId, meetingId: mid },
+            "Failed to schedule distributed meeting disconnect cleanup",
+          );
+        }
       }
 
       logger.debug({ userId, tenantId }, "WS client disconnected");
@@ -985,21 +768,28 @@ interface MeetingCleanupArgs {
  * This is the equivalent of videosdk's internal "reconnecting" window —
  * brief network blips or laptop-sleep events no longer eject the user.
  */
-function scheduleMeetingDisconnectCleanup({
+async function scheduleMeetingDisconnectCleanup({
   db,
   tenantId,
   userId,
   meetingId,
-}: MeetingCleanupArgs): void {
+}: MeetingCleanupArgs): Promise<void> {
   const key = meetingLeaveKey(tenantId, userId, meetingId);
   // If there's already a pending timer (rare — happens if the user opens
   // and closes a second WS very quickly), replace it with a fresh one.
   const existing = pendingMeetingLeaves.get(key);
   if (existing?.timer) clearTimeout(existing.timer);
 
+  // Create a distributed cancellation lease before scheduling the local timer.
+  // A rejoin on ANY replica deletes it; this replica claims it at expiry.
+  const leaseToken = await meetingLeaveStore.createMeetingLeaveLease(tenantId, userId, meetingId);
   const timer = setTimeout(async () => {
     pendingMeetingLeaves.delete(key);
     try {
+      const claimed = await meetingLeaveStore.claimMeetingLeaveLease(
+        tenantId, userId, meetingId, leaseToken,
+      );
+      if (!claimed) return; // rejoined/cancelled on this or another replica
       // Re-check: if the user reconnected and is `joined` via another
       // session by the time we run, the upsert-on-join already cleared
       // any stale row — but if they reconnected and then left properly
@@ -1033,7 +823,7 @@ function scheduleMeetingDisconnectCleanup({
 
       // Drop any mesh signals buffered for / from this user — they are gone
       // and a future rejoin starts a fresh negotiation.
-      clearMeetingUserBuffer(meetingId, userId);
+      await signalStore.clearMeetingUserSignals(tenantId, meetingId, userId);
 
       const activeParticipants = (
         await db.query(
@@ -1051,7 +841,7 @@ function scheduleMeetingDisconnectCleanup({
 
       if (activeParticipants.length === 0) {
         // Meeting is empty — drop the whole mesh signal buffer.
-        clearMeetingBuffer(meetingId);
+        await signalStore.clearMeetingSignals(tenantId, meetingId);
         await db.query(
           `UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`,
           [meetingId],
@@ -1077,7 +867,7 @@ function scheduleMeetingDisconnectCleanup({
 }
 
 /** Cancel a pending disconnect-cleanup timer (called when the user rejoins). */
-function cancelMeetingDisconnectCleanup({
+async function cancelMeetingDisconnectCleanup({
   tenantId,
   userId,
   meetingId,
@@ -1085,15 +875,17 @@ function cancelMeetingDisconnectCleanup({
   tenantId: number | null | undefined;
   userId: number;
   meetingId: number;
-}): boolean {
+}): Promise<boolean> {
   const key = meetingLeaveKey(tenantId, userId, meetingId);
   const existing = pendingMeetingLeaves.get(key);
   if (existing?.timer) {
     clearTimeout(existing.timer);
     pendingMeetingLeaves.delete(key);
+    await meetingLeaveStore.cancelMeetingLeaveLease(tenantId, userId, meetingId);
     return true;
   }
-  return false;
+  // No local timer may mean the disconnect happened on another replica.
+  return meetingLeaveStore.cancelMeetingLeaveLease(tenantId, userId, meetingId);
 }
 
 /** Handle incoming WS messages for chat */
@@ -1702,7 +1494,7 @@ async function handleChatMessage(
         // never connects": the caller fired its offer the instant it saw
         // call_accepted, but the callee was still mounting; the buffered
         // offer is now delivered so negotiation actually starts.
-        replayCallSignals(Number(callId), senderId, (fromUserId, signal) => {
+        await replayCallSignals(tenantId, Number(callId), senderId, (fromUserId, signal) => {
           sendToUser(tenantId, senderId, "call_signal", {
             conversationId,
             fromUserId,
@@ -1803,7 +1595,7 @@ async function handleChatMessage(
           null,
         );
         // P0 — drop any buffered signals for this now-dead call.
-        clearCallBuffer(callLog.id);
+        await signalStore.clearCallSignals(tenantId, callLog.id);
       },
     );
   } else if (msg.type === "call_reject") {
@@ -1980,7 +1772,7 @@ async function handleChatMessage(
           "declined",
           null,
         );
-        clearCallBuffer(Number(callId));
+        await signalStore.clearCallSignals(tenantId, Number(callId));
       },
     );
   } else if (msg.type === "call_end") {
@@ -2141,7 +1933,7 @@ async function handleChatMessage(
           duration,
         );
         // P0 — drop any buffered signals for this now-ended call.
-        clearCallBuffer(Number(callId));
+        await signalStore.clearCallSignals(tenantId, Number(callId));
       },
     );
   } else if (msg.type === "call_signal") {
@@ -2213,9 +2005,10 @@ async function handleChatMessage(
     // EVERY signal type (not just offer/answer). ICE/state frames were
     // previously relayed with no membership check, letting any tenant user
     // inject signaling to an arbitrary userId. Cached to survive ICE bursts.
-    const senderOk = await isConversationMember(db, conversationId, senderId);
+    const senderOk = await isConversationMember(db, tenantId, conversationId, senderId);
     const targetOk = await isConversationMember(
       db,
+      tenantId,
       conversationId,
       targetUserId,
     );
@@ -2260,7 +2053,7 @@ async function handleChatMessage(
       !hasOpenSocket(tenantId, targetUserId)
     ) {
       if (callIdForBuffer) {
-        bufferCallSignal(callIdForBuffer, senderId, targetUserId, signal);
+        await signalStore.bufferCallSignal(tenantId, callIdForBuffer, senderId, targetUserId, signal);
         logger.debug(
           {
             senderId,
@@ -2292,12 +2085,13 @@ async function handleChatMessage(
     if (!callId || !conversationId) return;
     const isParticipant = await isConversationMember(
       db,
+      tenantId,
       conversationId,
       senderId,
     );
     if (!isParticipant) return;
     // Replay buffered signals to THIS subscriber.
-    replayCallSignals(Number(callId), senderId, (fromUserId, signal) => {
+    await replayCallSignals(tenantId, Number(callId), senderId, (fromUserId, signal) => {
       sendToUser(tenantId, senderId, "call_signal", {
         conversationId,
         fromUserId,
@@ -2327,11 +2121,12 @@ async function handleChatMessage(
     if (!callId || !conversationId) return;
     const isParticipant = await isConversationMember(
       db,
+      tenantId,
       conversationId,
       senderId,
     );
     if (!isParticipant) return;
-    replayCallSignals(Number(callId), senderId, (fromUserId, signal) => {
+    await replayCallSignals(tenantId, Number(callId), senderId, (fromUserId, signal) => {
       sendToUser(tenantId, senderId, "call_signal", {
         conversationId,
         fromUserId,
@@ -2404,12 +2199,14 @@ async function handleChatMessage(
     // participant could spam reactions at arbitrary users (privacy/harassment).
     const senderInConv = await isConversationMember(
       db,
+      tenantId,
       conversationId,
       senderId,
     );
     if (!senderInConv) return;
     const targetInConv = await isConversationMember(
       db,
+      tenantId,
       conversationId,
       targetUserId,
     );
@@ -2431,7 +2228,7 @@ async function handleChatMessage(
     // so we silently keep them in the meeting (no `meeting_participant_left`
     // was ever broadcast and the other participants' RTCPeerConnections
     // are untouched).
-    const cancelledPending = cancelMeetingDisconnectCleanup({
+    const cancelledPending = await cancelMeetingDisconnectCleanup({
       tenantId,
       userId: senderId,
       meetingId,
@@ -2641,7 +2438,7 @@ async function handleChatMessage(
     // fix for "one tile stuck on Connecting…" after a (re)join. The client
     // additionally sends `meeting_subscribe` for a belt-and-braces re-request,
     // but replaying here means the happy path needs no extra round-trip.
-    replayMeetingSignals(Number(meetingId), senderId, (fromUserId, signal) => {
+    await replayMeetingSignals(tenantId, Number(meetingId), senderId, (fromUserId, signal) => {
       sendToUser(tenantId, senderId, "meeting_signal", {
         meetingId,
         fromUserId,
@@ -2717,7 +2514,7 @@ async function handleChatMessage(
     ws._activeMeetingId = null;
     // An explicit leave overrides any scheduled grace-window cleanup
     // — we do the cleanup synchronously below instead.
-    cancelMeetingDisconnectCleanup({ tenantId, userId: senderId, meetingId });
+    await cancelMeetingDisconnectCleanup({ tenantId, userId: senderId, meetingId });
 
     // Verify sender is actually a joined participant
     const isJoined = (
@@ -2734,7 +2531,7 @@ async function handleChatMessage(
     );
 
     // Drop any mesh signals buffered for / from the leaver.
-    clearMeetingUserBuffer(meetingId, senderId);
+    await signalStore.clearMeetingUserSignals(tenantId, meetingId, senderId);
 
     const activeParticipants = (
       await db.query(
@@ -2753,7 +2550,7 @@ async function handleChatMessage(
     // If no active participants, mark meeting ended (use WHERE to prevent double-update race)
     if (activeParticipants.length === 0) {
       // Empty meeting — drop the whole mesh signal buffer.
-      clearMeetingBuffer(meetingId);
+      await signalStore.clearMeetingSignals(tenantId, meetingId);
       await db.query(
         `UPDATE meetings SET status = 'ended', ended_at = NOW() WHERE id = $1 AND status != 'ended'`,
         [meetingId],
@@ -2833,7 +2630,7 @@ async function handleChatMessage(
     if (!meetingId) return;
 
     ws._activeMeetingId = null;
-    cancelMeetingDisconnectCleanup({ tenantId, userId: senderId, meetingId });
+    await cancelMeetingDisconnectCleanup({ tenantId, userId: senderId, meetingId });
 
     const meeting = (
       await db.query(
@@ -2858,7 +2655,7 @@ async function handleChatMessage(
     );
 
     // Terminal transition — drop the whole mesh signal buffer for this meeting.
-    clearMeetingBuffer(meetingId);
+    await signalStore.clearMeetingSignals(tenantId, meetingId);
 
     const activeParticipants = (
       await db.query(
@@ -2974,8 +2771,8 @@ async function handleChatMessage(
     // EVERY signal type. Previously only offer/answer checked the sender
     // (never the target) and ICE skipped all checks, letting any tenant
     // user inject mesh signaling to an arbitrary userId. Cached for ICE bursts.
-    const senderOk = await isMeetingMember(db, meetingId, senderId);
-    const targetOk = await isMeetingMember(db, meetingId, targetUserId);
+    const senderOk = await isMeetingMember(db, tenantId, meetingId, senderId);
+    const targetOk = await isMeetingMember(db, tenantId, meetingId, targetUserId);
     if (!senderOk || !targetOk) {
       logger.warn(
         {
@@ -3008,12 +2805,7 @@ async function handleChatMessage(
       (signal.type === "offer" || signal.type === "candidate") &&
       !hasOpenSocket(tenantId, targetUserId)
     ) {
-      bufferMeetingSignal(
-        Number(meetingId),
-        senderId,
-        Number(targetUserId),
-        signal,
-      );
+      await signalStore.bufferMeetingSignal(tenantId, Number(meetingId), senderId, Number(targetUserId), signal);
       logger.debug(
         { senderId, targetUserId, meetingId, signalType: signal.type },
         "meeting_signal: buffered for offline peer",
@@ -3035,8 +2827,8 @@ async function handleChatMessage(
     // emitted before the newcomer's handler was listening.
     const { meetingId } = msg.data || {};
     if (!meetingId) return;
-    if (!(await isMeetingMember(db, meetingId, senderId))) return;
-    replayMeetingSignals(Number(meetingId), senderId, (fromUserId, signal) => {
+    if (!(await isMeetingMember(db, tenantId, meetingId, senderId))) return;
+    await replayMeetingSignals(tenantId, Number(meetingId), senderId, (fromUserId, signal) => {
       sendToUser(tenantId, senderId, "meeting_signal", {
         meetingId,
         fromUserId,
@@ -3063,8 +2855,8 @@ async function handleChatMessage(
     // separately from "WS subscribed" (mirrors call_ready vs call_subscribe).
     const { meetingId } = msg.data || {};
     if (!meetingId) return;
-    if (!(await isMeetingMember(db, meetingId, senderId))) return;
-    replayMeetingSignals(Number(meetingId), senderId, (fromUserId, signal) => {
+    if (!(await isMeetingMember(db, tenantId, meetingId, senderId))) return;
+    await replayMeetingSignals(tenantId, Number(meetingId), senderId, (fromUserId, signal) => {
       sendToUser(tenantId, senderId, "meeting_signal", {
         meetingId,
         fromUserId,
@@ -3370,8 +3162,8 @@ async function handleChatMessage(
     // Verify sender and target are both meeting participants before relaying
     // — otherwise any user could force an arbitrary user's encoder to the
     // lowest bitrate (media-sabotage DoS). Cached.
-    if (!(await isMeetingMember(db, meetingId, senderId))) return;
-    if (!(await isMeetingMember(db, meetingId, targetUserId))) return;
+    if (!(await isMeetingMember(db, tenantId, meetingId, senderId))) return;
+    if (!(await isMeetingMember(db, tenantId, meetingId, targetUserId))) return;
     sendToUser(tenantId, targetUserId, "meeting_request_quality", {
       meetingId,
       fromUserId: senderId,
@@ -3422,8 +3214,8 @@ async function handleChatMessage(
     // Verify sender and target are both meeting participants before relaying
     // — otherwise any user could inject screen-routing signals at an
     // arbitrary user. Cached.
-    if (!(await isMeetingMember(db, meetingId, senderId))) return;
-    if (!(await isMeetingMember(db, meetingId, targetUserId))) return;
+    if (!(await isMeetingMember(db, tenantId, meetingId, senderId))) return;
+    if (!(await isMeetingMember(db, tenantId, meetingId, targetUserId))) return;
     sendToUser(tenantId, targetUserId, "meeting_screen_track_id", {
       meetingId,
       fromUserId: senderId,

@@ -1,11 +1,14 @@
 import express from "express";
 import type { Request, Response } from "express";
+import attendanceModuleRoutes from "../modules/attendance/attendance.routes";
+import { parseManualEntry } from "../modules/attendance/attendance.schema";
+import { AttendanceError } from "../modules/attendance/attendance.types";
 const auth = require("../middleware/auth");
 const { loadUserContext, ROLE_LEVEL } = require("../middleware/rbac");
 const { findApprover } = require("../utils/approver");
 const { logAction } = require("../utils/audit");
-const { getLocalToday, getLocalDow, getTzModifier, getLocalDateFromTs, getOffsetMin } = require("../utils/timezone");
-const { computeStatus, computeDaySummary, endOfLocalDayMs } = require("../utils/timeCalc");
+const { getLocalToday, getLocalDow, getTzModifier, getOffsetMin } = require("../utils/timezone");
+const { computeStatus } = require("../utils/timeCalc");
 const { logger } = require("../utils/logger");
 const { notifyByEmail } = require("../utils/mailer");
 const { sendToUser } = require("../utils/ws");
@@ -13,7 +16,7 @@ const redis = require("../redis");
 const { requireTenant } = require("../middleware/tenant");
 const { haversineMeters, isValidLat, isValidLng } = require("../utils/geo");
 const { isValidDescriptor, isPlausibleDescriptor, isDescriptorReplay, parseDescriptor, compareDescriptors } = require("../utils/face");
-const { parseWorkDays, isJsDowWorkDay } = require("../utils/workDays");
+const { isJsDowWorkDay } = require("../utils/workDays");
 
 const router = express.Router();
 router.use(requireTenant);
@@ -96,83 +99,6 @@ function pgDateInTz(col: string, tzMod: unknown): string {
     const safe = Math.max(-840, Math.min(720, minutes));
     return `(${col} + INTERVAL '${safe} minutes')::date`;
 }
-
-// Get current status for today
-router.get("/status", auth, async (req: Request, res: Response) => {
-    try {
-        const today = getLocalToday(req);
-        const tzMod = getTzModifier(req);
-        const dow = getLocalDow(req);
-
-        const orgRow = (await req.db!.query(
-            `SELECT u.org_id FROM users u WHERE u.id = $1`, [req.userId],
-        )).rows[0];
-        const orgConfig = await getOrgWorkConfig(orgRow?.org_id, req.db as unknown as DbLike, req.tenantId);
-        const targetMinutes = (orgConfig.work_hours_per_day || 8) * 60;
-        const isWeekend = !isJsDowWorkDay(dow, orgConfig.work_days);
-
-        const result = await req.db!.query(
-            `SELECT * FROM time_entries
-             WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date
-               AND (approval_status IS NULL OR approval_status != 'rejected')
-             ORDER BY timestamp ASC, id ASC`,
-            [req.userId, today],
-        );
-        let entries: TimeEntry[] = result.rows;
-
-        const status = computeStatus(entries);
-
-        let autoLoggedOut = false;
-        const lastEntry = entries.length > 0 ? entries[entries.length - 1] : null;
-        const isLiveSession = lastEntry && !lastEntry.is_manual;
-        if (isLiveSession && status.state !== "logged_out" && status.floorMinutes >= targetMinutes) {
-            const didClockOut = await (req.db as unknown as DbLike).transaction(async (client) => {
-                const latest = (await client.query(
-                    `SELECT entry_type FROM time_entries WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date ORDER BY timestamp DESC, id DESC LIMIT 1 FOR UPDATE`,
-                    [req.userId, today],
-                )).rows[0];
-                if (!latest || latest.entry_type === "clock_out") return false;
-                await client.query(
-                    "INSERT INTO time_entries (user_id, entry_type) VALUES ($1, $2)",
-                    [req.userId, "clock_out"],
-                );
-                return true;
-            });
-            if (didClockOut) {
-                logAction(req, "auto_clock_out", "time_entry", null, {
-                    floorMinutes: status.floorMinutes, targetMinutes,
-                });
-                const refreshed = await req.db!.query(
-                    `SELECT * FROM time_entries
-                     WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date
-                       AND (approval_status IS NULL OR approval_status != 'rejected')
-                     ORDER BY timestamp ASC, id ASC`,
-                    [req.userId, today],
-                );
-                entries = refreshed.rows;
-                Object.assign(status, computeStatus(entries));
-                autoLoggedOut = true;
-            }
-        }
-
-        status.isWeekend = isWeekend;
-        // Report the CURRENT/open session's work mode (the latest clock-in of
-        // the day), not the first. A user may have an earlier office session
-        // and then start a new remote one; using the first clock-in would
-        // mislabel the open session as "office" and make clients wrongly
-        // demand office (Wi-Fi/geofence) verification on clock-out. This
-        // mirrors the clock-out enforcement, which keys off the latest clock-in.
-        const clockInEntry = [...entries].reverse().find((e) => e.entry_type === "clock_in");
-        status.workMode = clockInEntry?.work_mode || "office";
-        status.targetMinutes = targetMinutes;
-        status.dailyTargetMet = status.floorMinutes >= targetMinutes;
-        status.autoLoggedOut = autoLoggedOut;
-        res.json(status);
-    } catch (err) {
-        req.log.error({ err }, "Status error");
-        res.status(500).json({ error: "Failed to get status" });
-    }
-});
 
 // Clock-in
 router.post("/clock-in", auth, loadUserContext, async (req: Request, res: Response) => {
@@ -513,71 +439,6 @@ router.post("/clock-in", auth, loadUserContext, async (req: Request, res: Respon
     }
 });
 
-// Break start
-router.post("/break-start", auth, async (req: Request, res: Response) => {
-    try {
-        const today = getLocalToday(req);
-        const tzMod = getTzModifier(req);
-
-        const txResult = await (req.db as unknown as DbLike).transaction(async (client) => {
-            const lastRes = await client.query(
-                `SELECT * FROM time_entries
-                 WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date
-                   AND (approval_status IS NULL OR approval_status != 'rejected')
-                 ORDER BY timestamp DESC, id DESC LIMIT 1`,
-                [req.userId, today],
-            );
-            const lastEntry = lastRes.rows[0];
-            if (!lastEntry || lastEntry.entry_type === "clock_out") return { error: "You must login first" };
-            if (lastEntry.entry_type === "break_start") return { error: "Already on break" };
-            await client.query(
-                "INSERT INTO time_entries (user_id, entry_type) VALUES ($1, $2)",
-                [req.userId, "break_start"],
-            );
-            return { ok: true };
-        });
-
-        if (txResult.error) return res.status(400).json({ error: txResult.error });
-        logAction(req, "break_start", "time_entry", null, {});
-        res.json({ message: "Break started" });
-    } catch (err) {
-        req.log.error({ err }, "Break-start error");
-        res.status(500).json({ error: "Failed to start break" });
-    }
-});
-
-// Break end
-router.post("/break-end", auth, async (req: Request, res: Response) => {
-    try {
-        const today = getLocalToday(req);
-        const tzMod = getTzModifier(req);
-
-        const txResult = await (req.db as unknown as DbLike).transaction(async (client) => {
-            const lastRes = await client.query(
-                `SELECT * FROM time_entries
-                 WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date
-                   AND (approval_status IS NULL OR approval_status != 'rejected')
-                 ORDER BY timestamp DESC, id DESC LIMIT 1`,
-                [req.userId, today],
-            );
-            const lastEntry = lastRes.rows[0];
-            if (!lastEntry || lastEntry.entry_type !== "break_start") return { error: "You are not on break" };
-            await client.query(
-                "INSERT INTO time_entries (user_id, entry_type) VALUES ($1, $2)",
-                [req.userId, "break_end"],
-            );
-            return { ok: true };
-        });
-
-        if (txResult.error) return res.status(400).json({ error: txResult.error });
-        logAction(req, "break_end", "time_entry", null, {});
-        res.json({ message: "Break ended, back to work!" });
-    } catch (err) {
-        req.log.error({ err }, "Break-end error");
-        res.status(500).json({ error: "Failed to end break" });
-    }
-});
-
 // Clock-out
 router.post("/clock-out", auth, loadUserContext, async (req: Request, res: Response) => {
     try {
@@ -779,180 +640,18 @@ router.post("/clock-out", auth, loadUserContext, async (req: Request, res: Respo
     }
 });
 
-// Get history for a date range
-router.get("/history", auth, async (req: Request, res: Response) => {
-    try {
-        const { from, to } = req.query as { from?: string; to?: string };
-        const offsetMin = getOffsetMin(req);
-        const fromDate = from || new Date(Date.now() - offsetMin * 60000 - 30 * 86400000).toISOString().slice(0, 10);
-        const toDate = to || getLocalToday(req);
-        const tzMod = getTzModifier(req);
-
-        const result = await req.db!.query(
-            `SELECT * FROM time_entries
-             WHERE user_id = $1
-               AND ${pgDateInTz("timestamp", tzMod)} BETWEEN $2::date AND $3::date
-               AND (approval_status IS NULL OR approval_status != 'rejected')
-             ORDER BY timestamp ASC`,
-            [req.userId, fromDate, toDate],
-        );
-
-        const grouped: Record<string, TimeEntry[]> = {};
-        result.rows.forEach((e: TimeEntry) => {
-            const date = getLocalDateFromTs(e.timestamp, req);
-            if (!grouped[date]) grouped[date] = [];
-            grouped[date].push(e);
-        });
-
-        const today = getLocalToday(req);
-        const dailySummaries = Object.keys(grouped).sort().map((date) => {
-            // Cap an unterminated session at "now" for today, else end-of-local-day,
-            // so a never-clocked-out / overnight session is credited (not shown as 0).
-            const capMs = date >= today ? Date.now() : endOfLocalDayMs(date, offsetMin);
-            const summary = computeDaySummary(grouped[date], true, capMs);
-            return { date, ...summary };
-        });
-
-        res.json(dailySummaries);
-    } catch (err) {
-        req.log.error({ err }, "History error");
-        res.status(500).json({ error: "Failed to fetch history" });
-    }
-});
-
-// Analytics (weekly chart)
-router.get("/analytics", auth, async (req: Request, res: Response) => {
-    try {
-        const { days, from, to } = req.query as { days?: string; from?: string; to?: string };
-        const offsetMin = getOffsetMin(req);
-        let fromDate; let toDate; let numDays;
-
-        if (from && to) {
-            fromDate = from;
-            toDate = to;
-            numDays = Math.round((new Date(to + "T00:00:00Z").getTime() - new Date(from + "T00:00:00Z").getTime()) / 86400000) + 1;
-            numDays = Math.min(Math.max(numDays, 1), 365);
-        } else {
-            numDays = Math.min(Math.max(parseInt(String(days)) || 7, 1), 365);
-            fromDate = new Date(Date.now() - offsetMin * 60000 - numDays * 86400000).toISOString().slice(0, 10);
-            toDate = getLocalToday(req);
-        }
-
-        const tzMod = getTzModifier(req);
-
-        const result = await req.db!.query(
-            `SELECT * FROM time_entries
-             WHERE user_id = $1
-               AND ${pgDateInTz("timestamp", tzMod)} BETWEEN $2::date AND $3::date
-               AND (approval_status IS NULL OR approval_status != 'rejected')
-             ORDER BY timestamp ASC`,
-            [req.userId, fromDate, toDate],
-        );
-
-        const grouped: Record<string, TimeEntry[]> = {};
-        result.rows.forEach((e: TimeEntry) => {
-            const date = getLocalDateFromTs(e.timestamp, req);
-            if (!grouped[date]) grouped[date] = [];
-            grouped[date].push(e);
-        });
-
-        const today = getLocalToday(req);
-        const analytics = [];
-        const startMs = new Date(fromDate + "T00:00:00Z").getTime();
-        for (let i = 0; i < numDays; i++) {
-            const d = new Date(startMs + i * 86400000);
-            const dateStr = d.toISOString().slice(0, 10);
-            const capMs = dateStr >= today ? Date.now() : endOfLocalDayMs(dateStr, offsetMin);
-            const summary = computeDaySummary(grouped[dateStr] || [], true, capMs);
-            analytics.push({ date: dateStr, ...summary });
-        }
-
-        res.json(analytics);
-    } catch (err) {
-        req.log.error({ err }, "Analytics error");
-        res.status(500).json({ error: "Failed to fetch analytics" });
-    }
-});
-
-// Get pending manual entries for current user
-router.get("/manual-entries", auth, loadUserContext, async (req: Request, res: Response) => {
-    try {
-        const result = await req.db!.query(
-            `SELECT ar.id as request_id, ar.status as approval_status, ar.metadata, ar.created_at,
-                    ar.reviewed_at, ar.reject_reason, u.full_name as approver_name
-             FROM approval_requests ar
-             LEFT JOIN users u ON u.id = ar.approver_id
-             WHERE ar.requester_id = $1 AND ar.type = 'manual_entry'
-             ORDER BY ar.created_at DESC
-             LIMIT 50`,
-            [req.userId],
-        );
-        res.json(result.rows.map((e: { metadata: string | null; [key: string]: unknown }) => ({ ...e, metadata: e.metadata ? JSON.parse(e.metadata) : null })));
-    } catch (err) {
-        req.log.error({ err }, "Manual entries error");
-        res.status(500).json({ error: "Failed to fetch manual entries" });
-    }
-});
-
 // Add a complete manual day entry
 router.post("/manual-entry", auth, loadUserContext, async (req: Request, res: Response) => {
     try {
-        const { date, clock_in, clock_out, breaks, timezoneOffset, work_mode } = req.body;
-
-        if (!date || !clock_in) return res.status(400).json({ error: "Date and login time are required" });
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Invalid date format. Use YYYY-MM-DD" });
-        if (date > getLocalToday(req)) {
-            return res.status(400).json({ error: "Cannot add a manual entry for a future date" });
-        }
-
-        if (!isValidTime(clock_in) || (clock_out && !isValidTime(clock_out))) {
-            return res.status(400).json({ error: "Invalid time format. Use HH:MM (00:00–23:59)" });
-        }
-        if (clock_out && clock_out <= clock_in) {
-            return res.status(400).json({ error: "Logout time must be after login time" });
-        }
-
-        if (typeof timezoneOffset === "number" && (timezoneOffset < -840 || timezoneOffset > 720)) {
-            return res.status(400).json({ error: "Invalid timezone offset" });
-        }
-        const offsetMs = (typeof timezoneOffset === "number") ? timezoneOffset * 60000 : 0;
-        function toUTC(dateStr: string, timeStr: string): string {
-            const [year, month, day] = dateStr.split("-").map(Number);
-            const [hours, minutes] = timeStr.split(":").map(Number);
-            return new Date(Date.UTC(year, month - 1, day, hours, minutes, 0) + offsetMs).toISOString();
-        }
-
-        if (breaks && Array.isArray(breaks)) {
-            if (breaks.length > 20) return res.status(400).json({ error: "Maximum 20 breaks allowed per day" });
-            const sorted = [...breaks].sort((a, b) => (a.start || "").localeCompare(b.start || ""));
-            for (let i = 0; i < sorted.length; i++) {
-                const brk = sorted[i];
-                if (!brk.start || !brk.end || !isValidTime(brk.start) || !isValidTime(brk.end)) {
-                    return res.status(400).json({ error: "Each break must have valid start and end times (HH:MM, 00:00–23:59)" });
-                }
-                if (brk.end <= brk.start) return res.status(400).json({ error: "Break end time must be after break start time" });
-                if (brk.start < clock_in || (clock_out && brk.end > clock_out)) {
-                    return res.status(400).json({ error: "Break times must be within clock-in and clock-out times" });
-                }
-                if (i < sorted.length - 1 && brk.end > sorted[i + 1].start) {
-                    return res.status(400).json({ error: "Break times must not overlap" });
-                }
-            }
-            if (clock_out) {
-                let totalBreakMin = 0;
-                for (const brk of sorted) {
-                    const [sh, sm] = brk.start.split(":").map(Number);
-                    const [eh, em] = brk.end.split(":").map(Number);
-                    totalBreakMin += (eh * 60 + em) - (sh * 60 + sm);
-                }
-                const [cih, cim] = clock_in.split(":").map(Number);
-                const [coh, com] = clock_out.split(":").map(Number);
-                const workMin = (coh * 60 + com) - (cih * 60 + cim);
-                if (totalBreakMin >= workMin) {
-                    return res.status(400).json({ error: "Total break duration cannot exceed work duration" });
-                }
-            }
-        }
+        const manual = parseManualEntry(req.body, { today: getLocalToday(req) });
+        const {
+            date,
+            clockIn: clock_in,
+            clockOut: clock_out,
+            breaks,
+            workMode: work_mode,
+            toUtc,
+        } = manual;
 
         const tzMod = getTzModifier(req);
         const existingRes = await req.db!.query(
@@ -986,8 +685,8 @@ router.post("/manual-entry", auth, loadUserContext, async (req: Request, res: Re
         let approvalStatus = isSuperAdmin ? "approved" : "pending";
         let needsApproval = !isSuperAdmin;
 
-        const clockInTs = toUTC(date, clock_in);
-        const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
+        const clockInTs = toUtc(clock_in);
+        const clockOutTs = clock_out ? toUtc(clock_out) : null;
         let txApprover: any = null;
 
         await (req.db as unknown as DbLike).transaction(async (client) => {
@@ -995,13 +694,10 @@ router.post("/manual-entry", auth, loadUserContext, async (req: Request, res: Re
                 "INSERT INTO time_entries (user_id, entry_type, timestamp, work_mode, is_manual, approval_status) VALUES ($1,$2,$3,$4,TRUE,$5)",
                 [uid, type, ts, wm || null, approvalStatus],
             );
-            await ins(req.userId, "clock_in", clockInTs, VALID_WORK_MODES.includes(work_mode) ? work_mode : "office");
-            if (breaks && Array.isArray(breaks)) {
-                const sorted = [...breaks].sort((a, b) => a.start.localeCompare(b.start));
-                for (const brk of sorted) {
-                    await ins(req.userId, "break_start", toUTC(date, brk.start), null);
-                    await ins(req.userId, "break_end", toUTC(date, brk.end), null);
-                }
+            await ins(req.userId, "clock_in", clockInTs, work_mode);
+            for (const brk of breaks) {
+                    await ins(req.userId, "break_start", toUtc(brk.start), null);
+                    await ins(req.userId, "break_end", toUtc(brk.end), null);
             }
             if (clockOutTs) await ins(req.userId, "clock_out", clockOutTs, null);
 
@@ -1012,7 +708,7 @@ router.post("/manual-entry", auth, loadUserContext, async (req: Request, res: Re
                     `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
                      VALUES ($1,$2,$3,'manual_entry',NULL,$4,$5)`,
                     [req.userOrgId || null, req.userId, approver?.id || null, "Manual time entry",
-                    JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode: VALID_WORK_MODES.includes(work_mode) ? work_mode : "office" })],
+                    JSON.stringify({ date, clock_in, clock_out: clock_out || null, work_mode })],
                 );
             }
         });
@@ -1046,6 +742,7 @@ router.post("/manual-entry", auth, loadUserContext, async (req: Request, res: Re
             })();
         }
     } catch (err) {
+        if (err instanceof AttendanceError) return res.status(err.statusCode).json({ error: err.message });
         req.log.error({ err }, "Manual entry error");
         res.status(500).json({ error: "Failed to add manual entry" });
     }
@@ -1054,61 +751,20 @@ router.post("/manual-entry", auth, loadUserContext, async (req: Request, res: Re
 // Edit a manual day entry
 router.put("/manual-entry/:date", auth, loadUserContext, async (req: Request, res: Response) => {
     try {
-        const date = String(req.params.date);
-        const { clock_in, clock_out, breaks, timezoneOffset, work_mode } = req.body;
-
-        if (!date || !clock_in) return res.status(400).json({ error: "Date and login time are required" });
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Invalid date format. Use YYYY-MM-DD" });
-        if (date > getLocalToday(req)) {
-            return res.status(400).json({ error: "Cannot set a manual entry for a future date" });
-        }
-
-        if (!isValidTime(clock_in) || (clock_out && !isValidTime(clock_out))) {
-            return res.status(400).json({ error: "Invalid time format. Use HH:MM (00:00–23:59)" });
-        }
-        if (clock_out && clock_out <= clock_in) return res.status(400).json({ error: "Logout time must be after login time" });
-
-        if (breaks && Array.isArray(breaks)) {
-            if (breaks.length > 20) return res.status(400).json({ error: "Maximum 20 breaks allowed" });
-            const sorted = [...breaks].sort((a, b) => (a.start || "").localeCompare(b.start || ""));
-            for (let i = 0; i < sorted.length; i++) {
-                const brk = sorted[i];
-                if (!brk.start || !brk.end || !isValidTime(brk.start) || !isValidTime(brk.end)) {
-                    return res.status(400).json({ error: "Each break must have valid start and end times (HH:MM, 00:00–23:59)" });
-                }
-                if (brk.end <= brk.start) return res.status(400).json({ error: "Break end must be after start" });
-                if (brk.start < clock_in || (clock_out && brk.end > clock_out)) {
-                    return res.status(400).json({ error: "Break times must be within clock-in/out" });
-                }
-                if (i < sorted.length - 1 && brk.end > sorted[i + 1].start) {
-                    return res.status(400).json({ error: "Break times must not overlap" });
-                }
-            }
-            if (clock_out) {
-                let totalBreakMin = 0;
-                for (const brk of sorted) {
-                    const [sh, sm] = brk.start.split(":").map(Number);
-                    const [eh, em] = brk.end.split(":").map(Number);
-                    totalBreakMin += (eh * 60 + em) - (sh * 60 + sm);
-                }
-                const [cih, cim] = clock_in.split(":").map(Number);
-                const [coh, com] = clock_out.split(":").map(Number);
-                const workMin = (coh * 60 + com) - (cih * 60 + cim);
-                if (totalBreakMin >= workMin) {
-                    return res.status(400).json({ error: "Total break duration cannot exceed work duration" });
-                }
-            }
-        }
-
-        if (typeof timezoneOffset === "number" && (timezoneOffset < -840 || timezoneOffset > 720)) {
-            return res.status(400).json({ error: "Invalid timezone offset" });
-        }
-        const offsetMs = (typeof timezoneOffset === "number") ? timezoneOffset * 60000 : 0;
-        function toUTC(dateStr: string, timeStr: string): string {
-            const [year, month, day] = dateStr.split("-").map(Number);
-            const [hours, minutes] = timeStr.split(":").map(Number);
-            return new Date(Date.UTC(year, month - 1, day, hours, minutes, 0) + offsetMs).toISOString();
-        }
+        const manual = parseManualEntry(req.body, {
+            date: String(req.params.date),
+            today: getLocalToday(req),
+            edit: true,
+        });
+        const {
+            date,
+            clockIn: clock_in,
+            clockOut: clock_out,
+            breaks: normalizedBreaks,
+            timezoneOffset,
+            workMode: resolvedWorkMode,
+            toUtc,
+        } = manual;
 
         if (req.userOrgId) {
             const lockedPeriod = (await req.db!.query(
@@ -1120,7 +776,6 @@ router.put("/manual-entry/:date", auth, loadUserContext, async (req: Request, re
             }
         }
 
-        // Same conflict rule as POST: a manual entry can't coexist with a leave.
         const leaveRes = await req.db!.query(
             "SELECT id, leave_type FROM leaves WHERE user_id = $1 AND date = $2",
             [req.userId, date],
@@ -1130,20 +785,9 @@ router.put("/manual-entry/:date", auth, loadUserContext, async (req: Request, re
         }
 
         const isSuperAdmin = req.userRole === "super_admin";
-        let approvalStatus = isSuperAdmin ? "approved" : "pending";
-        let needsApproval = !isSuperAdmin;
-
+        const approvalStatus = isSuperAdmin ? "approved" : "pending";
+        const needsApproval = !isSuperAdmin;
         const tzMod = getTzModifier(req);
-        const resolvedWorkMode = VALID_WORK_MODES.includes(work_mode) ? work_mode : "office";
-
-        // Normalise the proposed breaks so both the immediate-apply path and
-        // the pending-approval metadata share an identical, sorted shape.
-        const normalizedBreaks = (breaks && Array.isArray(breaks))
-            ? [...breaks]
-                .filter((b) => b && b.start && b.end)
-                .sort((a, b) => a.start.localeCompare(b.start))
-                .map((b) => ({ start: b.start, end: b.end }))
-            : [];
 
         // Detect whether this date holds "protected" data - already-APPROVED
         // entries or live-tracked (non-manual) entries that carry face/location
@@ -1164,8 +808,8 @@ router.put("/manual-entry/:date", auth, loadUserContext, async (req: Request, re
             hasProtectedData = protectedRes.rowCount > 0;
         }
 
-        const clockInTs = toUTC(date, clock_in);
-        const clockOutTs = clock_out ? toUTC(date, clock_out) : null;
+        const clockInTs = toUtc(clock_in);
+        const clockOutTs = clock_out ? toUtc(clock_out) : null;
         let txApproverEdit: any = null;
 
         // Full proposed day, stored on the approval request so the manager's
@@ -1224,8 +868,8 @@ router.put("/manual-entry/:date", auth, loadUserContext, async (req: Request, re
                 );
                 await ins(req.userId, "clock_in", clockInTs, resolvedWorkMode);
                 for (const brk of normalizedBreaks) {
-                    await ins(req.userId, "break_start", toUTC(date, brk.start), null);
-                    await ins(req.userId, "break_end", toUTC(date, brk.end), null);
+                    await ins(req.userId, "break_start", toUtc(brk.start), null);
+                    await ins(req.userId, "break_end", toUtc(brk.end), null);
                 }
                 if (clockOutTs) await ins(req.userId, "clock_out", clockOutTs, null);
                 if (needsApproval) {
@@ -1268,353 +912,13 @@ router.put("/manual-entry/:date", auth, loadUserContext, async (req: Request, re
             })();
         }
     } catch (err) {
+        if (err instanceof AttendanceError) return res.status(err.statusCode).json({ error: err.message });
         req.log.error({ err }, "Manual entry edit error");
         res.status(500).json({ error: "Failed to update entry" });
     }
 });
 
-// Delete all entries for a date
-router.delete("/entries/:date", auth, loadUserContext, async (req: Request, res: Response) => {
-    try {
-        const date = String(req.params.date);
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Invalid date format" });
-
-        if (req.userOrgId) {
-            const lockedPeriod = (await req.db!.query(
-                `SELECT label FROM pay_periods WHERE org_id = $1 AND start_date <= $2 AND end_date >= $2`,
-                [req.userOrgId, date],
-            )).rows[0];
-            if (lockedPeriod) {
-                return res.status(400).json({ error: `This date is in a locked pay period (${lockedPeriod.label}). Time entries cannot be deleted.` });
-            }
-        }
-
-        const tzMod = getTzModifier(req);
-        const protectedRes = await req.db!.query(
-            `SELECT 1 FROM time_entries
-             WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date
-               AND approval_status IN ('pending','approved')
-             LIMIT 1`,
-            [req.userId, date],
-        );
-        if (protectedRes.rowCount > 0) {
-            return res.status(403).json({ error: "Cannot delete entries that are pending approval or already approved. Contact your manager." });
-        }
-
-        const result = await req.db!.query(
-            `DELETE FROM time_entries WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date`,
-            [req.userId, date],
-        );
-        res.json({ message: `Deleted ${result.rowCount} entries for ${date}` });
-    } catch (err) {
-        req.log.error({ err }, "Delete entries error");
-        res.status(500).json({ error: "Failed to delete entries" });
-    }
-});
-
-// Get entries for a specific date
-router.get("/entries/:date", auth, async (req: Request, res: Response) => {
-    try {
-        const date = String(req.params.date);
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Invalid date format" });
-        const tzMod = getTzModifier(req);
-        const result = await req.db!.query(
-            `SELECT * FROM time_entries
-             WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} = $2::date
-             ORDER BY timestamp ASC`,
-            [req.userId, date],
-        );
-        res.json(result.rows);
-    } catch (err) {
-        req.log.error({ err }, "Get entries error");
-        res.status(500).json({ error: "Failed to fetch entries" });
-    }
-});
-
-// Dashboard widgets
-router.get("/widgets", auth, async (req: Request, res: Response) => {
-    try {
-        const today = getLocalToday(req);
-        const tzMod = getTzModifier(req);
-        const offsetMin = getOffsetMin(req);
-
-        const entriesRes = await req.db!.query(
-            `SELECT * FROM time_entries
-             WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} >= ($2::date - INTERVAL '30 days')
-              AND (approval_status IS NULL OR approval_status != 'rejected')
-             ORDER BY timestamp ASC`,
-            [req.userId, today],
-        );
-
-        const grouped: Record<string, TimeEntry[]> = {};
-        entriesRes.rows.forEach((e: TimeEntry) => {
-            const date = getLocalDateFromTs(e.timestamp, req);
-            if (!grouped[date]) grouped[date] = [];
-            grouped[date].push(e);
-        });
-
-        const monthStart = today.slice(0, 7) + "-01";
-        let leaveCount = 0;
-        let leaveDatesSet = new Set<string>();
-        try {
-            const leaveRes = await req.db!.query(
-                `SELECT date FROM leaves WHERE user_id = $1 AND status = 'approved' AND date::date >= $2::date - INTERVAL '60 days' AND date::date <= $3::date`,
-                [req.userId, today, today],
-            );
-            leaveRes.rows.forEach((r: { date: string }) => leaveDatesSet.add(r.date));
-            leaveRes.rows.forEach((r: { date: string }) => { if (r.date >= monthStart) leaveCount++; });
-        } catch (_) { /* ignore */ }
-
-        const orgRow = (await req.db!.query(
-            `SELECT u.org_id FROM users u WHERE u.id = $1`,
-            [req.userId],
-        )).rows[0];
-        const orgConfig = await getOrgWorkConfig(orgRow?.org_id, req.db as unknown as DbLike, req.tenantId);
-        let totalFloorMin = 0; let workDays = 0; let targetMetDays = 0; let officeDays = 0; let remoteDays = 0;
-        const orgWhpd = orgConfig.work_hours_per_day || 8;
-        const minHoursPresent = (
-            orgConfig.min_hours_present != null
-            && Number(orgConfig.min_hours_present) >= 0
-        )
-            ? Number(orgConfig.min_hours_present)
-            : orgWhpd / 2;
-        const minPresentMinutes = minHoursPresent * 60;
-        const TARGET = orgWhpd * 60;
-        const floorByDate: Record<string, number> = {};
-
-        Object.keys(grouped).forEach((date) => {
-            const dayEntries = grouped[date];
-            if (!dayEntries.some((e) => e.entry_type === "clock_in")) return;
-            workDays++;
-            const capMs = date >= today ? Date.now() : endOfLocalDayMs(date, offsetMin);
-            const summary = computeDaySummary(dayEntries, true, capMs);
-            floorByDate[date] = summary.floorMinutes;
-            totalFloorMin += summary.floorMinutes;
-            if (summary.floorMinutes >= TARGET) targetMetDays++;
-            if (summary.workMode === "remote") remoteDays++;
-            else officeDays++;
-        });
-
-        const avgFloorMinutes = workDays > 0 ? Math.round(totalFloorMin / workDays) : 0;
-
-        let earlyDays = 0;
-        Object.values(grouped).forEach((dayEntries) => {
-            const ci = dayEntries.find((e) => e.entry_type === "clock_in");
-            if (ci) {
-                const utcMs = new Date(ci.timestamp).getTime();
-                const localDate = new Date(utcMs - offsetMin * 60000);
-                const h = localDate.getUTCHours();
-                const m = localDate.getUTCMinutes();
-                if (h < 10 || (h === 10 && m === 0)) earlyDays++;
-            }
-        });
-        const punctualityPercent = workDays > 0 ? Math.round((earlyDays / workDays) * 100) : 0;
-
-        const workDaySet = parseWorkDays(orgConfig.work_days || null);
-        let monthPresentDays = 0;
-        Object.keys(grouped).forEach((date) => {
-            if (date < monthStart || date > today) return;
-            const jsDow = new Date(date + "T00:00:00Z").getUTCDay();
-            if (!isJsDowWorkDay(jsDow, workDaySet)) return;
-            if ((floorByDate[date] || 0) >= minPresentMinutes) {
-                monthPresentDays++;
-            }
-        });
-        const monthStartDate = new Date(monthStart + "T00:00:00Z");
-        const todayDate = new Date(today + "T00:00:00Z");
-        let totalWeekdays = 0;
-        for (let d = new Date(monthStartDate); d <= todayDate; d.setDate(d.getDate() + 1)) {
-            if (isJsDowWorkDay(d.getUTCDay(), workDaySet)) totalWeekdays++;
-        }
-        const presentDays = monthPresentDays + leaveCount;
-        const attendancePercent = totalWeekdays > 0 ? Math.min(100, Math.round((presentDays / totalWeekdays) * 100)) : 0;
-
-        res.json({ avgFloorMinutes, punctualityPercent, attendancePercent, targetMetDays, workDays, totalWeekdays, leaveCount, officeDays, remoteDays });
-    } catch (err) {
-        req.log.error({ err }, "Widgets error");
-        res.status(500).json({ error: "Failed to fetch widgets" });
-    }
-});
-
-// Weekly chart data
-router.get("/weekly", auth, async (req: Request, res: Response) => {
-    try {
-        const offsetMin = getOffsetMin(req);
-        const now = new Date(Date.now() - offsetMin * 60000);
-        const todayStr = getLocalToday(req);
-        const dayOfWeek = now.getUTCDay();
-        const monday = new Date(now);
-        monday.setUTCDate(now.getUTCDate() - ((dayOfWeek + 6) % 7));
-
-        const mondayStr = monday.toISOString().slice(0, 10);
-        const sunday = new Date(monday);
-        sunday.setUTCDate(monday.getUTCDate() + 6);
-        const sundayStr = sunday.toISOString().slice(0, 10);
-
-        const tzMod = getTzModifier(req);
-        const result = await req.db!.query(
-            `SELECT * FROM time_entries
-             WHERE user_id = $1 AND ${pgDateInTz("timestamp", tzMod)} BETWEEN $2::date AND $3::date
-             ORDER BY timestamp ASC`,
-            [req.userId, mondayStr, sundayStr],
-        );
-
-        const grouped: Record<string, TimeEntry[]> = {};
-        result.rows.forEach((e: TimeEntry) => {
-            const date = getLocalDateFromTs(e.timestamp, req);
-            if (!grouped[date]) grouped[date] = [];
-            grouped[date].push(e);
-        });
-
-        const days = [];
-        for (let i = 0; i < 7; i++) {
-            const d = new Date(monday);
-            d.setUTCDate(monday.getUTCDate() + i);
-            const dateStr = d.toISOString().slice(0, 10);
-            const dayName = d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
-
-            let hours = 0;
-            const dayEntries = grouped[dateStr];
-            if (dayEntries && dayEntries.length > 0) {
-                const capMs = dateStr >= todayStr ? Date.now() : endOfLocalDayMs(dateStr, offsetMin);
-                const summary = computeDaySummary(dayEntries, true, capMs);
-                hours = Math.round(summary.floorMinutes / 6) / 10;
-            }
-            days.push({ date: dateStr, day: dayName, hours, isToday: dateStr === todayStr });
-        }
-
-        res.json({ days });
-    } catch (err) {
-        req.log.error({ err }, "Weekly error");
-        res.status(500).json({ error: "Failed to fetch weekly data" });
-    }
-});
-
-// Today task summary
-router.get("/task-summary", auth, async (req: Request, res: Response) => {
-    try {
-        const today = getLocalToday(req);
-        const result = await req.db!.query(
-            "SELECT * FROM tasks WHERE (user_id = $1 OR assigned_to = $1) AND date = $2 ORDER BY priority DESC, created_at ASC",
-            [req.userId, today],
-        );
-        const tasks = result.rows;
-
-        const total = tasks.length;
-        const done = tasks.filter((t: { status: string }) => t.status === "done").length;
-        const pending = tasks.filter((t: { status: string }) => t.status === "pending").length;
-        const inProgress = tasks.filter((t: { status: string }) => t.status === "in_progress").length;
-        const inReview = tasks.filter((t: { status: string }) => t.status === "in_review").length;
-
-        const activeTasks = tasks
-            .filter((t: { status: string }) => ["in_progress", "in_review", "pending"].includes(t.status))
-            .map((t: { title: string; priority: string; status: string }) => ({ title: t.title, priority: t.priority, status: t.status }));
-
-        res.json({ total, done, pending, inProgress, inReview, activeTasks });
-    } catch (err) {
-        req.log.error({ err }, "Task summary error");
-        res.status(500).json({ error: "Failed to fetch task summary" });
-    }
-});
-
-// Overtime request
-router.post("/overtime-request", auth, loadUserContext, async (req: Request, res: Response) => {
-    try {
-        const { date, hours, reason } = req.body;
-        if (!date || !hours || !reason) return res.status(400).json({ error: "Date, hours, and reason are required" });
-        if (typeof reason !== "string" || reason.length > 500) return res.status(400).json({ error: "Reason must be 500 characters or less" });
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Invalid date format" });
-        const numHours = parseFloat(hours);
-        if (isNaN(numHours) || numHours <= 0 || numHours > 24) return res.status(400).json({ error: "Hours must be between 0 and 24" });
-
-        const existingRes = await req.db!.query(
-            `SELECT id FROM approval_requests
-             WHERE requester_id = $1 AND type = 'overtime' AND status = 'pending'
-               AND metadata::jsonb->>'date' = $2`,
-            [req.userId, date],
-        );
-        if (existingRes.rowCount > 0) {
-            return res.status(400).json({ error: "You already have a pending overtime request for this date" });
-        }
-
-        const approver = await findApprover(req.db, req.userId, req.userOrgId);
-        await req.db!.query(
-            `INSERT INTO approval_requests (org_id, requester_id, approver_id, type, reference_id, reason, metadata)
-             VALUES ($1,$2,$3,'overtime',NULL,$4,$5)`,
-            [req.userOrgId || null, req.userId, approver?.id || null, reason,
-            JSON.stringify({ date, hours: numHours })],
-        );
-
-        try {
-            if (approver?.id) {
-                const requesterName = (await req.db!.query("SELECT full_name FROM users WHERE id = $1", [req.userId])).rows[0]?.full_name || "A team member";
-                await req.db!.query(
-                    "INSERT INTO notifications (user_id, type, title, body) VALUES ($1, $2, $3, $4)",
-                    [approver.id, "approval", "Overtime Request", `${requesterName} requested ${numHours}h overtime for ${date}.`],
-                );
-                sendToUser(req.tenantId, approver.id, "approval_update", { type: "overtime", status: "pending" });
-            }
-        } catch (notifErr) {
-            req.log.error({ err: notifErr }, "Manager notification error (overtime)");
-        }
-
-        logAction(req, "create", "overtime_request", null, { date, hours: numHours });
-        res.json({ message: "Overtime request submitted for approval" });
-    } catch (err) {
-        req.log.error({ err }, "Overtime request error");
-        res.status(500).json({ error: "Failed to submit overtime request" });
-    }
-});
-
-// Get overtime requests
-router.get("/overtime-requests", auth, async (req: Request, res: Response) => {
-    try {
-        const result = await req.db!.query(
-            `SELECT ar.id, ar.status, ar.reason, ar.metadata, ar.created_at, ar.reject_reason,
-                    u.full_name as approver_name
-             FROM approval_requests ar
-             LEFT JOIN users u ON u.id = ar.approver_id
-             WHERE ar.requester_id = $1 AND ar.type = 'overtime'
-             ORDER BY ar.created_at DESC
-             LIMIT 50`,
-            [req.userId],
-        );
-        const requests = result.rows.map((r: { metadata: string; [key: string]: unknown }) => {
-            let meta = {};
-            try { meta = JSON.parse(r.metadata); } catch (_) { /* ignore */ }
-            return { ...r, metadata: meta };
-        });
-        res.json(requests);
-    } catch (err) {
-        req.log.error({ err }, "Overtime requests error");
-        res.status(500).json({ error: "Failed to fetch overtime requests" });
-    }
-});
-
-// Theme
-router.get("/theme", auth, async (req: Request, res: Response) => {
-    try {
-        const result = await req.db!.query("SELECT theme FROM users WHERE id = $1", [req.userId]);
-        res.json({ theme: result.rows[0]?.theme || "dark" });
-    } catch (err) {
-        res.status(500).json({ error: "Failed to fetch theme" });
-    }
-});
-
-router.put("/theme", auth, async (req: Request, res: Response) => {
-    try {
-        const { theme } = req.body;
-        if (!["dark", "light"].includes(theme)) return res.status(400).json({ error: "Invalid theme" });
-        await req.db!.query("UPDATE users SET theme = $1 WHERE id = $2", [theme, req.userId]);
-        // Push the change to every other connected device/tab of this same
-        // user so the theme updates instantly everywhere (multi-device sync).
-        try {
-            sendToUser(req.tenantId, req.userId, "theme_changed", { theme });
-        } catch { /* ws not initialised (e.g. tests) — best-effort */ }
-        res.json({ theme, message: "Theme updated" });
-    } catch (err) {
-        res.status(500).json({ error: "Failed to update theme" });
-    }
-});
+// First Phase G slice: overtime + theme are layered under modules/attendance.
+router.use("/", attendanceModuleRoutes);
 
 export = router;

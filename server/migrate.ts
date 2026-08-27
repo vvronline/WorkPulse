@@ -25,11 +25,31 @@ if (fs.existsSync(envPath)) {
     require("dotenv").config();
 }
 
+// Phase E: application traffic may use PgBouncer transaction pooling, while
+// schema administration should use a direct Postgres connection. Override
+// before db.ts is lazily required below, so every migration helper binds to the
+// direct URL. In existing deployments the variable is absent and behavior is
+// unchanged.
+if (process.env.DIRECT_DATABASE_URL) {
+    process.env.DATABASE_URL = process.env.DIRECT_DATABASE_URL;
+}
+
 import { Pool } from "pg";
 import { logger } from "./utils/logger";
 
 const MAX_RETRIES = 10;
 const BASE_DELAY_MS = 1000;
+
+function assertNoMigrationFailures(
+    label: string,
+    failed: number | string[],
+): void {
+    const count = Array.isArray(failed) ? failed.length : failed;
+    if (count > 0) {
+        const detail = Array.isArray(failed) ? failed.join(", ") : `${failed} failure(s)`;
+        throw new Error(`${label} failed: ${detail}`);
+    }
+}
 
 async function waitForDatabase(): Promise<void> {
     const url = process.env.DATABASE_URL;
@@ -76,16 +96,37 @@ async function main(): Promise<void> {
     const { initDB, initTenantSchema } = require("./db");
     await initDB();
 
+    // A4: master-database migrations (shards registry, tenants.shard_id,
+    // tenants.storage_bucket). Must run BEFORE any tenant work so
+    // createTenant() can place new tenants on a shard.
+    logger.info("migrate.js: running master migrations...");
+    const { runMasterMigrations } = require("./utils/migrationRunner");
+    const masterResult = await runMasterMigrations();
+    logger.info({ masterResult }, "migrate.js: master migrations complete");
+    if (masterResult.failed.length > 0) {
+        logger.error(
+            { failed: masterResult.failed },
+            "migrate.js: master migrations FAILED — platform schema may be incomplete",
+        );
+        assertNoMigrationFailures("Master migrations", masterResult.failed);
+    }
+
     // CRITICAL: ensure every tenant DB has the FULL base schema before the
-    // incremental migration sweep runs. `sweepAllTenants()` only applies the
-    // incremental MIGRATIONS[] array — it does NOT (re)run initTenantSchema().
+    // migration sweep runs. `sweepAllTenants()` applies only the `.sql` files
+    // in platform/db/migrations — it does NOT (re)run initTenantSchema().
     // Any tenant DB that was never fully bootstrapped (or whose bootstrap
-    // aborted) would therefore be missing base tables like `tenant_roles` and
-    // `device_tokens`, which silently breaks features such as push
-    // notifications (device-token registration INSERT fails, getDeviceTokens()
-    // returns [] → no push is ever dispatched). initTenantSchema() is fully
-    // idempotent (every statement is CREATE TABLE / ADD COLUMN IF NOT EXISTS),
-    // so running it on every deploy is safe and self-healing.
+    // aborted) would therefore be missing base tables like `tenant_roles`.
+    // initTenantSchema() is fully idempotent (every statement is
+    // CREATE TABLE / ADD COLUMN IF NOT EXISTS), so running it on every deploy
+    // is safe and self-healing.
+    //
+    // NOTE (A2 squash, 2026-08): initTenantSchema() is deliberately NOT the
+    // complete schema. 26 objects — `device_tokens` (push), `webauthn_credentials`
+    // + `device_credentials` (biometric), the `users.mfa_*` columns (2FA),
+    // `sprint_burndown_snapshots`, `sprint_retro_votes`,
+    // `tasks.cycle_started_at` / `lead_started_at`, and 3 perf indexes — are
+    // created by 0002_migration_catchup.sql in the sweep below. Both steps are
+    // required; see scripts/analyze-migration-coverage.mjs for the proof.
     logger.info("migrate.js: ensuring base tenant schema for all tenants...");
     const { forEachTenant } = require("./utils/tenantManager");
     const schemaTotals = { ok: 0, failed: 0 };
@@ -105,6 +146,9 @@ async function main(): Promise<void> {
         { label: "tenant-schema-bootstrap" },
     );
     logger.info({ schemaTotals }, "migrate.js: base tenant schema ensured");
+    if (schemaTotals.failed > 0) {
+        assertNoMigrationFailures("Base tenant schema", schemaTotals.failed);
+    }
 
     logger.info("migrate.js: running tenant migrations...");
     const { sweepAllTenants } = require("./utils/migrationRunner");
@@ -112,10 +156,16 @@ async function main(): Promise<void> {
     logger.info({ result }, "migrate.js: all migrations complete");
     if (result?.failed > 0) {
         logger.error({ failed: result.failed }, "migrate.js: one or more tenant migrations FAILED — see per-migration errors above");
+        assertNoMigrationFailures("Tenant migrations", result.failed);
     }
+
+    // Historical platform-admin cleanup is a deploy-time data migration, not a
+    // runtime-role responsibility. The helper is idempotent.
+    const { scrubPlatformAdminsFromCustomerTenants } = require("./utils/migrationRunner");
+    await scrubPlatformAdminsFromCustomerTenants();
 }
 
-main()
+if (require.main === module) main()
     .then(() => {
         logger.info("migrate.js: success — exiting");
         process.exit(0);
@@ -124,3 +174,5 @@ main()
         logger.error({ err: (err as Error).message, stack: (err as Error).stack }, "migrate.js: FATAL — migrations failed");
         process.exit(1);
     });
+
+export { main, waitForDatabase, assertNoMigrationFailures };

@@ -26,12 +26,19 @@ if (!process.env.DATABASE_URL) {
     process.exit(1);
 }
 
+/**
+ * Keep application-side pools deliberately small. PgBouncer (Phase E) owns
+ * the real server-connection budget; each Node replica only needs a handful of
+ * concurrent client sockets into PgBouncer.
+ */
+const MASTER_POOL_SIZE = Math.max(1, parseInt(process.env.MASTER_POOL_SIZE || "", 10) || 4);
+
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('sslmode=require'))
         ? { rejectUnauthorized: false }
         : false,
-    max: 10,
+    max: MASTER_POOL_SIZE,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
 });

@@ -41,14 +41,6 @@ function getCollabWsUrl(): string {
     return `${protocol}//${host}/collab`;
 }
 
-/**
- * Get the auth token from cookies for Hocuspocus authentication.
- */
-function getAuthToken(): string {
-    const match = document.cookie.match(/(?:^|;\s*)token=([^;]*)/);
-    return match ? match[1] : "";
-}
-
 interface CollabUser {
     clientId: number;
     userId: number | string | undefined;
@@ -124,12 +116,15 @@ export default function useCollaboration({
 
         // Connect to Hocuspocus server
         const wsUrl = getCollabWsUrl();
-        const token = getAuthToken();
         const provider = new HocuspocusProvider({
             url: wsUrl,
             name: docName,
             document: ydoc,
-            token,
+            // Authentication uses the HttpOnly `token` cookie on the WS
+            // upgrade request. Browser JavaScript cannot and must not read it.
+            // Hocuspocus still sends an auth frame; the server accepts the
+            // already-verified cookie identity when this field is empty.
+            token: "",
             connect: true,
             onStatus({ status }: { status: string }) {
                 setConnected(status === "connected");

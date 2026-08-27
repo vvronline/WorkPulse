@@ -1,0 +1,9 @@
+name = "aino-edge-router"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+# Attach `aino.org.in/*` / `www.aino.org.in/*` only after staging validation.
+# Public origin hostnames are secrets/variables because each Railway service
+# gets its own domain. Never point an origin back at this Worker route.
+[vars]
+ROUTING_MODE = "legacy"

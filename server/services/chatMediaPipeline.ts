@@ -1,8 +1,6 @@
-import path from "path";
-import fs from "fs";
 import { createHash } from "crypto";
 import { sendToUser } from "../utils/ws";
-import { UPLOADS_ROOT } from "../utils/uploadPath";
+import { getStorage, urlToKey } from "../platform/storage";
 
 type QueryResult = { rows: any[]; rowCount?: number | null };
 type QueryFn = (sql: string, params?: unknown[]) => Promise<QueryResult>;
@@ -67,25 +65,26 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function resolveUploadPath(fileUrl: string | null | undefined): string | null {
+/**
+ * Storage key for a stored file URL, or null when unusable.
+ *
+ * A3: this used to build an absolute path under `server/uploads/`. That only
+ * worked while the worker shared a filesystem with the web process — which
+ * stops being true the moment either one is replicated, or once the worker
+ * runs as its own service (Phase D). Media now lives in object storage.
+ */
+function resolveUploadKey(fileUrl: string | null | undefined): string | null {
     if (!fileUrl || typeof fileUrl !== "string") return null;
+    // Strip any query/fragment before interpreting the path.
     const clean = fileUrl.split("?")[0].split("#")[0];
-    const marker = "/uploads/";
-    const idx = clean.indexOf(marker);
-    if (idx < 0) return null;
-    const rel = clean.slice(idx + marker.length).replace(/^[/\\]+/, "");
-    if (!rel) return null;
-    return path.join(UPLOADS_ROOT, ...rel.split("/"));
+    return urlToKey(clean);
 }
 
-async function computeSha256(filePath: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-        const hash = createHash("sha256");
-        const stream = fs.createReadStream(filePath);
-        stream.on("error", reject);
-        stream.on("data", (chunk) => hash.update(chunk));
-        stream.on("end", () => resolve(hash.digest("hex")));
-    });
+/** SHA-256 of a stored object, or null when the object is missing. */
+async function computeSha256(key: string): Promise<string | null> {
+    const body = await getStorage().get(key);
+    if (!body) return null;
+    return createHash("sha256").update(body).digest("hex");
 }
 
 export async function processChatMediaJob(params: {
@@ -188,11 +187,8 @@ export async function processChatMediaJob(params: {
             return;
         }
 
-        const diskPath = resolveUploadPath(msg.file_url);
-        const checksum =
-            diskPath && fs.existsSync(diskPath)
-                ? await computeSha256(diskPath)
-                : null;
+        const objectKey = resolveUploadKey(msg.file_url);
+        const checksum = objectKey ? await computeSha256(objectKey) : null;
         const resumableToken = `media-${mediaJobId}-${Date.now()}`;
 
         await apply({

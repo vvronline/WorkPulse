@@ -1,0 +1,99 @@
+name: DB — Full Backup (manual)
+
+# =============================================================================
+# Runs scripts/backup-all-databases.sh on a GitHub runner.
+#
+# WHY A RUNNER AND NOT THE WORKSTATION
+#   The Railway Postgres public TCP proxy (interchange.proxy.rlwy.net:21659) and
+#   ssh.railway.com:22 are both blocked by the corporate network, so `railway
+#   ssh`, `railway connect` and a local pg_dump all time out. A GitHub runner has
+#   open egress.
+#
+# DIFFERENCE FROM "A2 — Database Dump"
+#   a2-database-dump.yml dumps master + the DEFAULT tenant only; it exists to
+#   regenerate the migration baseline. THIS workflow dumps master + EVERY tenant
+#   database, and is the one the pre-push runbook requires.
+#
+# SETUP (one time):
+#   Repo -> Settings -> Secrets and variables -> Actions -> New repository secret
+#     Name:  DATABASE_PUBLIC_URL
+#     Value: Railway -> Postgres -> Connect -> Public Network connection string
+#
+# RUN:
+#   Actions tab -> "DB — Full Backup (manual)" -> Run workflow
+#   -> type CONFIRM -> Run
+#
+# AFTER DOWNLOADING: delete the artifact. It contains full database contents
+# including password hashes. Long-term storage belongs in a PRIVATE R2 bucket.
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type CONFIRM to run the backup'
+        required: true
+        default: ''
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.confirm == 'CONFIRM' }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify the confirmation input
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "CONFIRM" ]; then
+            echo "::error::You must type CONFIRM to run this workflow."
+            exit 1
+          fi
+
+      # Railway runs Postgres 18. pg_dump refuses to dump a server newer than
+      # itself, so the client major version must be >= the server major version.
+      - name: Install PostgreSQL 18 client
+        env:
+          PG_MAJOR: '18'
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "postgresql-client-${PG_MAJOR}"
+          pg_dump --version
+
+      - name: Run the full backup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_PUBLIC_URL }}
+          OUT_DIR: ./db-backups
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Secret DATABASE_PUBLIC_URL is not set. See the header of this workflow."
+            exit 1
+          fi
+          chmod +x scripts/backup-all-databases.sh
+          sh scripts/backup-all-databases.sh
+
+      - name: Summarise output
+        run: |
+          echo "### Database backup artifacts" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -lh db-backups >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Manifest (record this timestamp in the go/no-go record):**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat db-backups/MANIFEST-*.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload backup as a private artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: db-backups/
+          retention-days: 7
+          if-no-files-found: error

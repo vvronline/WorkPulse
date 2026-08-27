@@ -1,55 +1,50 @@
 /**
  * Per-tenant upload path helper.
  *
- * All disk paths and stored URLs follow the canonical layout:
- *   uploads/tenant_<tenantId>/org_<orgId>/<kind>/<filename>
+ * ── A3 (2026-08): uploads moved from local disk to object storage ───────────
  *
- * The express static middleware in server/index.js enforces that the
- * `tenant_<id>` segment of any /uploads/... URL matches the requesting
- * user's tenant, and the `org_<id>` segment matches their org. Using
- * this helper everywhere guarantees that enforcement actually applies.
+ * Uploads now live in Cloudflare R2, not `server/uploads/`. The Railway volume
+ * that backed the old directory could only attach to ONE instance, which made
+ * running multiple replicas impossible. See docs/SCALABILITY_REFACTOR_PLAN.md A3.
  *
- * Legacy files written before the per-tenant layout still live at
- *   uploads/org_<orgId>/<kind>/<filename>
- * and continue to be served (they pass through the static middleware
- * because the tenant regex only fires when the prefix is present).
+ * The key format is unchanged:
+ *   tenant_<tenantId>/org_<orgId>/<kind>/<filename>
+ * and so is the stored URL:
+ *   /uploads/tenant_<tenantId>/org_<orgId>/<kind>/<filename>
+ *
+ * Because both are identical to the previous layout, every `avatar`,
+ * `logo_url` and `file_url` already in a tenant database keeps working with no
+ * data migration, and the tenant/org checks in index.ts are untouched.
+ *
+ * This module is now a thin compatibility layer over
+ * `platform/storage/keys.ts`. Prefer importing from there in new code.
  */
-import path from "path";
-import fs from "fs";
-
-const UPLOADS_ROOT = path.resolve(__dirname, "..", "uploads");
+import { buildUploadKey, buildUploadUrl, urlToKey } from "../platform/storage/keys";
 
 /**
- * Build the absolute on-disk directory for a tenant+org+kind upload.
- * Creates the directory recursively if it does not already exist.
+ * Storage key for an upload (no leading slash, no `/uploads` prefix).
  *
- * @param tenantId  Required. From req.tenantId.
- * @param orgId     Required. From req.userOrgId.
- * @param kind      Logical bucket: 'chat' | 'avatars' | etc.
- * @returns absolute directory path
- * @throws if tenantId or orgId is missing
+ * Replaces the old `getUploadDir()`, which created a directory on disk and
+ * returned its absolute path. There is no directory to create any more —
+ * object storage has no real directories, only key prefixes.
+ *
+ * @param tenantId Required. From req.tenantId.
+ * @param orgId    Required. From req.userOrgId.
+ * @param kind     Logical bucket: 'chat' | 'avatars' | 'branding' | ...
+ * @param filename Server-generated filename (never the user's original).
  */
-function getUploadDir(tenantId: number | string, orgId: number | string, kind: string): string {
-    if (!tenantId) throw new Error("uploadPath: tenantId is required");
-    if (!orgId) throw new Error("uploadPath: orgId is required");
-    if (!kind || typeof kind !== "string" || /[/\\.]/.test(kind)) {
-        throw new Error("uploadPath: invalid kind");
-    }
-    const dir = path.join(
-        UPLOADS_ROOT,
-        `tenant_${Number(tenantId)}`,
-        `org_${Number(orgId)}`,
-        kind,
-    );
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    return dir;
+function getUploadKey(
+    tenantId: number | string,
+    orgId: number | string,
+    kind: string,
+    filename: string,
+): string {
+    return buildUploadKey(tenantId, orgId, kind, filename);
 }
 
 /**
- * Build the canonical URL path stored in the database / returned to the
- * client for a per-tenant upload.
- *
- * @returns URL path (e.g. /uploads/tenant_5/org_42/chat/foo.png)
+ * Canonical URL stored in the database and returned to clients.
+ * e.g. /uploads/tenant_5/org_42/chat/foo.png
  */
 function getUploadUrl(
     tenantId: number | string,
@@ -57,14 +52,20 @@ function getUploadUrl(
     kind: string,
     filename: string,
 ): string {
-    if (!tenantId) throw new Error("uploadPath: tenantId is required");
-    if (!orgId) throw new Error("uploadPath: orgId is required");
     if (!filename) throw new Error("uploadPath: filename is required");
-    return `/uploads/tenant_${Number(tenantId)}/org_${Number(orgId)}/${kind}/${filename}`;
+    return buildUploadUrl(tenantId, orgId, kind, filename);
+}
+
+/**
+ * Convert a stored URL back into a storage key, or null when unusable.
+ * Handles legacy non-tenant-prefixed URLs too.
+ */
+function getKeyFromUrl(url: string | null | undefined): string | null {
+    return urlToKey(url);
 }
 
 export {
-    UPLOADS_ROOT,
-    getUploadDir,
+    getUploadKey,
     getUploadUrl,
+    getKeyFromUrl,
 };

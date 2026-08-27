@@ -49,10 +49,10 @@
 | **Frontend** | React 18, Vite 7, React Router v6, CSS Modules, Recharts, Quill (rich text), highlight.js |
 | **Backend** | Node.js, Express, PostgreSQL (pg), JWT (HttpOnly cookies), Helmet, express-rate-limit |
 | **Real-time** | Native `ws` WebSocket server (WS library), WebRTC (peer-to-peer calls & mesh meetings) |
-| **Caching** | Redis (ioredis) — optional, graceful degradation to in-memory |
-| **Jobs** | BullMQ (Redis-backed) — falls back to `setInterval` without Redis |
+| **Caching** | Redis (ioredis) — mandatory in production; local-dev fallback only |
+| **Jobs** | BullMQ (Redis-backed); production refuses per-process interval fallback |
 | **Logging** | Pino (structured JSON via `utils/logger.js`) |
-| **File uploads** | Multer → `server/uploads/` (authenticated static serving) |
+| **File uploads** | Multer memory buffers → private Cloudflare R2; authenticated 60s presigned downloads |
 | **Email** | Nodemailer (`utils/mailer.js`) — password resets, invites |
 | **PWA** | Service worker (`public/sw.js`), Web Manifest |
 | **Testing** | Vitest + React Testing Library (client), Jest + Supertest (server) |
@@ -545,9 +545,10 @@ tenants get `503`; deleted tenants `404`. `requireFeature(name)` / `requireMinPl
 routes on the tenant's plan + feature overrides (`utils/planCatalog.ts`).
 
 **Pool strategy** (`utils/tenantManager.ts`): an LRU cache of at most `TENANT_MAX_POOLS` (default
-10) tenant pools × `TENANT_POOL_SIZE` (default 8) connections, plus the master pool (10). Idle
-pools are evicted after `TENANT_POOL_IDLE_MS` (default 5 min); eviction skips pools with in-flight
-queries where possible. Worst case ≈ 90 connections — within Railway's ~97 limit.
+100) tenant pools × `TENANT_POOL_SIZE` (default 3) application-side connections, plus the master
+pool (`MASTER_POOL_SIZE`, default 4). PgBouncer transaction pooling owns the real server-side
+connection budget. Idle pools are evicted after `TENANT_POOL_IDLE_MS` (default 5 min); hit/miss,
+eviction and waiting gauges are exposed at `/api/internal/db-pool-stats`.
 
 **Tenant lifecycle**: `createTenant()` (catalog row → `CREATE DATABASE` → `initTenantSchema` →
 org row), `suspendTenant` / `reactivateTenant`, `deleteTenant` (soft delete frees the slug and
@@ -626,9 +627,9 @@ server/index.ts
   │
   └── SERVER STARTUP (bootstrap(), memoised so it never runs twice):
       1. initDB()            ← Master schema + legacy tenant tables on master
-      2. initRedis()         ← Connect Redis (optional, graceful degradation)
+      2. await initRedis()   ← Redis command + subscriber PING; mandatory in production
       3. sweepAllTenants()   ← Apply pending versioned migrations to every tenant DB
-      4. http.createServer() + setupWebSocket() + createCollaborationServer() (/collab, Yjs)
+      4. http.createServer() + await setupWebSocket() + createCollaborationServer() (/collab, Yjs)
       5. httpServer.listen(PORT)
       6. initJobs()          ← Start background job schedulers (BullMQ or setInterval)
       7. Graceful shutdown   ← SIGINT/SIGTERM: re-entry guarded; terminates WS clients,
@@ -642,21 +643,44 @@ Two complementary mechanisms keep every tenant DB schema current:
 1. **`initTenantSchema()`** (`db.ts`) — the full idempotent base schema
    (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`). Run on tenant creation, and
    re-run for every tenant by `migrate.ts` on deploy (self-healing for partially-bootstrapped DBs).
-2. **Versioned migrations** (`utils/migrationRunner.ts`) — an append-only `MIGRATIONS[]` registry
-   tracked per-DB in the `_migrations` table. Applied by:
+2. **Versioned SQL migrations** (`platform/db/migrations/*.sql`, loaded by
+   `utils/migrationRunner.ts`) — numbered files tracked per-DB in `_migrations`. Applied by:
    - `migrate.ts` (runs before the server starts: `node migrate.js && node index.js`,
      with DB-readiness retry/backoff),
    - `sweepAllTenants()` on server bootstrap, and
    - first touch of a tenant pool at runtime (covers tenants provisioned mid-deploy).
 
-Rules: append new migrations to the bottom of `MIGRATIONS[]`, never reorder or rename existing
-entries, and make every migration idempotent so partial failures can be retried safely.
+Rules: add the next zero-padded numbered `.sql` file, never reorder or rename an applied file,
+and make every migration idempotent so partial failures can be retried safely. `npm run build`
+copies SQL assets into `dist/` and fails if none are present.
 
 ### Server Folder Structure
 
 ```
 server/                            # TypeScript — compiled to dist/ by `npm run build`
-├── index.ts                       # Express app + HTTP server + WS + startup/shutdown
+├── index.ts                       # Thin entrypoint: env validation + role dispatch (~45 lines)
+├── app.ts                         # buildApp(): ordered Express composition, no listen()
+├── bootstrap/
+│   ├── env.ts                     # .env loading + fail-fast JWT/storage validation
+│   ├── crashHandlers.ts           # unhandled rejection / uncaught exception logging
+│   ├── migrations.ts              # memoised DB + Redis + tenant migration bootstrap
+│   └── shutdown.ts                # SIGTERM/SIGINT cleanup shared by process roles
+├── roles/
+│   ├── index.ts                   # ROLE dispatcher; split roles gated until Phase D
+│   ├── all.ts                     # current combined HTTP + realtime + worker behavior
+│   ├── web.ts                     # HTTP-only scaffold
+│   ├── realtime.ts                # WS + collaboration scaffold
+│   └── worker.ts                  # BullMQ-only scaffold
+├── http/
+│   ├── routes.ts                  # complete, centralized API route map
+│   ├── health.ts                  # backwards-compatible /api/health
+│   └── middleware/
+│       ├── security.ts            # Helmet/CSP/Permissions-Policy
+│       ├── cors.ts                # same-origin, configured and desktop origins
+│       ├── rateLimits.ts          # tenant-aware Redis/MemoryStore limiters
+│       ├── staticSpa.ts           # Vite assets + SPA fallback (removed in Phase F)
+│       ├── uploads.ts             # authenticated tenant/org/chat upload serving
+│       └── errors.ts              # final structured 500 handler
 ├── migrate.ts                     # Standalone pre-start migration runner (retry/backoff)
 ├── db.ts                          # Master pool + initMasterDB() + initTenantSchema() (60+ tables)
 ├── redis.ts                       # Redis client (fail-fast reconnect), tenant-scoped cache helpers, Pub/Sub
@@ -675,7 +699,16 @@ server/                            # TypeScript — compiled to dist/ by `npm ru
 │   ├── maintenanceMode.ts         # Platform-wide 503 gate (app_settings driven)
 │   └── agileEditor.ts             # Agile-config edit grants
 │
-├── routes/                        # 38 route modules — see the route table above. Highlights:
+├── modules/
+│   └── attendance/                # First Phase G feature boundary
+│       ├── attendance.routes.ts   # HTTP adapter mounted within /api/tracker
+│       ├── attendance.service.ts  # aggregation + approval/notification orchestration
+│       ├── attendance.repository.ts # module-owned SQL
+│       ├── attendance.schema.ts   # untrusted body validation
+│       ├── attendance.types.ts
+│       └── README.md              # owned tables + public service boundary
+│
+├── routes/                        # Legacy route modules — see the route table above. Highlights:
 │   ├── auth.ts                    # Login (tenant + platform users), register, refresh, biometric,
 │   │                              #   WebAuthn, forgot/reset password, MFA
 │   ├── tenants.ts                 # Platform admin: tenant CRUD, plan changes, suspension,
@@ -1341,11 +1374,13 @@ The Express server serves `client/dist/` via `express.static` and has an SPA fal
 | `JWT_SECRET` | Yes | — | JWT signing secret |
 | `PORT` | No | `5000` | Server port |
 | `NODE_ENV` | No | — | `production` for production mode |
-| `REDIS_URL` | No | — | Redis connection URL (optional) |
+| `REDIS_URL` | Production | — | Redis connection URL; missing/unreachable Redis is fatal in production |
 | `CORS_ORIGIN` | No | — | Comma-separated allowed origins |
-| `TENANT_MAX_POOLS` | No | `10` | Max cached tenant DB pools (LRU) |
-| `TENANT_POOL_SIZE` | No | `8` | Max connections per tenant pool |
+| `MASTER_POOL_SIZE` | No | `4` | App-side master DB pool size (PgBouncer owns server pool) |
+| `TENANT_MAX_POOLS` | No | `100` | Max cached tenant DB pools (LRU) |
+| `TENANT_POOL_SIZE` | No | `3` | App-side connections per tenant pool |
 | `TENANT_POOL_IDLE_MS` | No | `300000` | Idle tenant-pool eviction threshold (ms) |
+| `TENANT_FOREACH_CONCURRENCY` | No | `5` | Bounded cross-tenant job/migration fan-out |
 | `DESKTOP_COOKIE_ORIGINS` | No | `workpulse://` | Origins allowed a cross-site auth cookie (Electron) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | No | — | Email sending config |
 | `SMTP_FROM` | No | — | From address for emails |

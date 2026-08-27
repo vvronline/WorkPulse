@@ -14,7 +14,8 @@ const { logAction } = require("../utils/audit");
 const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require("../utils/password");
 const { logger } = require("../utils/logger");
 const { requireTenant } = require("../middleware/tenant");
-const { getUploadDir, getUploadUrl, UPLOADS_ROOT } = require("../utils/uploadPath");
+const { getUploadKey, getUploadUrl, getKeyFromUrl } = require("../utils/uploadPath");
+const { getStorage } = require("../platform/storage");
 const { isValidDescriptor, isPlausibleDescriptor, parseDescriptor, compareDescriptors, FACE_DESCRIPTOR_LENGTH } = require("../utils/face");
 const { ROLE_LEVEL } = require("../middleware/rbac");
 
@@ -36,28 +37,11 @@ interface UploadedFile {
 }
 type MulterCb<T> = (err: Error | null, value?: T) => void;
 
-const storage = multer.diskStorage({
-    destination: (req: Request, _file: UploadedFile, cb: MulterCb<string>) => {
-        try {
-            // Per-tenant layout: uploads/tenant_<tid>/org_<oid>/avatars/
-            // The route's middleware chain (auth → loadUserContext → upload)
-            // guarantees req.tenantId and req.userOrgId are set here.
-            const dir = getUploadDir(req.tenantId, req.userOrgId, "avatars");
-            cb(null, dir);
-        } catch (err) {
-            cb(err as Error);
-        }
-    },
-    filename: (req: Request, file: UploadedFile, cb: MulterCb<string>) => {
-        // Use MIME type to determine extension, not the user-provided filename
-        const MIME_EXT: Record<string, string> = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif" };
-        const ext = MIME_EXT[file.mimetype] || ".jpg";
-        cb(null, `user_${req.userId}_${Date.now()}${ext}`);
-    },
-});
-
+// A3: buffer the upload in memory, then write it to object storage. Disk
+// storage tied the app to a single Railway instance (the volume can only
+// attach to one), which blocked horizontal scaling.
 const upload = multer({
-    storage,
+    storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
     fileFilter: (_req: Request, file: UploadedFile, cb: MulterCb<boolean>) => {
         const allowedMimes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -66,27 +50,43 @@ const upload = multer({
     },
 });
 
-const uploadsRoot = UPLOADS_ROOT;
+/** Extension from the validated MIME type — never from the user's filename. */
+function avatarExt(mimetype: string): string {
+    const MIME_EXT: Record<string, string> = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+    };
+    return MIME_EXT[mimetype] || ".jpg";
+}
 
-function safeAvatarPath(avatarRelative: string): string {
-    if (!avatarRelative || avatarRelative.includes("..") || avatarRelative.includes("\0")) {
-        throw new Error("Invalid avatar path");
+/** Best-effort delete of a previous avatar; never fails the request. */
+async function deleteAvatarObject(avatarUrl: string | null | undefined): Promise<void> {
+    const key = getKeyFromUrl(avatarUrl);
+    if (!key) return;
+    try {
+        await getStorage().delete(key);
+    } catch (err) {
+        logger.warn({ err, key }, "Failed to delete old avatar object");
     }
-    // Strip leading slash so we resolve relative to server/, where avatar
-    // URLs are stored as "/uploads/tenant_X/org_Y/avatars/foo.png".
-    const stripped = avatarRelative.replace(/^\/+/, "");
-    const resolved = path.resolve(__dirname, "..", stripped);
-    const normalizedRoot = fs.realpathSync(uploadsRoot);
-    if (!resolved.startsWith(normalizedRoot)) {
-        throw new Error("Invalid avatar path");
-    }
-    return resolved;
 }
 
 router.post("/avatar", auth, loadUserContext, upload.single("avatar"), async (req: Request, res: Response) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const avatarPath = getUploadUrl(req.tenantId, req.userOrgId, "avatars", req.file.filename);
+    const filename = `user_${req.userId}_${Date.now()}${avatarExt(req.file.mimetype)}`;
+    const key = getUploadKey(req.tenantId, req.userOrgId, "avatars", filename);
+    const avatarPath = getUploadUrl(req.tenantId, req.userOrgId, "avatars", filename);
+
+    // Store the object BEFORE the DB write: a failed upload must not leave a
+    // row pointing at a key that does not exist.
+    try {
+        await getStorage().put(key, req.file.buffer, { contentType: req.file.mimetype });
+    } catch (err) {
+        req.log?.error({ err, key }, "Avatar upload to storage failed");
+        return res.status(500).json({ error: "Failed to store avatar" });
+    }
 
     let oldAvatarPath: string | null = null;
     await (req.db as unknown as DbLike).transaction(async (client) => {
@@ -95,9 +95,7 @@ router.post("/avatar", auth, loadUserContext, upload.single("avatar"), async (re
         oldAvatarPath = user?.avatar || null;
     });
 
-    if (oldAvatarPath) {
-        try { await fsPromises.unlink(safeAvatarPath(oldAvatarPath)); } catch { /* ignore */ }
-    }
+    await deleteAvatarObject(oldAvatarPath);
 
     res.json({ avatar: avatarPath });
 });
@@ -105,7 +103,7 @@ router.post("/avatar", auth, loadUserContext, upload.single("avatar"), async (re
 router.delete("/avatar", auth, async (req: Request, res: Response) => {
     const user = (await req.db!.query("SELECT avatar FROM users WHERE id = $1", [req.userId])).rows[0];
     if (user?.avatar) {
-        try { await fsPromises.unlink(safeAvatarPath(user.avatar)); } catch { /* ignore */ }
+        await deleteAvatarObject(user.avatar);
     }
     await req.db!.query("UPDATE users SET avatar = NULL WHERE id = $1", [req.userId]);
     res.json({ avatar: null });
@@ -429,7 +427,7 @@ router.delete("/", auth, async (req: Request, res: Response) => {
         }
 
         if (user.avatar) {
-            try { await fsPromises.unlink(safeAvatarPath(user.avatar)); } catch { /* ignore */ }
+            await deleteAvatarObject(user.avatar);
         }
 
         await (req.db as unknown as DbLike).transaction(async (client) => {

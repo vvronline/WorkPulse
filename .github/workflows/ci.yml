@@ -7,7 +7,35 @@ on:
     branches: [master]
 
 jobs:
-  lint-and-test:
+  # Dependency-free repository hygiene checks. Runs before expensive installs
+  # so generated analysis artifacts cannot silently bloat the repository again.
+  repository-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Reject tracked Graphify output
+        run: npm run check:generated
+
+      - name: Verify Railway automatic-deploy configuration
+        run: node scripts/verify-railway-config.mjs
+
+      # GR5 (static half): stops anyone reintroducing an in-process Map for
+      # cross-replica state. The dynamic half runs in the server test suite.
+      - name: Enforce statelessness guard
+        run: npm run check:stateless
+
+      # GR1 (SQL half): dependency-cruiser cannot see SQL string literals.
+      # Migrated modules must be clean; legacy debt may only shrink.
+      - name: Forbid SQL in route files
+        run: npm run check:sql-routes
+
+  # ── Server ────────────────────────────────────────────────────────────────
+  # Split from the client job (Phase B, task B3) so the two run in parallel:
+  # wall-clock CI time is now max(server, client) instead of their sum.
+  server:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,46 +46,108 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            server/package-lock.json
-            client/package-lock.json
+          cache-dependency-path: server/package-lock.json
 
-      # ── Server ──────────────────────────────────
-      - name: Install server dependencies
+      - name: Install dependencies
         working-directory: server
         run: npm ci
 
-      - name: Typecheck server
+      - name: Typecheck
         working-directory: server
         run: npm run typecheck
 
-      - name: Build server
+      # Layering contract (routes -> service -> repository -> db).
+      # Fails only on `error` rules; the `warn` rules record the modules
+      # Phase G still has to migrate.
+      - name: Lint dependency graph
+        working-directory: server
+        run: npm run lint:deps
+
+      - name: Enforce server file-size ratchet
+        run: node scripts/check-server-file-sizes.mjs
+
+      - name: Require module boundary documentation
+        run: node scripts/check-module-readmes.mjs
+
+      - name: Build
         working-directory: server
         run: npm run build
 
-      - name: Run server tests
+      # Guard: the Dockerfile flattens server/dist into /app/server, so the
+      # .sql migrations must be present under dist/platform/db/migrations.
+      # Without this, a build that drops them would deploy a container with
+      # ZERO migrations — silently breaking push notifications, biometric
+      # login and MFA for every newly-provisioned tenant.
+      - name: Verify migrations ship in the build output
+        run: node scripts/verify-docker-migrations.mjs
+
+      # Guard: the generated catch-up SQL must stay complete and idempotent.
+      - name: Verify migration baseline
+        run: node scripts/a2-verify-baseline.mjs
+
+      # Includes the route snapshot — the safety belt for the Phase C and G
+      # refactors. A dropped or renamed endpoint fails here with an exact diff.
+      - name: Run tests
         working-directory: server
         env:
           JWT_SECRET: ci-test-secret
           DATABASE_URL: postgresql://unused:unused@localhost:5432/unused
-        run: npm test
+        run: npm run test:ci
 
-      # ── Client ──────────────────────────────────
-      - name: Install client dependencies
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-coverage
+          path: server/coverage/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ── Client ────────────────────────────────────────────────────────────────
+  client:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
         working-directory: client
         run: npm ci
 
-      - name: Typecheck client
+      - name: Typecheck
         working-directory: client
         run: npm run typecheck
 
-      - name: Run client tests
+      - name: Run tests
         working-directory: client
         run: npm test
 
-      - name: Build client
+      - name: Build
         working-directory: client
         run: npm run build
+
+      - name: Verify deployable SPA build
+        run: node scripts/verify-spa-build.mjs client/dist
+
+  # Pure Node tests for the Cloudflare path router. No Wrangler credentials or
+  # network access are needed.
+  edge-router:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Test edge routing and cache policy
+        working-directory: infra/cloudflare
+        run: npm test
 
   mobile:
     runs-on: ubuntu-latest
@@ -98,7 +188,8 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: lint-and-test
+    # Both halves of the app must be green before we spend time on an image.
+    needs: [repository-hygiene, server, client, edge-router]
 
     steps:
       - uses: actions/checkout@v6

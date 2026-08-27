@@ -35,7 +35,8 @@ const auth = require("../middleware/auth");
 const { loadUserContext, requireRole, requireSameOrg } = require("../middleware/rbac");
 const { requireTenant } = require("../middleware/tenant");
 const { logAction } = require("../utils/audit");
-const { getUploadDir, getUploadUrl, UPLOADS_ROOT } = require("../utils/uploadPath");
+const { getUploadKey, getUploadUrl, getKeyFromUrl } = require("../utils/uploadPath");
+const { getStorage } = require("../platform/storage");
 const {
     templates,
     TEMPLATE_KEYS,
@@ -49,33 +50,10 @@ const router = express.Router();
 router.use(auth, loadUserContext, requireTenant);
 
 // ── Multer for logo upload ───────────────────────────────────────────────
-const storage = multer.diskStorage({
-    destination(req: Request, _file: UploadedFile, cb: MulterCb<string>) {
-        try {
-            const dir = getUploadDir(req.tenantId, req.userOrgId, "branding");
-            cb(null, dir);
-        } catch (err) {
-            cb(err as Error);
-        }
-    },
-    filename(_req: Request, file: UploadedFile, cb: MulterCb<string>) {
-        // Derive the stored extension from the validated MIME type, never from
-        // the user-supplied originalname (which could carry a misleading or
-        // unsafe extension). fileFilter below restricts mimetype to images.
-        const MIME_EXT: Record<string, string> = {
-            "image/png": ".png",
-            "image/jpeg": ".jpg",
-            "image/jpg": ".jpg",
-            "image/gif": ".gif",
-            "image/webp": ".webp",
-            "image/svg+xml": ".svg",
-        };
-        const ext = MIME_EXT[String(file.mimetype).toLowerCase()] || ".png";
-        cb(null, `logo-${Date.now()}${ext}`);
-    },
-});
+// A3: buffered in memory, then written to object storage so the app stays
+// stateless and can run on multiple replicas.
 const upload = multer({
-    storage,
+    storage: multer.memoryStorage(),
     limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
     fileFilter(_req: Request, file: UploadedFile, cb: MulterCb<boolean>) {
         if (!/^image\/(png|jpe?g|gif|svg\+xml|webp)$/i.test(file.mimetype)) {
@@ -85,13 +63,32 @@ const upload = multer({
     },
 });
 
-function safeLogoPath(rel: string | null | undefined): string | null {
-    if (!rel || rel.includes("..") || rel.includes("\0")) return null;
-    const stripped = rel.replace(/^\/+/, "").replace(/^uploads\//, "");
-    const abs = path.resolve(UPLOADS_ROOT, stripped);
-    const root = fs.realpathSync(UPLOADS_ROOT);
-    if (!abs.startsWith(root)) return null;
-    return abs;
+/**
+ * Extension from the validated MIME type, never from the user-supplied
+ * originalname (which could carry a misleading or unsafe extension).
+ * fileFilter above restricts mimetype to images.
+ */
+function logoExt(mimetype: string): string {
+    const MIME_EXT: Record<string, string> = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "image/svg+xml": ".svg",
+    };
+    return MIME_EXT[String(mimetype).toLowerCase()] || ".png";
+}
+
+/** Best-effort delete of a superseded logo; never fails the request. */
+async function deleteLogoObject(logoUrl: string | null | undefined): Promise<void> {
+    const key = getKeyFromUrl(logoUrl);
+    if (!key) return;
+    try {
+        await getStorage().delete(key);
+    } catch {
+        /* best-effort: an orphaned object is harmless */
+    }
 }
 
 // ── GET branding (logo + accent + org name) ─────────────────────────────
@@ -155,7 +152,20 @@ router.put("/", requireRole("hr_admin"), requireSameOrg, async (req: Request, re
 // ── POST /branding/logo (multipart upload) ──────────────────────────────
 router.post("/logo", requireRole("hr_admin"), requireSameOrg, upload.single("logo"), async (req: Request, res: Response) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    const newUrl = getUploadUrl(req.tenantId, req.userOrgId, "branding", req.file.filename);
+
+    const filename = `logo-${Date.now()}${logoExt(req.file.mimetype)}`;
+    const newKey = getUploadKey(req.tenantId, req.userOrgId, "branding", filename);
+    const newUrl = getUploadUrl(req.tenantId, req.userOrgId, "branding", filename);
+
+    // Store the object BEFORE the DB write so a row can never reference a
+    // key that does not exist.
+    try {
+        await getStorage().put(newKey, req.file.buffer, { contentType: req.file.mimetype });
+    } catch (err) {
+        req.log.error({ err, key: newKey }, "Logo upload to storage failed");
+        return res.status(500).json({ error: "Failed to store logo" });
+    }
+
     let oldLogo: string | null = null;
     try {
         const existing = (await req.db!.query(
@@ -180,10 +190,7 @@ router.post("/logo", requireRole("hr_admin"), requireSameOrg, upload.single("log
             broadcast(req.tenantId, "branding_changed", { orgId: req.userOrgId });
         } catch { /* ws not initialised (e.g. tests) — best-effort */ }
 
-        if (oldLogo) {
-            const oldPath = safeLogoPath(oldLogo);
-            if (oldPath) { try { await fsPromises.unlink(oldPath); } catch { /* ignore */ } }
-        }
+        await deleteLogoObject(oldLogo);
 
         const row = (await req.db!.query(
             `SELECT logo_url, accent_color, updated_at FROM org_branding WHERE org_id = $1`,
@@ -192,8 +199,8 @@ router.post("/logo", requireRole("hr_admin"), requireSameOrg, upload.single("log
         res.json(row);
     } catch (err) {
         req.log.error({ err }, "POST /branding/logo failed");
-        // Clean up the orphan upload on error
-        try { await fsPromises.unlink(req.file.path); } catch { /* ignore */ }
+        // Clean up the orphan object we uploaded before the DB write failed.
+        try { await getStorage().delete(newKey); } catch { /* ignore */ }
         res.status(500).json({ error: "Failed to update logo" });
     }
 });
@@ -211,10 +218,7 @@ router.delete("/logo", requireRole("hr_admin"), requireSameOrg, async (req: Requ
             [req.userOrgId, req.userId],
         );
         invalidateBrandingCache(req.tenantId, req.userOrgId);
-        if (existing?.logo_url) {
-            const oldPath = safeLogoPath(existing.logo_url);
-            if (oldPath) { try { await fsPromises.unlink(oldPath); } catch { /* ignore */ } }
-        }
+        await deleteLogoObject(existing?.logo_url);
         logAction(req, "delete", "org_branding_logo", req.userOrgId, {});
         try {
             const { broadcast } = require("../utils/ws");

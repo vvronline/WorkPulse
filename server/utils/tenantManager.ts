@@ -14,6 +14,7 @@ import { Pool } from "pg";
 import { masterQuery, masterTransaction, makePoolQuery, makePoolTransaction, initTenantSchema } from "../db";
 import { logger } from "./logger";
 import type { QueryFn, TransactionFn, TenantRow, DbContext } from "../types/domain";
+import { forEachBounded } from "../platform/boundedParallel";
 
 interface PoolEntry {
     pool: Pool;
@@ -45,12 +46,21 @@ interface MasterConnConfig {
 }
 
 // Configurable via env so Railway/prod deployments can be tuned without a rebuild.
-//   TENANT_MAX_POOLS       — max number of cached tenant pools (default 10)
-//   TENANT_POOL_SIZE       — max connections per pool                (default 8)
+//   TENANT_MAX_POOLS       — max number of cached tenant pools (default 100)
+//   TENANT_POOL_SIZE       — max connections per pool                 (default 3)
 //   TENANT_POOL_IDLE_MS    — idle pool eviction threshold in ms      (default 5 min)
-const MAX_POOLS = Math.max(1, parseInt(process.env.TENANT_MAX_POOLS || "", 10) || 10);
-const POOL_SIZE = Math.max(1, parseInt(process.env.TENANT_POOL_SIZE || "", 10) || 8);
+const MAX_POOLS = Math.max(1, parseInt(process.env.TENANT_MAX_POOLS || "", 10) || 100);
+const POOL_SIZE = Math.max(1, parseInt(process.env.TENANT_POOL_SIZE || "", 10) || 3);
 const IDLE_TIMEOUT_MS = Math.max(30_000, parseInt(process.env.TENANT_POOL_IDLE_MS || "", 10) || 5 * 60 * 1000);
+const FOREACH_CONCURRENCY = Math.max(1, parseInt(process.env.TENANT_FOREACH_CONCURRENCY || "", 10) || 5);
+
+const poolMetrics = {
+    hits: 0,
+    misses: 0,
+    evictions: 0,
+    busyEvictions: 0,
+    peakPoolCount: 0,
+};
 
 // ── LRU pool cache ──────────────────────────────────────────────────────────
 
@@ -95,6 +105,7 @@ function evictIfNeeded(): void {
             logger.info({ dbName }, "Evicting idle tenant pool");
             entry.pool.end().catch(() => { });
             poolCache.delete(dbName);
+            poolMetrics.evictions++;
         }
     }
     // Then evict LRU if still over limit. Prefer idle pools; only touch a
@@ -119,6 +130,8 @@ function evictIfNeeded(): void {
         const victim = oldestIdleKey || oldestAnyKey;
         if (!victim) break;
         logger.info({ dbName: victim, wasBusy: !oldestIdleKey }, "Evicting LRU tenant pool");
+        poolMetrics.evictions++;
+        if (!oldestIdleKey) poolMetrics.busyEvictions++;
         // pool.end() waits for checked-out clients to be released before
         // closing, so even the busy-pool fallback doesn't kill in-flight
         // queries — it just stops new checkouts.
@@ -137,10 +150,12 @@ function evictIfNeeded(): void {
 async function getTenantPool(dbName: string, dbHost?: string | null): Promise<PoolEntry> {
     // Cache hit — touch LRU timestamp
     if (poolCache.has(dbName)) {
+        poolMetrics.hits++;
         const entry = poolCache.get(dbName)!;
         entry.lastUsed = Date.now();
         return entry;
     }
+    poolMetrics.misses++;
 
     // Prevent duplicate concurrent pool creation
     if (pendingCreations.has(dbName)) {
@@ -179,6 +194,7 @@ async function getTenantPool(dbName: string, dbHost?: string | null): Promise<Po
         };
 
         poolCache.set(dbName, entry);
+        poolMetrics.peakPoolCount = Math.max(poolMetrics.peakPoolCount, poolCache.size);
 
         // Note: implicit `initTenantSchema(entry.query)` on first pool use was
         // removed in favor of the startup-time `sweepAllTenants()` migration
@@ -195,7 +211,7 @@ async function getTenantPool(dbName: string, dbHost?: string | null): Promise<Po
             migratedDbs.add(dbName);
             try {
                 const { runTenantMigrations } = require("./migrationRunner");
-                await runTenantMigrations(entry.query, { label: dbName });
+                await runTenantMigrations(entry.query, { label: dbName, transaction: entry.transaction });
             } catch (err) {
                 logger.error({ err: (err as Error).message, dbName }, "Per-pool migrations failed (non-fatal)");
             }
@@ -277,6 +293,46 @@ async function pickAvailableDbName(base: string): Promise<string> {
 /**
  * Create a new tenant database and initialise its schema.
  */
+interface ShardRow {
+    id: number;
+    name: string;
+    /** Empty string is the sentinel for "same host as DATABASE_URL". */
+    host: string;
+    tenant_count: number;
+    capacity: number | null;
+}
+
+/**
+ * A4: pick the shard a new tenant should live on.
+ *
+ * Strategy: least-loaded active shard that still has capacity. `capacity IS
+ * NULL` means unlimited.
+ *
+ * Returns null when the `shards` table does not exist yet (the master
+ * migration has not run) or no shard is eligible. Callers then leave
+ * `db_host` NULL, and `getTenantPool()` falls back to the master host — which
+ * is exactly the single-host behaviour that existed before sharding.
+ *
+ * This is the seam that turns "we outgrew one Postgres" from a rewrite into
+ * inserting a row and pointing new tenants at it.
+ */
+async function pickShard(): Promise<ShardRow | null> {
+    try {
+        const res = await masterQuery(`
+            SELECT id, name, host, tenant_count, capacity
+              FROM shards
+             WHERE is_active = TRUE
+               AND (capacity IS NULL OR tenant_count < capacity)
+             ORDER BY tenant_count ASC, id ASC
+             LIMIT 1
+        `);
+        return (res.rows[0] as ShardRow) || null;
+    } catch {
+        // Table missing (pre-migration) — single-host mode.
+        return null;
+    }
+}
+
 async function createTenant(
     { orgName, slug, plan, features, maxUsers, maxStorageMb }: CreateTenantOpts,
 ): Promise<{ tenant: TenantRow; db: PoolEntry }> {
@@ -307,12 +363,25 @@ async function createTenant(
         throw Object.assign(new Error("A tenant with that slug already exists."), { code: "23505" });
     }
 
+    // 0b. A4: choose a shard. Placement is least-loaded among active shards
+    //     with spare capacity. Returns null before the shards migration has
+    //     run, or on a single-host deployment — in which case db_host stays
+    //     NULL and getTenantPool() falls back to the master host.
+    const shard = await pickShard();
+
     // 1. Register in master tenants catalog
     const result = await masterQuery(
-        `INSERT INTO tenants (org_name, slug, db_name, plan, features, max_users, max_storage_mb)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO tenants (org_name, slug, db_name, db_host, shard_id, plan, features, max_users, max_storage_mb)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
-        [orgName, slug, dbName, effectivePlan, JSON.stringify(features || {}), maxUsers ?? planLimits.max_users, maxStorageMb ?? planLimits.max_storage_mb]
+        [
+            orgName, slug, dbName,
+            shard?.host || null,
+            shard?.id || null,
+            effectivePlan, JSON.stringify(features || {}),
+            maxUsers ?? planLimits.max_users,
+            maxStorageMb ?? planLimits.max_storage_mb,
+        ]
     );
     const tenant = result.rows[0] as TenantRow;
 
@@ -328,9 +397,33 @@ async function createTenant(
         throw err;
     }
 
-    // 3. Connect to the new database and initialise schema
-    const db = await getTenantPool(dbName);
+    // 3. Connect to the new database and initialise schema.
+    //
+    //    IMPORTANT: initTenantSchema() alone is NOT the complete schema — 26
+    //    objects (device_tokens/push, webauthn_credentials/biometric,
+    //    users.mfa_*, burndown, retro votes, cycle-time columns) are created
+    //    only by the migrations. Before A2 they arrived whenever a sweep
+    //    happened to run, so a brand-new tenant could not receive push
+    //    notifications until then. Running the migrations here closes that gap.
+    const db = await getTenantPool(dbName, shard?.host || null);
     await initTenantSchema(db.query);
+
+    const { runTenantMigrations } = require("./migrationRunner");
+    const migResult = await runTenantMigrations(db.query, { label: dbName, transaction: db.transaction });
+    if (migResult.failed.length > 0) {
+        logger.error(
+            { dbName, failed: migResult.failed },
+            "New tenant has FAILED migrations — schema is incomplete",
+        );
+    }
+
+    // Keep the shard's denormalised counter in step with reality.
+    if (shard?.id) {
+        await masterQuery(
+            "UPDATE shards SET tenant_count = tenant_count + 1, updated_at = NOW() WHERE id = $1",
+            [shard.id],
+        ).catch(() => { /* counter drift is self-healing; never fail provisioning */ });
+    }
 
     // 4. Create the organizations row inside the tenant DB (1 org per tenant DB)
     await db.query(
@@ -373,6 +466,25 @@ async function deleteTenant(tenantId: number, hardDelete = false): Promise<Tenan
         await masterQuery(`DROP DATABASE IF EXISTS "${tenant.db_name}"`);
         await masterQuery("DELETE FROM user_directory WHERE tenant_id = $1", [tenantId]);
         await masterQuery("DELETE FROM tenants WHERE id = $1", [tenantId]);
+
+        // A4.5: purge the tenant's uploads. Dropping the database alone would
+        // leave every avatar, chat attachment and logo orphaned in object
+        // storage, silently accruing cost and retaining customer data after a
+        // deletion request.
+        //
+        // Best-effort: the database is already gone, so a storage failure must
+        // not throw. It is logged loudly instead so it can be swept manually.
+        try {
+            const { getStorage, tenantPrefix } = require("../platform/storage");
+            const removed = await getStorage().deletePrefix(tenantPrefix(tenantId));
+            logger.info({ tenantId, objectsDeleted: removed }, "Tenant uploads purged from storage");
+        } catch (err: unknown) {
+            logger.error(
+                { err: (err as Error).message, tenantId },
+                "Failed to purge tenant uploads — objects may be orphaned in storage",
+            );
+        }
+
         logger.info({ tenantId, dbName: tenant.db_name }, "Tenant hard-deleted");
     } else {
         // Soft delete: retain the database + catalog row for audit/recovery,
@@ -488,22 +600,25 @@ async function forEachTenant(fn: ForEachTenantFn, opts: ForEachTenantOpts = {}):
         return { ok, failed };
     }
 
-    for (const tenant of tenants) {
-        try {
-            const db = await getTenantPool(tenant.db_name, tenant.db_host);
-            await fn(db as unknown as DbContext, tenant);
-            ok++;
-        } catch (err) {
-            failed++;
-            logger.error({
-                err: (err as Error).message,
-                stack: (err as Error).stack,
-                tenantId: tenant.id,
-                slug: tenant.slug,
-                label,
-            }, "forEachTenant: tenant iteration failed");
-        }
-    }
+    // Bounded parallelism: tenant sweeps were fully serial, making bootstrap
+    // and background jobs O(n) wall-clock. Five workers gives a ~5x speed-up
+    // without opening every tenant pool at once.
+    await forEachBounded(tenants, FOREACH_CONCURRENCY, async (tenant) => {
+            try {
+                const db = await getTenantPool(tenant.db_name, tenant.db_host);
+                await fn(db as unknown as DbContext, tenant);
+                ok++;
+            } catch (err) {
+                failed++;
+                logger.error({
+                    err: (err as Error).message,
+                    stack: (err as Error).stack,
+                    tenantId: tenant.id,
+                    slug: tenant.slug,
+                    label,
+                }, "forEachTenant: tenant iteration failed");
+            }
+    });
 
     if (includeLegacyMaster) {
         try {
@@ -542,9 +657,17 @@ async function forEachTenant(fn: ForEachTenantFn, opts: ForEachTenantOpts = {}):
 /**
  * Get pool size info for monitoring.
  */
-function getPoolStats(): { poolCount: number; maxPools: number; pools: Record<string, unknown> } {
+function getPoolStats(): {
+    poolCount: number;
+    maxPools: number;
+    poolSize: number;
+    metrics: typeof poolMetrics & { hitRate: number; totalWaiting: number };
+    pools: Record<string, unknown>;
+} {
     const stats: Record<string, unknown> = {};
+    let totalWaiting = 0;
     for (const [dbName, entry] of poolCache) {
+        totalWaiting += entry.pool.waitingCount;
         stats[dbName] = {
             total: entry.pool.totalCount,
             idle: entry.pool.idleCount,
@@ -552,7 +675,18 @@ function getPoolStats(): { poolCount: number; maxPools: number; pools: Record<st
             lastUsed: entry.lastUsed,
         };
     }
-    return { poolCount: poolCache.size, maxPools: MAX_POOLS, pools: stats };
+    const lookups = poolMetrics.hits + poolMetrics.misses;
+    return {
+        poolCount: poolCache.size,
+        maxPools: MAX_POOLS,
+        poolSize: POOL_SIZE,
+        metrics: {
+            ...poolMetrics,
+            hitRate: lookups === 0 ? 1 : poolMetrics.hits / lookups,
+            totalWaiting,
+        },
+        pools: stats,
+    };
 }
 
 export {

@@ -8,6 +8,9 @@ import { masterQuery } from "./db";
 import { sendToUser, emitCallHistoryMessage } from "./utils/ws";
 import { pushNotifications } from "./services/pushNotifications";
 import { processChatMediaJob } from "./services/chatMediaPipeline";
+import { acquireLeaderLease } from "./platform/leaderLease";
+import { observeJob } from "./platform/metrics/jobMetrics";
+import type { LeaderLease } from "./platform/leaderLease";
 
 type Query = (
   sql: string,
@@ -33,6 +36,8 @@ let sprintLifecycleQueue: any = null;
 let chatMediaQueue: any = null;
 let workers: any[] = [];
 let fallbackIntervals: NodeJS.Timeout[] = [];
+let fallbackLease: LeaderLease | null = null;
+let jobsReady = false;
 
 // How long an unanswered call may keep `ringing` before the server force-ends
 // it as "missed". Set to 30 seconds to match the ring push TTL and ensure calls
@@ -479,13 +484,36 @@ async function runSprintLifecycleSweep(): Promise<number> {
 /**
  * Initialize job queues. Must be called after Redis is connected.
  */
-function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
+async function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): Promise<void> {
   const redis = require("./redis");
   const redisClient = redis.getClient();
 
   if (!Queue || !redisClient) {
-    // Fallback: use setInterval (single-instance mode)
-    logger.info("BullMQ unavailable — using setInterval for background jobs");
+    // A production replica must never silently run per-process intervals: N
+    // replicas would execute every job N times. Redis and BullMQ are mandatory.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("BullMQ/Redis unavailable in production — refusing setInterval job fallback");
+    }
+
+    const role = (process.env.ROLE || "all").toLowerCase();
+    if (role !== "worker" && role !== "all") {
+      logger.info({ role }, "Skipping interval job fallback outside worker/all role");
+      jobsReady = true;
+      return;
+    }
+
+    // If Redis exists but BullMQ is unavailable, only the lease holder runs
+    // intervals. With no Redis this is development-only single-process mode.
+    if (redisClient) {
+      fallbackLease = await acquireLeaderLease("interval-jobs");
+      if (!fallbackLease) {
+        logger.info("Another worker owns the interval-job leader lease; staying idle");
+        jobsReady = true;
+        return;
+      }
+    }
+
+    logger.info("BullMQ unavailable — using protected development interval fallback");
     autoClockOut();
     fallbackIntervals.push(setInterval(autoClockOut, 5 * 60 * 1000));
     fallbackIntervals.push(setInterval(cleanupTokens, 60 * 60 * 1000));
@@ -529,6 +557,7 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
         SPRINT_LIFECYCLE_SWEEP_MS,
       ),
     );
+    jobsReady = true;
     return;
   }
 
@@ -538,6 +567,10 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
   // client (which is configured with maxRetriesPerRequest: 1 for fast cache
   // failover) — instead BullMQ will instantiate its own connection from the
   // options below.
+  // H2: one wrapper records duration + outcome for every scheduled job.
+  // Declared once rather than inline per worker to keep this file shrinking.
+  const observed = (queue: string, fn: () => Promise<void>) => () => observeJob(queue, fn);
+
   const connection = {
     host: redisClient.options.host || "localhost",
     port: redisClient.options.port || 6379,
@@ -573,9 +606,7 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
 
   const clockOutWorker = new Worker(
     "auto-clock-out",
-    async () => {
-      await autoClockOut();
-    },
+    observed("auto-clock-out", async () => { await autoClockOut(); }),
     { connection, concurrency: 1 },
   );
   clockOutWorker.on("failed", (job: any, err: any) => {
@@ -601,9 +632,7 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
 
   const cleanupWorker = new Worker(
     "token-cleanup",
-    async () => {
-      await cleanupTokens();
-    },
+    observed("token-cleanup", async () => { await cleanupTokens(); }),
     { connection, concurrency: 1 },
   );
   cleanupWorker.on("failed", (job: any, err: any) => {
@@ -636,9 +665,7 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
 
   const inspectorPruneWorker = new Worker(
     "inspector-prune",
-    async () => {
-      await pruneStaleInspectorUsers();
-    },
+    observed("inspector-prune", async () => { await pruneStaleInspectorUsers(); }),
     { connection, concurrency: 1 },
   );
   inspectorPruneWorker.on("failed", (job: any, err: any) => {
@@ -667,9 +694,7 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
 
   const retentionWorker = new Worker(
     "retention-cleanup",
-    async () => {
-      await runRetentionCleanup();
-    },
+    observed("retention-cleanup", async () => { await runRetentionCleanup(); }),
     { connection, concurrency: 1 },
   );
   retentionWorker.on("failed", (job: any, err: any) => {
@@ -699,9 +724,7 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
 
   const staleCallWorker = new Worker(
     "stale-call-sweep",
-    async () => {
-      await expireStaleRingingCalls();
-    },
+    observed("stale-call-sweep", async () => { await expireStaleRingingCalls(); }),
     { connection, concurrency: 1 },
   );
   staleCallWorker.on("failed", (job: any, err: any) => {
@@ -731,9 +754,7 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
 
   const sprintLifecycleWorker = new Worker(
     "sprint-lifecycle",
-    async () => {
-      await runSprintLifecycleSweep();
-    },
+    observed("sprint-lifecycle", async () => { await runSprintLifecycleSweep(); }),
     { connection, concurrency: 1 },
   );
   sprintLifecycleWorker.on("failed", (job: any, err: any) => {
@@ -746,9 +767,8 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
   chatMediaQueue = new Queue("chat-media-pipeline", { connection });
   const chatMediaWorker = new Worker(
     "chat-media-pipeline",
-    async (job: { data: ChatMediaPipelineJob }) => {
-      await runChatMediaPipelineJob(job.data);
-    },
+    (job: { data: ChatMediaPipelineJob }) =>
+      observeJob("chat-media-pipeline", () => runChatMediaPipelineJob(job.data)),
     { connection, concurrency: 2 },
   );
   chatMediaWorker.on("failed", (job: any, err: any) => {
@@ -767,11 +787,16 @@ function initJobs({ autoClockOut, cleanupTokens }: InitJobsOpts): void {
   logger.info(
     "BullMQ job queues initialized (auto-clock-out: 5m, token-cleanup: 1h, inspector-prune: 24h, retention-cleanup: 24h, stale-call-sweep: 20s, sprint-lifecycle: 1h)",
   );
+  jobsReady = true;
 }
 
 async function shutdownJobs(): Promise<void> {
   for (const id of fallbackIntervals) clearInterval(id);
   fallbackIntervals = [];
+  if (fallbackLease) {
+    await fallbackLease.release();
+    fallbackLease = null;
+  }
   for (const w of workers) {
     try {
       await w.close();
@@ -828,7 +853,10 @@ async function shutdownJobs(): Promise<void> {
       /* ignore */
     }
   }
+  jobsReady = false;
 }
+
+function areJobsReady(): boolean { return jobsReady; }
 
 export {
   initJobs,
@@ -837,4 +865,5 @@ export {
   runRetentionCleanup,
   expireStaleRingingCalls,
   enqueueChatMediaPipelineJob,
+  areJobsReady,
 };

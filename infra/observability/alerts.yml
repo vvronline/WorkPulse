@@ -1,0 +1,145 @@
+# Phase H5 — SLO alert rules for AINO.
+#
+# Load into Prometheus with:
+#   rule_files:
+#     - /etc/prometheus/aino-alerts.yml
+#
+# Every rule maps to a specific failure this refactor was designed to prevent.
+# The `for:` durations are deliberately long enough to ride out a deploy
+# (Railway overlapSeconds=30, drainingSeconds=15) without paging.
+groups:
+  - name: aino-availability
+    interval: 30s
+    rules:
+      - alert: AinoReadinessFailing
+        # /readyz covers master DB + Redis + (realtime) Pub/Sub subscriber.
+        # `up` going to 0 means the scrape itself failed — the pod is gone.
+        expr: up{job=~"aino-.*"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} replica {{ $labels.instance }} is unreachable"
+          description: >-
+            The Prometheus scrape has failed for 3 minutes. Check the Railway
+            deploy logs and /readyz for the affected service.
+
+      - alert: AinoRedisDown
+        # D3 made Redis mandatory in production: without it, rate limits,
+        # presence and cross-replica WebRTC signalling all fragment silently.
+        expr: aino_redis_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis {{ $labels.connection }} connection down on {{ $labels.role }}"
+          description: >-
+            Cross-replica state is broken. Calls placed between users on
+            different instances will fail to connect.
+
+  - name: aino-latency
+    interval: 30s
+    rules:
+      - alert: AinoApiLatencyHigh
+        expr: >-
+          histogram_quantile(
+            0.95,
+            sum by (le, route) (rate(aino_http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 latency above 1s on {{ $labels.route }}"
+          description: "Scale web replicas or investigate the slow route."
+
+      - alert: AinoApiErrorRateHigh
+        expr: >-
+          sum(rate(aino_http_requests_total{status_class="5xx"}[5m]))
+            / clamp_min(sum(rate(aino_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Over 5% of requests are returning 5xx"
+
+  - name: aino-database
+    interval: 30s
+    rules:
+      - alert: AinoDbPoolSaturated
+        # waitingCount > 0 means requests are queued behind a connection.
+        # With PgBouncer in front (Phase E) this should be flat at zero.
+        expr: aino_db_pool_connections{state="waiting"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Requests are waiting for a database connection"
+          description: >-
+            Raise TENANT_POOL_SIZE / PgBouncer default_pool_size, or find the
+            query holding connections open.
+
+      - alert: AinoTenantPoolThrash
+        # Phase E2: the LRU cache holds 100 pools. Sustained evictions mean
+        # every request past the cache ceiling is tearing down a pool — the
+        # exact thrash that made tenant #11 slow before the refactor.
+        expr: increase(aino_db_pool_evictions_total{kind="lru"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant pool LRU thrash detected"
+          description: "Raise TENANT_MAX_POOLS above the active tenant count."
+
+  - name: aino-workers
+    interval: 30s
+    rules:
+      - alert: AinoQueueBacklogGrowing
+        # F6: worker replicas scale on queue depth, not CPU. A backlog that
+        # grows for 15 minutes means throughput is below arrival rate.
+        expr: deriv(aino_queue_depth{state="waiting"}[15m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.queue }} backlog is growing"
+          description: "Scale the aino-worker service or investigate job failures."
+
+      - alert: AinoJobFailureRateHigh
+        expr: >-
+          sum by (queue) (rate(aino_job_runs_total{outcome="failure"}[15m]))
+            / clamp_min(sum by (queue) (rate(aino_job_runs_total[15m])), 0.001) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over 10% of {{ $labels.queue }} jobs are failing"
+
+  - name: aino-realtime
+    interval: 30s
+    rules:
+      - alert: AinoWsConnectionsNearCap
+        # F6 caps a realtime pod at ~5k connections; 4k is the scale-out point.
+        expr: aino_ws_connections > 4000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Realtime pod {{ $labels.instance_id }} nearing the WS cap"
+          description: "Add a realtime replica before reaching ~5k connections."
+
+  - name: aino-schema
+    interval: 5m
+    rules:
+      - alert: AinoMigrationDrift
+        # Pre-deploy migrations (railway.json preDeployCommand) should make
+        # this impossible; if it fires, a pod is running against a stale schema.
+        expr: aino_migrations_applied < aino_migrations_expected
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tenant schema drift detected"
+          description: >-
+            Check GET /api/internal/migration-status and re-run the pre-deploy
+            migration command.

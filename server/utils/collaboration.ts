@@ -15,6 +15,10 @@ import { masterQuery } from "../db";
 import { getTenantPool, getTenantById } from "./tenantManager";
 import { logger } from "./logger";
 import { notifyUser } from "./ws";
+import {
+    resolveCollaborationToken,
+    isCollaborationOriginAllowed,
+} from "../realtime/collaborationAuth";
 
 interface ParsedDocName {
     tenantId: number | null;
@@ -125,14 +129,17 @@ async function createCollaborationServer(httpServer: HttpServer): Promise<Collab
         ],
 
         /**
-         * Authenticate WebSocket connections using JWT token from URL params.
+         * Authenticate WebSocket connections using the protocol token for
+         * native clients or the HttpOnly cookie sent on the browser upgrade.
          */
-        async onAuthenticate({ token, documentName }) {
-            if (!token) throw new Error("Unauthorized");
+        async onAuthenticate({ token, documentName, requestHeaders }) {
+            const cookieHeader = requestHeaders.get("cookie") || "";
+            const authToken = resolveCollaborationToken(token, cookieHeader);
+            if (!authToken) throw new Error("Unauthorized");
 
             let payload: jwt.JwtPayload;
             try {
-                payload = jwt.verify(token, process.env.JWT_SECRET as string) as jwt.JwtPayload;
+                payload = jwt.verify(authToken, process.env.JWT_SECRET as string) as jwt.JwtPayload;
             } catch {
                 throw new Error("Invalid token");
             }
@@ -198,6 +205,19 @@ async function createCollaborationServer(httpServer: HttpServer): Promise<Collab
         const url = new URL(request.url || "", `http://${request.headers.host}`);
         if (url.pathname !== "/collab") return; // Let other WS servers handle other paths
 
+        // Prevent Cross-Site WebSocket Hijacking when the browser authenticates
+        // via its HttpOnly cookie. Mirrors the /ws origin policy.
+        const origin = request.headers.origin;
+        if (origin) {
+            const host = request.headers.host;
+            if (!isCollaborationOriginAllowed(origin, host)) {
+                logger.warn({ origin }, "Collaboration connection rejected: invalid origin");
+                socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+                socket.destroy();
+                return;
+            }
+        }
+
         wss.handleUpgrade(request, socket, head, (ws) => {
             // Hocuspocus handles auth via its protocol (token sent by @hocuspocus/provider)
             hocuspocus.handleConnection(ws, request as any);
@@ -236,4 +256,8 @@ async function handleMention(
     }
 }
 
-export { createCollaborationServer, handleMention, parseDocName };
+export {
+    createCollaborationServer,
+    handleMention,
+    parseDocName,
+};

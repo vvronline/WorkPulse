@@ -194,14 +194,14 @@ constitution amendment:
 | Styling | CSS Modules + global CSS variables; no CSS-in-JS, no SCSS |
 | Backend framework | Node.js + Express 5 (TypeScript); all server files MUST be `.ts` |
 | Primary database | PostgreSQL (pg pool) |
-| Cache / queue broker | Redis (ioredis) — optional, graceful fallback required |
+| Cache / queue broker | Redis (ioredis) — mandatory in production; graceful fallback permitted only for local development/test |
 | Real-time transport | Native `ws` WebSocket library; no Socket.io |
 | WS validation | `server/utils/wsValidate.ts` — all WS handlers MUST use it |
 | WS idempotency | `server/utils/wsIdempotency.ts` — all mutable WS handlers MUST use it |
 | WS observability | `server/utils/wsMetrics.ts` — wrap every WS handler dispatch |
 | Auth token storage | HttpOnly cookies (JWT); no localStorage |
 | Structured logging | Pino (`server/utils/logger.ts`) |
-| Server testing | Jest + Supertest (45 suites in `server/__tests__/`) |
+| Server testing | Jest + Supertest (65+ suites in `server/__tests__/`) |
 | Client testing | Vitest + React Testing Library |
 | Mobile framework | React Native 0.85.3 + Expo SDK 56 + Expo Router (file-system routing) |
 | Mobile state | Zustand 5 (global) + TanStack Query 5 (server state) |

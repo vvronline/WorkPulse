@@ -27,6 +27,13 @@ jest.mock("../utils/audit", () => ({
     queryLogs: jest.fn().mockResolvedValue({ rows: [], total: 0 }),
 }));
 
+// Tracker route tests do not exercise platform maintenance-mode behavior.
+// Bypass it so its process-level TTL cache cannot shift per-test DB mock queues.
+jest.mock("../middleware/maintenanceMode", () => ({
+    maintenanceModeMiddleware: (_req: any, _res: any, next: any) => next(),
+    invalidateMaintenanceCache: jest.fn(),
+}));
+
 // Force loadUserContext down its deterministic DB path: with the user-context
 // cache always missing, every request runs the same `SELECT ... is_active FROM
 // users` lookup, so the per-test mockQuery chains stay stable (otherwise the
@@ -36,6 +43,8 @@ jest.mock("../redis", () => {
     const actual = jest.requireActual("../redis");
     return {
         ...actual,
+        getTokenVersion: jest.fn().mockResolvedValue(null),
+        setTokenVersion: jest.fn().mockResolvedValue(undefined),
         getUserContext: jest.fn().mockResolvedValue(null),
         setUserContext: jest.fn().mockResolvedValue(undefined),
     };

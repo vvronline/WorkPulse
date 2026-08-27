@@ -8,8 +8,8 @@
 //       upserts a row into `task_git_refs` so the task page renders a
 //       branch → PR → merged timeline.
 //
-// Webhook endpoints are mounted BEFORE the global JSON body parser by
-// `server/index.js` so we get the raw payload for HMAC verification.
+// Webhook endpoints are mounted before the browser CSRF middleware by
+// `server/http/routes.ts`. The route uses express.raw() for its own payload.
 
 import express from "express";
 import type { Request, Response } from "express";

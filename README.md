@@ -159,6 +159,11 @@ A dedicated reporting view so the day-to-day Sprint board stays focused on plann
 
 ## 🏗️ Architecture overview
 
+> 🚧 **Active refactor:** a phased plan to make this architecture horizontally scalable
+> (R2 uploads, stateless roles, PgBouncer, Cloudflare routing, feature modules) is tracked in
+> **[`docs/SCALABILITY_REFACTOR_PLAN.md`](docs/SCALABILITY_REFACTOR_PLAN.md)**.
+> Check it before making structural changes.
+
 ```
                                   ┌─────────────────────────────┐
                                   │        Browser / Desktop    │
@@ -215,8 +220,8 @@ A dedicated reporting view so the day-to-day Sprint board stays focused on plann
 | **Streaming** | HLS broadcast mode for large meetings |
 | **Backend** | Node.js + Express, Pino structured logging, bcrypt, jsonwebtoken |
 | **Database** | PostgreSQL 16 (multi-tenant — one DB per organisation) |
-| **Cache** | Redis (optional — used for presence, active-sprint, rate limiting) |
-| **Background jobs** | Node `cron`-style scheduler in `server/jobs.js` |
+| **Cache / realtime state** | Redis (mandatory in production — presence, signalling, rate limits, queues) |
+| **Background jobs** | BullMQ worker role; production refuses per-process interval fallback |
 | **Email** | Nodemailer with SMTP / Gmail OAuth2 transport, throttled by user |
 | **Container** | Single Dockerfile builds both server + client; `entrypoint.sh` handles uploads volume permissions |
 | **Reverse proxy / TLS** | Caddy (local), Railway-managed (production) |
