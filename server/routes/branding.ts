@@ -36,7 +36,7 @@ const { loadUserContext, requireRole, requireSameOrg } = require("../middleware/
 const { requireTenant } = require("../middleware/tenant");
 const { logAction } = require("../utils/audit");
 const { getUploadKey, getUploadUrl, getKeyFromUrl } = require("../utils/uploadPath");
-const { getStorage } = require("../platform/storage");
+const { getStorage, randomFilename } = require("../platform/storage");
 const {
     templates,
     TEMPLATE_KEYS,
@@ -69,15 +69,16 @@ const upload = multer({
  * fileFilter above restricts mimetype to images.
  */
 function logoExt(mimetype: string): string {
+    // No leading dot: randomFilename() appends it.
     const MIME_EXT: Record<string, string> = {
-        "image/png": ".png",
-        "image/jpeg": ".jpg",
-        "image/jpg": ".jpg",
-        "image/gif": ".gif",
-        "image/webp": ".webp",
-        "image/svg+xml": ".svg",
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/gif": "gif",
+        "image/webp": "webp",
+        "image/svg+xml": "svg",
     };
-    return MIME_EXT[String(mimetype).toLowerCase()] || ".png";
+    return MIME_EXT[String(mimetype).toLowerCase()] || "png";
 }
 
 /** Best-effort delete of a superseded logo; never fails the request. */
@@ -153,7 +154,8 @@ router.put("/", requireRole("hr_admin"), requireSameOrg, async (req: Request, re
 router.post("/logo", requireRole("hr_admin"), requireSameOrg, upload.single("logo"), async (req: Request, res: Response) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const filename = `logo-${Date.now()}${logoExt(req.file.mimetype)}`;
+    // Random, not `logo-<timestamp>`: a predictable key is enumerable.
+    const filename = randomFilename("logo", logoExt(req.file.mimetype));
     const newKey = getUploadKey(req.tenantId, req.userOrgId, "branding", filename);
     const newUrl = getUploadUrl(req.tenantId, req.userOrgId, "branding", filename);
 

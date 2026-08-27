@@ -9,7 +9,8 @@ const { sendToUser, emitCallHistoryMessage } = require("../utils/ws");
 const redis = require("../redis");
 const { requireTenant, requireFeature } = require("../middleware/tenant");
 const { getUploadKey, getUploadUrl, getKeyFromUrl } = require("../utils/uploadPath");
-const { getStorage } = require("../platform/storage");
+const { getStorage, randomFilename } = require("../platform/storage");
+const { deleteChatAttachment } = require("../services/chatAttachments");
 const { getLocalToday, getTzModifier } = require("../utils/timezone");
 import { enqueueChatMediaPipelineJob } from "../jobs";
 import {
@@ -88,20 +89,16 @@ const chatUpload = multer({
 
 /** Server-generated filename; extension comes from the validated MIME type. */
 function chatFilename(userId: number | undefined, mimetype: string): string {
-  const ext = ALLOWED_TYPES[mimetype] || "bin";
-  return `${userId}_${Date.now()}.${ext}`;
+  // Random, not `<userId>_<timestamp>`: chat attachments are the most
+  // sensitive upload kind, and a guessable key is enumerable.
+  return randomFilename("chat", ALLOWED_TYPES[mimetype] || "bin");
 }
 
-/** Best-effort delete of a chat attachment object. */
-async function deleteChatObject(fileUrl: string | null | undefined): Promise<void> {
-  const key = getKeyFromUrl(fileUrl);
-  if (!key) return;
-  try {
-    await getStorage().delete(key);
-  } catch {
-    /* best-effort: an orphaned object is harmless */
-  }
-}
+/**
+ * Delete a chat attachment object, unless a forwarded copy still references it.
+ * Full rationale in services/chatAttachments.ts.
+ */
+const deleteChatObject = deleteChatAttachment;
 
 // ─── Helper: verify participant ───
 async function verifyParticipant(
@@ -2338,7 +2335,9 @@ router.delete("/messages/:id", auth, async (req: Request, res: Response) => {
       });
     }
 
-    await deleteChatObject(msg.file_url);
+    // Pass the message id: its own row is soft-deleted above, but the check
+    // must not count it regardless of statement ordering.
+    await deleteChatObject(msg.file_url, req.db as unknown as DbLike, msgId);
 
     res.json({ ok: true });
   } catch (err) {

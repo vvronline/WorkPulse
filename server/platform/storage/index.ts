@@ -21,6 +21,7 @@ import type { StorageAdapter } from "./types";
 
 export * from "./types";
 export * from "./keys";
+export * from "./filenames";
 
 let _adapter: StorageAdapter | null = null;
 

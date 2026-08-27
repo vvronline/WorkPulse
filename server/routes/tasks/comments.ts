@@ -13,7 +13,7 @@ const { loadUserContext } = require('../../middleware/rbac');
 const { notifyByEmail } = require('../../utils/mailer');
 const { sendToUser } = require('../../utils/ws');
 const { getUploadKey, getUploadUrl } = require('../../utils/uploadPath');
-const { getStorage } = require('../../platform/storage');
+const { getStorage, randomFilename } = require('../../platform/storage');
 
 const { logHistory } = require('./_helpers/logHistory');
 const { canAccessTask } = require('./_helpers/access');
@@ -49,8 +49,8 @@ const commentUpload = multer({
 
 /** Server-generated filename; extension from the validated MIME type. */
 function commentFilename(userId: number | undefined, mimetype: string): string {
-    const ext = ALLOWED_TYPES[mimetype] || 'bin';
-    return `${userId}_${Date.now()}.${ext}`;
+    // Random, not `<userId>_<timestamp>`: a predictable key is enumerable.
+    return randomFilename('comment', ALLOWED_TYPES[mimetype] || 'bin');
 }
 
 // ─── Get comments for a task ──────────────────────────────────────────────

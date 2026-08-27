@@ -15,7 +15,7 @@ const { validatePassword, validateUsername, BCRYPT_ROUNDS } = require("../utils/
 const { logger } = require("../utils/logger");
 const { requireTenant } = require("../middleware/tenant");
 const { getUploadKey, getUploadUrl, getKeyFromUrl } = require("../utils/uploadPath");
-const { getStorage } = require("../platform/storage");
+const { getStorage, randomFilename } = require("../platform/storage");
 const { isValidDescriptor, isPlausibleDescriptor, parseDescriptor, compareDescriptors, FACE_DESCRIPTOR_LENGTH } = require("../utils/face");
 const { ROLE_LEVEL } = require("../middleware/rbac");
 
@@ -53,12 +53,12 @@ const upload = multer({
 /** Extension from the validated MIME type — never from the user's filename. */
 function avatarExt(mimetype: string): string {
     const MIME_EXT: Record<string, string> = {
-        "image/jpeg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-        "image/gif": ".gif",
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+        "image/gif": "gif",
     };
-    return MIME_EXT[mimetype] || ".jpg";
+    return MIME_EXT[mimetype] || "jpg";
 }
 
 /** Best-effort delete of a previous avatar; never fails the request. */
@@ -75,7 +75,8 @@ async function deleteAvatarObject(avatarUrl: string | null | undefined): Promise
 router.post("/avatar", auth, loadUserContext, upload.single("avatar"), async (req: Request, res: Response) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const filename = `user_${req.userId}_${Date.now()}${avatarExt(req.file.mimetype)}`;
+    // Random, not `user_<id>_<timestamp>`: a predictable key is enumerable.
+    const filename = randomFilename("user", avatarExt(req.file.mimetype));
     const key = getUploadKey(req.tenantId, req.userOrgId, "avatars", filename);
     const avatarPath = getUploadUrl(req.tenantId, req.userOrgId, "avatars", filename);
 
