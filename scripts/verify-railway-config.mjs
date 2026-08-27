@@ -8,7 +8,37 @@ const deploy = config.deploy || {};
 if (config.build?.builder !== "DOCKERFILE") errors.push("build.builder must be DOCKERFILE");
 if (config.build?.dockerfilePath !== "Dockerfile") errors.push("build.dockerfilePath must be Dockerfile");
 if (deploy.preDeployCommand !== "node migrate.js") errors.push("preDeployCommand must run node migrate.js");
-if (deploy.startCommand !== "node index.js") errors.push("startCommand must not rerun migrations");
+
+// The start command must not re-run DATABASE migrations (that is pre-deploy's
+// job — running DDL from N replicas is the failure mode this guards against).
+//
+// A one-off prefix is tolerated so an operator can run a maintenance task that
+// needs the VOLUME, which pre-deploy cannot see (Railway does not mount volumes
+// during pre-deploy). `railway.json` outranks service settings, so the dashboard
+// start-command field is locked while this file defines it — editing this file
+// is the only way to schedule such a task.
+//
+// `migrate-uploads-to-r2.js` matches /migrate/ by name but touches no database;
+// it is a filesystem->R2 copier. Match on the database migrator specifically.
+const startCommand = deploy.startCommand || "";
+// `\b` after ".js" is NOT sufficient: in "migrate-uploads-to-r2.js" the token
+// "migrate" is followed by "-", so a naive /migrate\.js/ style match can still
+// hit. Require migrate.js to be a whole path segment, ending the token.
+const runsDbMigrations = /(^|[\s;&|"'/])migrate\.js(\s|$|["';&|])/.test(startCommand);
+if (runsDbMigrations) {
+  errors.push("startCommand must not run node migrate.js — migrations belong in preDeployCommand");
+}
+if (!/\bnode\s+index\.js\b/.test(startCommand)) {
+  errors.push(`startCommand must ultimately launch node index.js, got ${JSON.stringify(startCommand)}`);
+}
+// Warn (do not fail) when a temporary one-off is staged, so it cannot be
+// forgotten in the repository after the release it was added for.
+if (startCommand !== "node index.js" && !runsDbMigrations) {
+  console.warn(
+    `WARNING: startCommand contains a one-off task:\n  ${startCommand}\n`
+    + "  Revert it to \"node index.js\" once the task has completed.",
+  );
+}
 if (deploy.healthcheckPath !== "/readyz") errors.push("healthcheckPath must be /readyz");
 if (Number(deploy.healthcheckTimeout) < 60) errors.push("healthcheckTimeout is too short");
 if (deploy.restartPolicyType !== "ON_FAILURE") errors.push("restartPolicyType must be ON_FAILURE");
