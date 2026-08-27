@@ -159,11 +159,28 @@ The whole design of this release assumes a *controlled* promotion:
 
 1. Leave the repo trigger **off**.
 2. `git push origin master` — this only updates GitHub. Watch CI go green.
-3. Deploy manually when you are ready to babysit it:
+3. Deploy manually when you are ready to babysit it. 🔴 **The three "redeploy"
+   actions are not equivalent — two of them would ship the OLD code:**
+
+   | Action | What it actually does | Use here? |
+   |---|---|---|
+   | UI **Redeploy** (⋯ on a deployment) | "Creates a new deployment with the **exact same code** and build/deploy configuration." Re-runs the **existing image** — i.e. `48af56cd`. | ❌ **No** — deploys the old commit |
+   | UI **Restart** | Restores the exact image of the current build | ❌ No |
+   | UI Command Palette → **Deploy Latest Commit** (`Ctrl/Cmd+K`) | Builds the latest commit on the **default branch** | ✅ Yes |
+   | CLI `railway redeploy --from-source` | "Pull and deploy the **latest commit** from the configured source" | ✅ Yes — equivalent to the above |
+   | CLI `railway up` | Uploads your **local working directory** — bypasses git and CI entirely | ⚠️ Avoid: deploys unreviewed local state |
+
    ```powershell
-   railway up --service WorkPulse          # deploy the working tree, or
-   railway redeploy --service WorkPulse --from-source   # pull latest master
+   # Preferred: deploys the exact commit CI validated.
+   railway redeploy --service WorkPulse --from-source
    ```
+
+   Verified 2026-08-27: the GitHub default branch is `master`, and
+   `origin/master` = `f848c9a`, so "Deploy Latest Commit" and `--from-source`
+   both resolve to the CI-green commit.
+
+   **Whichever you use, confirm the new deployment's commit hash is the one CI
+   tested — not the previous one — before letting it take traffic.**
 4. Complete the §1.5 copy and §3 verification.
 5. **Then** enable the trigger for routine future releases:
    Railway → `WorkPulse` → Settings → Source → connect branch `master`.
@@ -885,9 +902,22 @@ git add -A
 git commit -m "feat(scalability): R2 uploads, pre-deploy migrations, split roles"
 git push origin master        # repo trigger is OFF -> updates GitHub only
 
-# Wait for GitHub Actions to go green, THEN promote:
+# Wait for GitHub Actions to go green, THEN promote.
+# --from-source is REQUIRED: a plain `railway redeploy`, the UI "Redeploy"
+# button and "Restart" all re-run the EXISTING image (the old commit).
 railway redeploy --service WorkPulse --from-source
+
+# UI equivalent: Ctrl/Cmd+K -> "Deploy Latest Commit" (uses the default branch).
+
+# Confirm the deployment picked up the NEW commit, not the old one.
+# (Index [0] rather than Select-Object: the JSON is an array of deployments.)
+$d = (railway deployment list --service WorkPulse --json | ConvertFrom-Json)[0]
+'{0}  {1}  {2}' -f $d.id, $d.status, $d.meta.commitHash
 ```
+
+Expected after promotion: commit hash starts **`f848c9a`**. If it still reads
+`48af56cd`, the old image was re-run — you used a plain redeploy rather than
+`--from-source` / "Deploy Latest Commit".
 
 **Step 6 — the copier.** Railway → `WorkPulse` → Settings → Deploy. Clear the
 health check path first, then set **Custom Start Command** to each of these in
@@ -1240,6 +1270,42 @@ railway volume list --json | ConvertFrom-Json |
 2. The existing `ROLE=all` service with `SERVE_SPA=true` serves the SPA.
 3. Optionally republish the previous `web-spa-<sha>` artifact.
 4. Never delete old hashed SPA assets during the same release.
+
+### Config parse fails ("Failed to parse your service config")
+
+**Seen for real on 2026-08-27**, first promotion attempt of `f848c9a`:
+
+```text
+Failed to parse your service config.
+Error: deploy.overlapSeconds: Invalid input: expected number, received string
+Error: deploy.drainingSeconds: Invalid input: expected number, received string
+```
+
+`railway.json` had `"overlapSeconds": "30"` (quoted). Railway validates the file
+against its schema **before doing anything**, so:
+
+- the deploy aborted **before build and before pre-deploy** — no migrations ran;
+- production stayed on the previous deployment, entirely unaffected;
+- the deployment showed only `FAILED` with **no build or deploy logs**, because
+  neither phase started. The message is visible **only in the Railway UI**.
+
+🔴 **`npm run check:guardrails` passed anyway.** The old
+`verify-railway-config.mjs` compared *values* but never *types*, so a quoted
+number sailed through. That gap is now closed: the script rejects a non-number
+`healthcheckTimeout`, `restartPolicyMaxRetries`, `overlapSeconds`,
+`drainingSeconds` or `numReplicas`, and a non-string command/path field.
+
+**If you hit this:**
+
+1. Read the error — it names the exact field and the expected type.
+2. Fix `railway.json`; cross-check against <https://railway.com/railway.schema.json>.
+3. `node scripts/verify-railway-config.mjs` must exit 0.
+4. Commit, push, re-promote. Nothing needs rolling back: the previous
+   deployment never stopped serving.
+
+**Empty logs on a FAILED deployment is itself the diagnostic** — it means the
+failure happened before the container was created, which almost always points at
+config parsing rather than application code.
 
 ### Migration fails
 
