@@ -12,5 +12,8 @@
     "check:module-readmes": "node scripts/check-module-readmes.mjs",
     "check:railway": "node scripts/verify-railway-config.mjs",
     "check:guardrails": "npm run check:generated && npm run check:railway && npm run check:stateless && npm run check:sql-routes && npm run check:file-sizes && npm run check:module-readmes"
+  },
+  "devDependencies": {
+    "railway": "^3.11.0"
   }
 }

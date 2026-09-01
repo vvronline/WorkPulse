@@ -8,9 +8,47 @@
 > this document was written assuming push-to-deploy; where that matters it now
 > says so explicitly. See §1.1/§1.1a.
 >
-> **Current verdict (2026-08-27):** 🟢 **GO — every pre-push gate passes.**
-> One thing to internalise first: **the upload copy must happen AFTER the push,
-> not before** (§1.5). Follow the §2 release-day sequence and copy/paste card.
+> ## 🟢 STATUS 2026-08-28 — THIS RELEASE HAS ALREADY SHIPPED
+>
+> **The push happened, the promotion happened, and production has been iterated
+> on top of it.** Everything below that reads like a future instruction is now a
+> historical record — read it for the ordering logic, not as a to-do list.
+>
+> **Commit evidence (all 2026-08-27):**
+>
+> - `f848c9a5` — feat(scalability): R2 uploads, pre-deploy migrations, split roles ← **the release**
+> - `d9213187` — fix(railway): overlapSeconds/drainingSeconds must be numbers, not strings
+> - `50fe6b6b` — feat(scalability): Phase H observability + GR1/GR5 guardrails
+> - `9fe31245` — chore(deploy): run A3.8 upload copier via startCommand (one-off) ← **§1.5 executed**
+> - `07b1bc4a` — fix(csp): allow R2 upload origin so avatars and attachments render
+> - `46202588` — fix(uploads): stop forwarded-attachment deletion; randomise upload filenames
+> - `a04ee989` — feat(storage): r2-tenant-report — map opaque prefixes to tenant names
+> - `9b6303d6` — feat(console): show live R2 upload usage on tenant overview ← **HEAD**
+>
+> The last four commits are **post-deploy production fixes**. You cannot get a CSP
+> violation against the R2 origin, nor build a live R2 usage panel, unless the app
+> is booting with `STORAGE_DRIVER=r2`. That is the proof the new image is live.
+>
+> ⚠️ **HEAD is `9b6303d6`, not `f848c9a5`.** Any step below that tells you to
+> expect a deployment hash starting `f848c9a` is stale (see §2).
+>
+> ✅ **§8 is DONE — `workpulse-volume` is detached (confirmed 2026-08-28 via
+> `railway volume list`: `serviceName: null`).** The replica pin is gone, so the
+> service _can_ now scale horizontally — but it has not been scaled yet, so
+> multi-replica behaviour remains **unproven in production**. The operator has
+> also confirmed live that a **new avatar upload works end-to-end against R2**.
+>
+> ℹ️ **The volume still exists and still holds its data** — `deletedAt: null`,
+> `isPendingDeletion: false`, `currentSizeMB: 330.47`. It is detached, not
+> deleted. That means the `--verify` reconciliation of legacy uploads (§1.5 A3)
+> is _still_ runnable via a temporary re-attach, and it stops being runnable the
+> moment the volume is deleted. See §8.
+>
+> 🔵 **The one thing still outstanding: §1.6 — rotate the secrets that were
+> exposed during setup.** This is `A1.1`–`A1.3` in the plan and is now the
+> highest-priority remaining item.
+>
+> **Verdict at push time (2026-08-27):** 🟢 GO — every pre-push gate passed.
 >
 > ✅ **§1.3 variables set and value-checked** — all 13 present (`ROLE=all`,
 > `SERVE_SPA=true`, `STORAGE_DRIVER=r2`, `R2_UPLOADS_BUCKET=aino-uploads`, pool
@@ -23,7 +61,7 @@
 > 74 suites / 846 tests.
 >
 > ✅ **`docker build` PASS** (2026-08-27, image `aino-pre-push`, 391 MB,
-> `sha256:8bfb199c…`). Verified *inside* the built image, not just that it built:
+> `sha256:8bfb199c…`). Verified _inside_ the built image, not just that it built:
 > `scripts/migrate-uploads-to-r2.js` present · both `.sql` migrations shipped
 > (`0002_migration_catchup.sql`, `master/0001_shards_and_storage.sql`) ·
 > `@aws-sdk/client-s3` installed · runs as `uid=100(appuser)` ·
@@ -34,15 +72,46 @@
 > `{"expected":30,"minApplied":30}` — which is exactly the state the
 > legacy-adoption guard needs, so the destructive catch-up will **not** execute.
 >
-> 🔴 **Ordering constraint discovered 2026-08-27 — this changes the sequence.**
-> `aino-uploads` holds **0 objects**, and the upload copier **cannot run until
-> after the push**. The currently-deployed image (`48af56cd`) has no
-> `server/scripts/`, no `platform/storage/`, and no `@aws-sdk/client-s3` in its
-> `package.json` — the copier does not exist in that image and cannot be run
-> there. See §1.5, which now documents the correct order and the short window of
-> broken images it implies.
+> ✅ **Ordering constraint — RESOLVED 2026-08-27.** Kept below because the logic
+> is worth understanding before any similar cutover, but it no longer describes
+> the present.
 >
-> ⚪ §1.4 (DB backup) — **optional by operator decision.**
+> <details><summary>Historical: the ordering constraint discovered 2026-08-27</summary>
+>
+> `aino-uploads` held **0 objects**, and the upload copier **could not run until
+> after the push**. The then-deployed image (`48af56cd`) had no
+> `server/scripts/`, no `platform/storage/`, and no `@aws-sdk/client-s3` in its
+> `package.json` — the copier did not exist in that image and could not be run
+> there. §1.5 documents the order that was actually used and the short window of
+> broken images it implied.
+>
+> **Resolution:** commit `9fe31245` ran the copier as a one-off Railway
+> `startCommand` against the new image on 2026-08-27.
+>
+> </details>
+>
+> ⬜ **Unproven:** the `--verify` pass that should print `Missing in R2: 0` was
+> never captured into git or into §10. The copier ran; nobody recorded the
+> reconciliation output. Treat "every legacy upload is in R2" as **likely but not
+> evidenced** until you re-run the verify (§1.5 step A3).
+>
+> ✅ **What IS now proven (operator, 2026-08-28): the R2 write path works.** A new
+> avatar was uploaded and rendered live from R2. Note carefully that this proves
+> the **new-upload** path only — it says nothing about whether all 330.5 MB of
+> **legacy** files copied across. Those are two separate claims and only the
+> `--verify` pass settles the second one.
+>
+> ⚪ §1.4 (DB backup) — **optional by operator decision, and it was NOT taken.**
+> This matches `P0.5` in the plan, which is deliberately left unticked.
+>
+> 🆕 **2026-09-01 — Railway config migrated to Infrastructure as Code.** `railway.json` is
+> deprecated and removed; `.railway/railway.ts` is now the source of truth (D4.5's
+> healthcheck/pre-deploy/restart-policy settings live there, plus new `PgBouncer`,
+> `aino-web`, `aino-realtime`, `aino-worker` service declarations for E1.1/E3.2/F1).
+> `scripts/verify-railway-config.mjs` now validates the `.ts` file. **None of this has been
+> applied yet** — `railway config apply` was deliberately not run; see
+> `docs/SCALABILITY_REFACTOR_PLAN.md`'s 2026-09-01 progress-log entry for the full diff
+> (`railway config plan`: 4 to add, 1 to change, 0 to destroy).
 
 **Project:** `renewed-fascination` (`1be6f4e9-6e54-4594-ad4b-8fd691fb9b02`)  
 **Environment:** `production`  
@@ -52,15 +121,15 @@
 
 ### Environment constraints verified on the operator workstation (2026-08-27)
 
-These decide *which* method each step below can use — they are not incidental:
+These decide _which_ method each step below can use — they are not incidental:
 
-| Path | Status |
-|---|---|
-| `ssh.railway.com:22` (`railway ssh`, `railway volume files`, `railway connect`) | 🔴 **blocked** |
-| `interchange.proxy.rlwy.net:21659` (Postgres public TCP proxy) | 🔴 **blocked** |
-| `*.r2.cloudflarestorage.com:443` | ✅ reachable |
-| Local `psql` / `pg_dump` | ❌ not installed |
-| `railway` CLI 5.30.4 · `aws` CLI 2.34.9 · Node 24 · Docker 27.3.1 | ✅ available |
+| Path                                                                            | Status           |
+| ------------------------------------------------------------------------------- | ---------------- |
+| `ssh.railway.com:22` (`railway ssh`, `railway volume files`, `railway connect`) | 🔴 **blocked**   |
+| `interchange.proxy.rlwy.net:21659` (Postgres public TCP proxy)                  | 🔴 **blocked**   |
+| `*.r2.cloudflarestorage.com:443`                                                | ✅ reachable     |
+| Local `psql` / `pg_dump`                                                        | ❌ not installed |
+| `railway` CLI 5.30.4 · `aws` CLI 2.34.9 · Node 24 · Docker 27.3.1               | ✅ available     |
 
 Consequence: **database backups and any volume-download route must run from a
 GitHub Actions runner or inside the Railway container**, not from this machine.
@@ -72,7 +141,7 @@ GitHub Actions runner or inside the Railway container**, not from this machine.
 > ⚠️ If a future check ever reports `MISSING` right after you edited the
 > dashboard, the cause is almost always Railway's **staged changes**: variable
 > edits sit in a changeset and do not exist on the service until you click
-> **Deploy** in the *Details* panel. Look for the purple banner on the canvas.
+> **Deploy** in the _Details_ panel. Look for the purple banner on the canvas.
 
 ### Accepted-risk profile (operator decision, 2026-08-27)
 
@@ -85,7 +154,7 @@ that is worth taking anyway.
 **§1.5 (upload copy) is NOT skippable on the same reasoning.** Recreating a
 tenant regenerates rows, not files; nothing can reproduce the 330.5 MB of
 uploads. It is, however, **re-sequenced**: the copier only exists in the new
-image, so it runs immediately *after* the push rather than before. See §1.5.
+image, so it runs immediately _after_ the push rather than before. See §1.5.
 
 > **This is the detailed, authoritative operator checklist.**
 > [`SCALABILITY_REFACTOR_PLAN.md`](SCALABILITY_REFACTOR_PLAN.md#-pre-push--deployment-runbook)
@@ -139,36 +208,36 @@ The new production image **refuses to start** if:
 > Current source: `vvronline/WorkPulse`, **trigger: none**.
 >
 > 🔴 **Consequence for this release:** the runbook's later instruction to
-> "re-enable autodeploy, then push" would deploy *immediately* on enable. See
+> "re-enable autodeploy, then push" would deploy _immediately_ on enable. See
 > §1.1a for the safer order.
 
 ### 1.1a Should autodeploy be ON for this release?
 
 **Recommendation: leave it OFF for this deploy; turn it on afterwards.**
 
-The whole design of this release assumes a *controlled* promotion:
+The whole design of this release assumes a _controlled_ promotion:
 
-| Reason | Detail |
-|---|---|
-| The upload window (§1.5) | The copier only exists in the new image, so uploads 404 between deploy and copy completion. You want to choose that moment, not have a push choose it. |
-| Dashboard settings are needed mid-release | §1.5 requires temporarily changing the start command and clearing the health check. An autodeploy landing mid-copy would fight you. |
-| `railway.json` is **new in this commit** | It is currently untracked, so this push *introduces* pre-deploy migrations, `/readyz` and the 30s/15s teardown. The service today still points at `/api/health` with no pre-deploy command. First exposure to that config is better done deliberately. |
-| CI does not gate Railway | GitHub Actions and Railway watch the branch independently — a red CI run would not stop an autodeploy. |
+| Reason                                    | Detail                                                                                                                                                                                                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The upload window (§1.5)                  | The copier only exists in the new image, so uploads 404 between deploy and copy completion. You want to choose that moment, not have a push choose it.                                                                                                 |
+| Dashboard settings are needed mid-release | §1.5 requires temporarily changing the start command and clearing the health check. An autodeploy landing mid-copy would fight you.                                                                                                                    |
+| `railway.json` is **new in this commit**  | It is currently untracked, so this push _introduces_ pre-deploy migrations, `/readyz` and the 30s/15s teardown. The service today still points at `/api/health` with no pre-deploy command. First exposure to that config is better done deliberately. |
+| CI does not gate Railway                  | GitHub Actions and Railway watch the branch independently — a red CI run would not stop an autodeploy.                                                                                                                                                 |
 
-**Safer sequence for *this* release:**
+**Safer sequence for _this_ release:**
 
 1. Leave the repo trigger **off**.
 2. `git push origin master` — this only updates GitHub. Watch CI go green.
 3. Deploy manually when you are ready to babysit it. 🔴 **The three "redeploy"
    actions are not equivalent — two of them would ship the OLD code:**
 
-   | Action | What it actually does | Use here? |
-   |---|---|---|
-   | UI **Redeploy** (⋯ on a deployment) | "Creates a new deployment with the **exact same code** and build/deploy configuration." Re-runs the **existing image** — i.e. `48af56cd`. | ❌ **No** — deploys the old commit |
-   | UI **Restart** | Restores the exact image of the current build | ❌ No |
-   | UI Command Palette → **Deploy Latest Commit** (`Ctrl/Cmd+K`) | Builds the latest commit on the **default branch** | ✅ Yes |
-   | CLI `railway redeploy --from-source` | "Pull and deploy the **latest commit** from the configured source" | ✅ Yes — equivalent to the above |
-   | CLI `railway up` | Uploads your **local working directory** — bypasses git and CI entirely | ⚠️ Avoid: deploys unreviewed local state |
+   | Action                                                       | What it actually does                                                                                                                     | Use here?                                |
+   | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+   | UI **Redeploy** (⋯ on a deployment)                          | "Creates a new deployment with the **exact same code** and build/deploy configuration." Re-runs the **existing image** — i.e. `48af56cd`. | ❌ **No** — deploys the old commit       |
+   | UI **Restart**                                               | Restores the exact image of the current build                                                                                             | ❌ No                                    |
+   | UI Command Palette → **Deploy Latest Commit** (`Ctrl/Cmd+K`) | Builds the latest commit on the **default branch**                                                                                        | ✅ Yes                                   |
+   | CLI `railway redeploy --from-source`                         | "Pull and deploy the **latest commit** from the configured source"                                                                        | ✅ Yes — equivalent to the above         |
+   | CLI `railway up`                                             | Uploads your **local working directory** — bypasses git and CI entirely                                                                   | ⚠️ Avoid: deploys unreviewed local state |
 
    ```powershell
    # Preferred: deploys the exact commit CI validated.
@@ -181,6 +250,7 @@ The whole design of this release assumes a *controlled* promotion:
 
    **Whichever you use, confirm the new deployment's commit hash is the one CI
    tested — not the previous one — before letting it take traffic.**
+
 4. Complete the §1.5 copy and §3 verification.
 5. **Then** enable the trigger for routine future releases:
    Railway → `WorkPulse` → Settings → Source → connect branch `master`.
@@ -190,24 +260,34 @@ manual steps — that is reasonable once uploads are in R2, because subsequent
 deploys are plain image swaps with no data migration attached. Until then, the
 manual gate is the feature, not the friction.
 
-- [ ] Railway → `WorkPulse` → Settings → Source → disable automatic deployments,
+- [x] Railway → `WorkPulse` → Settings → Source → disable automatic deployments,
       **or** temporarily change the deploy branch away from `master`.
-- [ ] Confirm the current production deployment remains Online.
+      ✅ Already off — no repo trigger existed, verified 2026-08-27.
+- [x] Confirm the current production deployment remains Online.
+      ✅ `0ab38c7a-5f49-403d-8932-7ddf7af3efe3` (commit `48af56cd`) stayed Online
+      right through the failed first promotion (see §9 "Config parse fails").
+- [ ] ⬜ **Step 5 of the safer sequence is still deferred** — the repo trigger has
+      **not** been re-enabled. That is intentional and belongs to §8.
 
 This is mandatory because the following environment changes and data copy must
 be completed before the new image starts.
 
 ### 1.2 Create and secure the private upload bucket
 
-- [ ] Confirm Cloudflare R2 bucket `aino-uploads` exists.
-- [ ] Confirm **Public Development URL is disabled**.
-- [ ] Confirm **no custom/public domain** is attached.
-- [ ] Create credentials scoped to Object Read & Write on `aino-uploads`.
-- [ ] Test credentials with a harmless put/head/get/delete probe.
+> ✅ **Completed 2026-08-27.** The first token was created as **Object Read
+> only** and was re-created with **Object Read & Write** after the probe caught
+> it — exactly the failure mode described below. The "no public domain" box is
+> not a preference, it is [ADR-004](./adr/): `aino-uploads` is presigned-only.
+
+- [x] Confirm Cloudflare R2 bucket `aino-uploads` exists.
+- [x] Confirm **Public Development URL is disabled**.
+- [x] Confirm **no custom/public domain** is attached.
+- [x] Create credentials scoped to Object Read & Write on `aino-uploads`.
+- [x] Test credentials with a harmless put/head/get/delete probe.
 
 Never reuse the public releases/SPA bucket for tenant uploads.
 
-**Credential probe — 🔴 do not skip this.** A read-only token passes *every*
+**Credential probe — 🔴 do not skip this.** A read-only token passes _every_
 boot check: `assertProductionStorage()` only constructs the adapter, it never
 writes. The deploy goes green, `/readyz` returns 200, existing files download
 fine — and the first user upload returns a 500. This probe moves that discovery
@@ -224,15 +304,18 @@ $env:R2_UPLOADS_BUCKET    = [string]$j.R2_UPLOADS_BUCKET
 node scripts/verify-r2-credentials.mjs
 ```
 
-- [ ] Output ends `RESULT: PASS — read + write confirmed; probe object removed.`
-- [ ] Note the reported object count — it also tells you whether §1.5 has run.
-- [ ] Confirm the bucket is **not** publicly reachable — an anonymous fetch of a
+- [x] Output ends `RESULT: PASS — read + write confirmed; probe object removed.`
+- [x] Note the reported object count — it also tells you whether §1.5 has run.
+      ✅ It reported **0 objects** at probe time, which is precisely how the §1.5
+      ordering constraint was discovered. The copier has since run (`9fe31245`),
+      so a probe today will report a non-zero count.
+- [x] Confirm the bucket is **not** publicly reachable — an anonymous fetch of a
       real key must not return `200`.
 
 > ℹ️ **Why a Node script rather than `aws s3 ...`?** The AWS CLI ships its own CA
 > bundle and dies with `CERTIFICATE_VERIFY_FAILED` behind the corporate
 > TLS-inspecting proxy. Node honours `NODE_EXTRA_CA_CERTS` and the Windows trust
-> store, so this works where the CLI does not. It also uses the *same* SDK the
+> store, so this works where the CLI does not. It also uses the _same_ SDK the
 > server uses, so a pass here means the app will genuinely work.
 
 **If `put` fails with `AccessDenied` while `list` succeeds**, the token is
@@ -249,31 +332,31 @@ read-only — this is the most common misconfiguration, because the R2 UI offers
 
 Set these **before the push**:
 
-| Variable | Value |
-|---|---|
-| `ROLE` | `all` |
-| `SERVE_SPA` | `true` |
-| `STORAGE_DRIVER` | `r2` |
-| `R2_ACCOUNT_ID` | Cloudflare account ID |
-| `R2_ACCESS_KEY_ID` | private upload-bucket key ID |
-| `R2_SECRET_ACCESS_KEY` | private upload-bucket secret |
-| `R2_UPLOADS_BUCKET` | `aino-uploads` |
-| `REDIS_URL` | `${{Redis.REDIS_URL}}` or existing working reference |
-| `DIRECT_DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
-| `MASTER_POOL_SIZE` | `4` |
-| `TENANT_POOL_SIZE` | `3` |
-| `TENANT_MAX_POOLS` | `100` |
-| `TENANT_FOREACH_CONCURRENCY` | `5` |
+| Variable                     | Value                                                |
+| ---------------------------- | ---------------------------------------------------- |
+| `ROLE`                       | `all`                                                |
+| `SERVE_SPA`                  | `true`                                               |
+| `STORAGE_DRIVER`             | `r2`                                                 |
+| `R2_ACCOUNT_ID`              | Cloudflare account ID                                |
+| `R2_ACCESS_KEY_ID`           | private upload-bucket key ID                         |
+| `R2_SECRET_ACCESS_KEY`       | private upload-bucket secret                         |
+| `R2_UPLOADS_BUCKET`          | `aino-uploads`                                       |
+| `REDIS_URL`                  | `${{Redis.REDIS_URL}}` or existing working reference |
+| `DIRECT_DATABASE_URL`        | `${{Postgres.DATABASE_URL}}`                         |
+| `MASTER_POOL_SIZE`           | `4`                                                  |
+| `TENANT_POOL_SIZE`           | `3`                                                  |
+| `TENANT_MAX_POOLS`           | `100`                                                |
+| `TENANT_FOREACH_CONCURRENCY` | `5`                                                  |
 
 Optional — Phase H observability. Safe to omit entirely; nothing else depends
 on them:
 
-| Variable | Value |
-|---|---|
-| `METRICS_TOKEN` | `openssl rand -base64 32`. **Required for `/metrics` to respond in production** — without it the endpoint returns 404 (fail-closed). Use the *same* value on every service or dashboards will show gaps that look like outages. |
-| `METRICS_TENANT_TOP_N` | `20` — tenants that get their own metric label before the rest fold into `other` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP collector URL. **Setting this enables tracing**; omit to leave it off. |
-| `OTEL_EXPORTER_OTLP_HEADERS` | e.g. `authorization=Bearer <token>` |
+| Variable                      | Value                                                                                                                                                                                                                           |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `METRICS_TOKEN`               | `openssl rand -base64 32`. **Required for `/metrics` to respond in production** — without it the endpoint returns 404 (fail-closed). Use the _same_ value on every service or dashboards will show gaps that look like outages. |
+| `METRICS_TENANT_TOP_N`        | `20` — tenants that get their own metric label before the rest fold into `other`                                                                                                                                                |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP collector URL. **Setting this enables tracing**; omit to leave it off.                                                                                                                                                |
+| `OTEL_EXPORTER_OTLP_HEADERS`  | e.g. `authorization=Bearer <token>`                                                                                                                                                                                             |
 
 - [ ] Confirm existing `DATABASE_URL` still points **directly to Postgres** for
       this first deployment. PgBouncer is a later canary step.
@@ -332,7 +415,7 @@ foreach ($k in 'DATABASE_URL','DIRECT_DATABASE_URL','REDIS_URL') {
       `redis.railway.internal:6379`.
 
 > ⚠️ Railway **stages** variable edits in a changeset — they do not exist on the
-> service until you click **Deploy** in the *Details* panel. If the verifier says
+> service until you click **Deploy** in the _Details_ panel. If the verifier says
 > `MISSING` right after you typed them in the dashboard, look for the purple
 > "N staged changes" banner on the canvas.
 
@@ -355,28 +438,28 @@ was checked rather than assumed:
   (pure additive — `CREATE TABLE IF NOT EXISTS shards`, two
   `ADD COLUMN IF NOT EXISTS` on `tenants`, one counter backfill) and
   `0002_migration_catchup.sql`.
-- `0002` *does* contain `DROP TABLE IF EXISTS sprint_retrospectives`, but it is
+- `0002` _does_ contain `DROP TABLE IF EXISTS sprint_retrospectives`, but it is
   **adopted, not executed** on an already-migrated database. The
   legacy-adoption guard in `migrationRunner.ts` records it as applied when all
   30 pre-squash names are present.
 - **Verified:** the 30 names in `LEGACY_MIGRATION_NAMES` match the 30 names the
   currently-deployed runner records — exactly, with no additions or omissions.
   Live `/api/health?detail=true` confirms `{"expected":30,"minApplied":30,
-  "tenants":{"default":30,"master":30}}`.
+"tenants":{"default":30,"master":30}}`.
 - Therefore the guard **will** fire and the destructive path will not run.
 
 **What you are still accepting.** Be explicit about it:
 
-| Risk | Consequence |
-|---|---|
-| The guard depends on `_migrations` being intact | If any single one of the 30 rows is missing, the DB is treated as *partially* migrated, the catch-up **executes**, and `sprint_retrospectives` + `sprint_retro_votes` are dropped and rebuilt empty. The log warns `PARTIALLY migrated DB`, but by then it has run. |
-| "Recreate the tenants" is not free | You lose all operational history — tasks, chats, notes, attendance, retrospectives, audit logs. Recreating logins is easy; recreating *data* is not. |
-| No restore point for an unrelated failure | Any other data-loss cause during this window has no recovery path. |
+| Risk                                            | Consequence                                                                                                                                                                                                                                                         |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The guard depends on `_migrations` being intact | If any single one of the 30 rows is missing, the DB is treated as _partially_ migrated, the catch-up **executes**, and `sprint_retrospectives` + `sprint_retro_votes` are dropped and rebuilt empty. The log warns `PARTIALLY migrated DB`, but by then it has run. |
+| "Recreate the tenants" is not free              | You lose all operational history — tasks, chats, notes, attendance, retrospectives, audit logs. Recreating logins is easy; recreating _data_ is not.                                                                                                                |
+| No restore point for an unrelated failure       | Any other data-loss cause during this window has no recovery path.                                                                                                                                                                                                  |
 
 **Cheap mitigation — take it even though you are skipping the SQL dump.** This
 is two clicks and needs no network access, no `pg_dump`, and no secret:
 
-- [ ] Railway → **Postgres** → Settings → **Backups** → *Create backup*.
+- [ ] Railway → **Postgres** → Settings → **Backups** → _Create backup_.
 
 That snapshots `postgres-volume` (204 MB) and can be restored from the same
 project/environment. It is not a portable dump, but it turns "unrecoverable"
@@ -391,12 +474,12 @@ pre-deploy and applies DDL before the new image ever serves traffic.
 
 #### Why the obvious options do not work here
 
-| Option | Verdict |
-|---|---|
+| Option                          | Verdict                                                                                                                                                                                 |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pg_dump` from this workstation | ❌ The Railway Postgres TCP proxy (`interchange.proxy.rlwy.net:21659`) is **blocked by the corporate network** — verified unreachable. `psql`/`pg_dump` are also not installed locally. |
-| `railway connect Postgres` | ❌ Falls back to SSH; `ssh.railway.com:22` is **blocked** on this network. |
-| Railway volume backup | ⚠️ Snapshots `postgres-volume` at the filesystem level. Good as a second copy, but it is not a portable, inspectable SQL dump and it **cannot be restored into a different project**. |
-| **GitHub Actions workflow** | ✅ **Use this.** The runner has open egress and a matching client. |
+| `railway connect Postgres`      | ❌ Falls back to SSH; `ssh.railway.com:22` is **blocked** on this network.                                                                                                              |
+| Railway volume backup           | ⚠️ Snapshots `postgres-volume` at the filesystem level. Good as a second copy, but it is not a portable, inspectable SQL dump and it **cannot be restored into a different project**.   |
+| **GitHub Actions workflow**     | ✅ **Use this.** The runner has open egress and a matching client.                                                                                                                      |
 
 #### Step 1 — one-time setup
 
@@ -448,7 +531,7 @@ Select-String -Path .\master-*.sql -Pattern 'COPY public.platform_users' -Simple
       releases bucket) — GitHub deletes it after 7 days.
 - [ ] **Delete the GitHub artifact afterwards.** It contains password hashes.
 - [ ] Also take a Railway volume backup of `postgres-volume` as a second copy:
-      Railway → Postgres → Settings → **Backups** → *Create backup*. Note that
+      Railway → Postgres → Settings → **Backups** → _Create backup_. Note that
       manual volume backups are capped at 50% of volume size, and restores are
       limited to the same project + environment.
 - [ ] Record the timestamp in the §10 go/no-go record.
@@ -476,11 +559,11 @@ psql "postgresql://.../<db_name>" -f tenant-<db_name>-<ts>.sql
 > — Blocking Actions Before the Push", but it **cannot** be done before the push.
 > Verified against the deployed commit `48af56cd`:
 >
-> | Needed by the copier | Present in the running image? |
-> |---|---|
-> | `server/scripts/migrate-uploads-to-r2.js` | ❌ no `server/scripts/` at all |
-> | `platform/storage/` (R2 adapter) | ❌ does not exist |
-> | `@aws-sdk/client-s3` dependency | ❌ not in that image's `package.json` |
+> | Needed by the copier                      | Present in the running image?         |
+> | ----------------------------------------- | ------------------------------------- |
+> | `server/scripts/migrate-uploads-to-r2.js` | ❌ no `server/scripts/` at all        |
+> | `platform/storage/` (R2 adapter)          | ❌ does not exist                     |
+> | `@aws-sdk/client-s3` dependency           | ❌ not in that image's `package.json` |
 >
 > The copier ships **in the new image**. So the real sequence is:
 >
@@ -500,7 +583,7 @@ psql "postgresql://.../<db_name>" -f tenant-<db_name>-<ts>.sql
 > (Method B) and this window disappears entirely.
 
 > ⚠️ **Keep the volume attached through the push.** The new image no longer
-> *needs* the volume, but the copier reads from it. Do not detach it until §8.
+> _needs_ the volume, but the copier reads from it. Do not detach it until §8.
 
 > 🔴 **Possible permission trap — check this first if the copier reports 0 files.**
 > Railway mounts volumes **as root**. The old image worked around that with a
@@ -520,7 +603,7 @@ psql "postgresql://.../<db_name>" -f tenant-<db_name>-<ts>.sql
 > command — you do not want production running as root long-term.
 
 > **The "I can recreate it" argument does not apply here.** Recreating a tenant
-> regenerates *rows*, not *files*. Nothing in the system can reproduce the
+> regenerates _rows_, not _files_. Nothing in the system can reproduce the
 > 330.5 MB of avatars, chat attachments, task-comment files and org logos that
 > users already uploaded. There is no seed, no source, no regeneration path.
 
@@ -536,7 +619,7 @@ and affects every historical file:
 4. Meanwhile the bytes are still sitting on `workpulse-volume`, which the running
    container is no longer reading from.
 
-The database is *not* corrupted — every `avatar`, `logo_url` and `file_url`
+The database is _not_ corrupted — every `avatar`, `logo_url` and `file_url`
 column still holds a valid path. The files are simply in the wrong place. That
 is what makes this both **low-risk to fix** and **easy to overlook**: nothing
 errors in the logs, users just report broken images.
@@ -581,12 +664,12 @@ prefix would 404 silently, per file — never "tidy up" the layout during the co
 The volume is only reachable from inside a Railway container; there is no
 S/FTP, and a volume cannot be attached to a second service.
 
-| Method | Verdict |
-|---|---|
-| `railway volume files download` + `aws s3 sync` | ❌ here — uses Railway SFTP over `ssh.railway.com:22`, **blocked on this network** (verified). Fine from an unrestricted network. |
-| `aws s3 sync ./uploads ...` locally | ❌ needs a local copy of the volume, which the row above cannot produce here. |
-| Pre-deploy command | ❌ **volumes are not mounted in pre-deploy** and its filesystem changes are discarded (Railway docs). It cannot see the uploads at all. |
-| **Method A — in-container copier** | ✅ **recommended.** Runs *inside* the service, where the volume is a plain directory and R2 credentials are already in the environment. Needs no inbound network. |
+| Method                                          | Verdict                                                                                                                                                           |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `railway volume files download` + `aws s3 sync` | ❌ here — uses Railway SFTP over `ssh.railway.com:22`, **blocked on this network** (verified). Fine from an unrestricted network.                                 |
+| `aws s3 sync ./uploads ...` locally             | ❌ needs a local copy of the volume, which the row above cannot produce here.                                                                                     |
+| Pre-deploy command                              | ❌ **volumes are not mounted in pre-deploy** and its filesystem changes are discarded (Railway docs). It cannot see the uploads at all.                           |
+| **Method A — in-container copier**              | ✅ **recommended.** Runs _inside_ the service, where the volume is a plain directory and R2 credentials are already in the environment. Needs no inbound network. |
 
 The repository already ships the copier: `server/scripts/migrate-uploads-to-r2.ts`,
 compiled into the image as `/app/server/scripts/migrate-uploads-to-r2.js`. It is
@@ -596,23 +679,27 @@ supported way to perform the final delta pass.
 
 ---
 
-#### Method A — run the copier inside the service *(recommended)*
+#### Method A — run the copier inside the service _(recommended)_
 
 `ROLE=all` serves traffic from the same container that mounts the volume, so run
 the copier as a temporary **start command**. `railway.json` normally wins over
 dashboard settings, so make this change in the **dashboard** and revert it after.
 
+> ✅ **A1 and A2 were executed 2026-08-27** via commit `9fe31245`
+> ("chore(deploy): run A3.8 upload copier via startCommand (one-off)"). The
+> boxes below are ticked from that commit, not from captured console output.
+
 **A1. Dry run first — writes nothing.**
 
-- [ ] Railway → `WorkPulse` → Settings → Deploy → **Custom Start Command**:
+- [x] Railway → `WorkPulse` → Settings → Deploy → **Custom Start Command**:
 
 ```sh
 node scripts/migrate-uploads-to-r2.js --dry-run
 ```
 
-- [ ] Temporarily clear the health check path. The copier is not an HTTP server,
+- [x] Temporarily clear the health check path. The copier is not an HTTP server,
       so `/readyz` would fail and roll the deployment back mid-copy.
-- [ ] Deploy, then read the logs:
+- [x] Deploy, then read the logs:
 
 ```text
 A3.8 — copy upload volume to Cloudflare R2
@@ -624,18 +711,23 @@ Remote: 0 object(s), 0 B
   would upload  tenant_1/org_1/avatar/....png
 ```
 
-- [ ] **Record the local file count and byte total.** That is the number the real
+- [x] **Record the local file count and byte total.** That is the number the real
       copy must match.
+      ⬜ **Not evidenced:** the dry-run counts were never written down anywhere.
+      The volume was 330.5 MB at the time, which is the only figure we can still
+      cite.
 
 **A2. Real copy.**
 
-- [ ] Change the start command to:
+- [x] Change the start command to:
+      **Evidence:** commit `9fe31245` — "chore(deploy): run A3.8 upload copier via
+      startCommand (one-off)".
 
 ```sh
 node scripts/migrate-uploads-to-r2.js
 ```
 
-- [ ] Redeploy and watch for the completion block:
+- [x] Redeploy and watch for the completion block:
 
 ```text
 COPY complete in <n>s
@@ -646,13 +738,31 @@ Post-copy check: <N> object(s) in R2, 0 local file(s) missing.
 RESULT: PASS — every local file is present in R2.
 ```
 
-- [ ] `failed` is `0`. If not, redeploy the same command — completed files are
+- [x] `failed` is `0`. If not, redeploy the same command — completed files are
       skipped and only the failures are retried.
+      **Evidence:** inferred, not captured. R2-backed avatars and attachments
+      render in production today (commits `07b1bc4a`, `9b6303d6`), which cannot
+      happen if the copy had failed wholesale. The console output was never saved.
 
 **A3. Verify independently.**
 
+> ⬜ **NOT DONE — this is the one real gap in the §1.5 sequence.** The `--verify`
+> pass was never run, or at least never captured into git or §10. Until it is,
+> "every legacy upload is in R2" is **likely but not evidenced**.
+>
+> ✅ **Still runnable.** The volume was detached on 2026-08-28 but **not deleted**
+> (`deletedAt: null`, `currentSizeMB: 330.47`), so this verify can still be done by
+> temporarily re-attaching `workpulse-volume` to the `WorkPulse` service and
+> re-running the copier with `--verify`.
+>
+> ⚠️ **Do not confuse this with the operator's live test.** A new avatar upload was
+> confirmed working end-to-end against R2 on 2026-08-28 — that proves the
+> **new-upload** path. It says nothing about whether all 330.5 MB of **legacy**
+> files copied across. Only the `--verify` pass settles that second claim, and
+> **deleting** the volume is what makes it permanently unanswerable.
+
 - [ ] Set the start command to `node scripts/migrate-uploads-to-r2.js --verify`
-      and redeploy. It compares every local file against R2 by key *and* size,
+      and redeploy. It compares every local file against R2 by key _and_ size,
       and **exits non-zero** if anything is missing:
 
 ```text
@@ -663,16 +773,21 @@ RESULT: PASS — every local file is in R2 at the same size.
 
 **A4. Restore the service.**
 
-- [ ] Clear the custom start command so `railway.json` (`node index.js`) applies again.
-- [ ] Restore the health check path to `/readyz`, timeout 300s.
-- [ ] Redeploy and confirm the service is Online.
+> ✅ **Inferred complete, not evidenced.** No commit records these dashboard
+> actions, but the service is serving normal HTTP traffic today — which is only
+> possible if the custom start command was cleared and `/readyz` restored.
+> Re-confirm in the dashboard while you are there for §8.
+
+- [x] Clear the custom start command so `railway.json` (`node index.js`) applies again.
+- [x] Restore the health check path to `/readyz`, timeout 300s.
+- [x] Redeploy and confirm the service is Online.
 
 > 🔴 Never leave the copier as the start command: the process exits when the copy
 > finishes, and Railway would restart it in a crash loop.
 
 ---
 
-#### Method B — download the volume, then sync *(needs port 22 open)*
+#### Method B — download the volume, then sync _(needs port 22 open)_
 
 ```powershell
 # 1. Pull the volume to disk (prompts for a volume; choose workpulse-volume).
@@ -710,7 +825,7 @@ $ep = "https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com"
 aws s3 ls s3://aino-uploads/ --recursive --endpoint-url $ep | Select-Object -First 5
 ```
 
-- [ ] Every upload *kind* is present. These are the exact `UploadKind` values
+- [ ] Every upload _kind_ is present. These are the exact `UploadKind` values
       from `server/platform/storage/types.ts`; each is written by a different
       route, so a missing kind means one broken feature:
 
@@ -721,20 +836,21 @@ foreach ($k in 'avatars','chat','branding','task-comments') {
 }
 ```
 
-  | Kind | Feature | Written by |
-  |---|---|---|
-  | `avatars` | profile picture | `routes/profile.ts` |
-  | `chat` | chat image/file | `routes/chat.ts` |
-  | `branding` | organization logo | `routes/branding.ts` |
-  | `task-comments` | task-comment attachment | `routes/tasks/comments.ts` |
+| Kind            | Feature                 | Written by                 |
+| --------------- | ----------------------- | -------------------------- |
+| `avatars`       | profile picture         | `routes/profile.ts`        |
+| `chat`          | chat image/file         | `routes/chat.ts`           |
+| `branding`      | organization logo       | `routes/branding.ts`       |
+| `task-comments` | task-comment attachment | `routes/tasks/comments.ts` |
 
-  These are the only four kinds any route currently writes. `UploadKind` also
-  declares `notes` and `exports`, but no code path produces them today — if the
-  bucket contains such keys they came from an older build, and they must still
-  be copied.
+These are the only four kinds any route currently writes. `UploadKind` also
+declares `notes` and `exports`, but no code path produces them today — if the
+bucket contains such keys they came from an older build, and they must still
+be copied.
 
-  A count of `0` is only acceptable for a kind that has genuinely never been
-  used. Compare against the old volume rather than assuming.
+A count of `0` is only acceptable for a kind that has genuinely never been
+used. Compare against the old volume rather than assuming.
+
 - [ ] Record the sync timestamp, or briefly freeze uploads, so you know exactly
       what the delta pass must pick up.
 - [ ] **Immediately before the push, run the copier once more** to catch anything
@@ -751,9 +867,19 @@ real customer traffic:
 > `DATABASE_PUBLIC_URL` secret that the backup workflow uses. Take the §1.4
 > backup **first**, then rotate, then update the GitHub secret.
 
+> ⚠️ **OVERDUE — NOT DONE as of 2026-08-28.**
+> The release shipped on 2026-08-27 without this rotation. These are steps
+> `A1.1`–`A1.3` in [`SCALABILITY_REFACTOR_PLAN.md`](./SCALABILITY_REFACTOR_PLAN.md),
+> and they are the **highest-priority remaining security item** in the whole
+> programme — every credential that was ever pasted into a shell, a log, or a
+> chat window is still live.
+> The "backup first" ordering above no longer gates you: §1.4 was skipped by
+> operator decision, so there is no backup workflow secret waiting on the old
+> password. Rotate now.
+
 - [ ] Rotate the Railway PostgreSQL password (Railway → Postgres → rotate
       credentials). `DATABASE_URL` and `DIRECT_DATABASE_URL` are Railway
-      *reference* variables (`${{Postgres.DATABASE_URL}}`), so they update
+      _reference_ variables (`${{Postgres.DATABASE_URL}}`), so they update
       themselves — any hard-copied literal will not.
 - [ ] Delete Firebase service-account key
       `43a25c39680d69b7f6633722f4bf0d2b5a2bd33a` (GCP Console → IAM → Service
@@ -814,27 +940,38 @@ docker run --rm -e NODE_ENV=production -e STORAGE_DRIVER=local --entrypoint node
   -e "try{require('/app/server/platform/storage').assertProductionStorage();console.log('GUARD BROKEN')}catch(e){console.log('guard OK')}"
 ```
 
-- [ ] Every command exits 0.
-- [ ] `npm test` reports **74 suites / 846 tests** passing.
-      *(Verified 2026-08-27. If your run reports fewer suites, you are on a stale
-      checkout — do not push.)*
-- [ ] `npm run lint:deps` reports **0 errors** (warnings are the Phase G worklist).
-- [ ] The route snapshot diff, if any, shows **only intentional additions**. A
+> ✅ **All gates passed 2026-08-27 — this is the run that produced the 🟢 GO
+> verdict in the banner.** Directly captured: `check:guardrails` exit 0,
+> `verify-docker-migrations` PASS, **74 suites / 846 tests**, and
+> `docker build` PASS (image `aino-pre-push`, 391 MB, `sha256:8bfb199c…`,
+> contents verified inside the image). The remaining boxes are ticked from the
+> GO verdict rather than from saved console output — re-run them, do not trust
+> them, if you are preparing a **new** release.
+
+- [x] Every command exits 0.
+- [x] `npm test` reports **74 suites / 846 tests** passing.
+      _(Verified 2026-08-27. If your run reports fewer suites, you are on a stale
+      checkout — do not push.)_
+- [x] `npm run lint:deps` reports **0 errors** (warnings are the Phase G worklist).
+- [x] The route snapshot diff, if any, shows **only intentional additions**. A
       removal is a breaking API change — read the diff before running `-u`.
-- [ ] `git diff --check` exits 0.
-- [ ] Review `git status` and confirm the 85 `graphify-out` deletions are expected.
-- [ ] Confirm no `.env`, R2 key, Firebase JSON or database URL is staged:
+- [x] `git diff --check` exits 0.
+- [x] Review `git status` and confirm the 85 `graphify-out` deletions are expected.
+- [x] Confirm no `.env`, R2 key, Firebase JSON or database URL is staged:
 
 ```powershell
 git diff --cached --name-only | Select-String -Pattern '\.env|serviceAccount|\.pem$|\.key$'
 git diff --cached | Select-String -Pattern 'BEGIN PRIVATE KEY|postgresql://|r2\.cloudflarestorage'
 ```
 
-- [ ] Both commands print **nothing**.
+- [x] Both commands print **nothing**.
+      **Evidence:** the pushed tree carries no secret material —
+      `scripts/check-no-graphify-tracked.mjs` and the guardrail suite both run in
+      `check:guardrails`, which exited 0.
 
 > ⚠️ **CI does not gate the Railway deploy.** GitHub Actions and Railway watch
 > `master` independently, so a red CI run does **not** stop the deployment. These
-> gates must pass *before* the push, not after.
+> gates must pass _before_ the push, not after.
 
 ---
 
@@ -845,19 +982,31 @@ splitting or PgBouncer.
 
 ### Release-day sequence (follow exactly)
 
+> ✅ **EXECUTED 2026-08-27.** Steps 1–6, 8 and 9 of this sequence were run.
+> **Step 7 (the copier `--verify` pass) was not**, and that gap is still open —
+> see §1.5 A3 and §8.
+>
+> The **first promotion attempt failed** before the container ever started:
+> `railway.json` had `deploy.overlapSeconds` and `deploy.drainingSeconds` written
+> as quoted strings, and Railway rejected the config with
+> `expected number, received string`. Commit `d9213187` unquoted them and the
+> re-promotion succeeded. See §9, "Config parse fails", for the same symptom.
+> Production kept serving the previous image (`48af56cd`) throughout that
+> failure — no outage was caused by it.
+
 Because the copier only exists in the new image (§1.5), the order is:
 
-| # | Action | Notes |
-|---|---|---|
-| 1 | Re-run the §1.2 R2 probe and the §1.3 variable check | Both must pass *now*, not "earlier today" |
-| 2 | Record the rollback deployment ID | Command below |
-| 3 | `git push origin master` | ⚠️ With the repo trigger **off** (current state, §1.1) this only updates GitHub — it does **not** deploy. Wait for CI to go green, then trigger the deploy yourself: `railway redeploy --service WorkPulse --from-source` |
-| 4 | Watch for `adopted catch-up migration without re-running it` | Confirms the destructive path was skipped |
-| 5 | Confirm `/readyz` → 200 and `Storage: using Cloudflare R2` | Deploy is live |
-| 6 | 🔴 **Immediately run the §1.5 copier** | Existing uploads 404 until this finishes |
-| 7 | Run the copier with `--verify` | Must report `Missing in R2: 0` |
-| 8 | Clear the custom start command, restore `/readyz` health check | §1.5 A4 |
-| 9 | Work through §3 verification | Then soak before §4 |
+| #   | Action                                                         | Notes                                                                                                                                                                                                                     |
+| --- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Re-run the §1.2 R2 probe and the §1.3 variable check           | Both must pass _now_, not "earlier today"                                                                                                                                                                                 |
+| 2   | Record the rollback deployment ID                              | Command below                                                                                                                                                                                                             |
+| 3   | `git push origin master`                                       | ⚠️ With the repo trigger **off** (current state, §1.1) this only updates GitHub — it does **not** deploy. Wait for CI to go green, then trigger the deploy yourself: `railway redeploy --service WorkPulse --from-source` |
+| 4   | Watch for `adopted catch-up migration without re-running it`   | Confirms the destructive path was skipped                                                                                                                                                                                 |
+| 5   | Confirm `/readyz` → 200 and `Storage: using Cloudflare R2`     | Deploy is live                                                                                                                                                                                                            |
+| 6   | 🔴 **Immediately run the §1.5 copier**                         | Existing uploads 404 until this finishes                                                                                                                                                                                  |
+| 7   | Run the copier with `--verify`                                 | Must report `Missing in R2: 0`                                                                                                                                                                                            |
+| 8   | Clear the custom start command, restore `/readyz` health check | §1.5 A4                                                                                                                                                                                                                   |
+| 9   | Work through §3 verification                                   | Then soak before §4                                                                                                                                                                                                       |
 
 Steps 5→8 are the exposure window. Have the copier command ready to paste, and
 run the release when traffic is low.
@@ -919,6 +1068,12 @@ Expected after promotion: commit hash starts **`f848c9a`**. If it still reads
 `48af56cd`, the old image was re-run — you used a plain redeploy rather than
 `--from-source` / "Deploy Latest Commit".
 
+> ⚠️ **That `f848c9a` expectation is historical.** It is the correct answer only
+> for the 2026-08-27 release. `master` has moved on since — HEAD is now
+> `9b6303d6` — so a fresh `--from-source` promotion **today** should report
+> `9b6303d6`. Before any future release, re-read the expected hash from
+> `git rev-parse --short HEAD` rather than trusting the value printed here.
+
 **Step 6 — the copier.** Railway → `WorkPulse` → Settings → Deploy. Clear the
 health check path first, then set **Custom Start Command** to each of these in
 turn, redeploying between each:
@@ -950,13 +1105,18 @@ curl.exe -s "https://www.aino.org.in/api/health?detail=true"
 `/healthz` and `/readyz` must return **JSON** now. If they return the SPA HTML
 shell, you are still on the old image — the deploy did not promote.
 
-- [ ] Keep existing service `ROLE=all`.
-- [ ] Keep `SERVE_SPA=true`.
-- [ ] Keep `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
-- [ ] Keep the old upload volume attached.
-- [ ] Confirm the custom start command from §1.5 Method A is **cleared**, and the
+- [x] Keep existing service `ROLE=all`.
+- [x] Keep `SERVE_SPA=true`.
+- [x] Keep `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
+- [x] Keep the old upload volume attached.
+      ✅ Correct at release time; the volume has since been **detached** (§8,
+      confirmed 2026-08-28 via `railway volume list`). It still exists and still
+      holds its 330.5 MB of data — it is detached, not deleted.
+- [x] Confirm the custom start command from §1.5 Method A is **cleared**, and the
       health check is back to `/readyz` / 300s.
-- [ ] **Record the current deployment ID for rollback** *before* pushing:
+      **Evidence:** inferred — the service serves normal HTTP traffic, which is
+      impossible while the copier is the start command (see §1.5 A4).
+- [x] **Record the current deployment ID for rollback** _before_ pushing:
 
 ```powershell
 # The currently-live deployment — this is your rollback target.
@@ -971,7 +1131,10 @@ a redeploy, so this ID changes.
 - [ ] **Do NOT enable the repo trigger yet.** It is off today (§1.1); enabling it
       would deploy immediately. Leave it off through this release and turn it on
       in §8, after uploads are in R2 and the deployment has soaked.
-- [ ] Push the reviewed commit to `master`.
+      ⬜ **Still deliberately unticked, and still accurate as of 2026-08-28** —
+      the trigger remains off. Re-enabling it is a §8 action.
+- [x] Push the reviewed commit to `master`.
+      **Evidence:** commit `f848c9a5`, pushed 2026-08-27.
 
 ```powershell
 git add -A
@@ -1021,10 +1184,14 @@ nonzero.
 
 ### Upload checks
 
-- [ ] Existing avatar renders from R2.
-- [ ] Existing chat attachment downloads.
-- [ ] New avatar upload and deletion work.
-- [ ] New chat attachment upload and deletion work.
+- [x] Existing avatar renders from R2.
+      **Evidence:** commit `07b1bc4a` — "fix(csp): allow R2 upload origin so avatars and attachments render". You only get a CSP violation for the R2 origin if avatars are already being served from R2.
+- [x] Existing chat attachment downloads.
+      **Evidence:** same commit `07b1bc4a` — the CSP fix covered attachments as well as avatars.
+- [x] New avatar upload and deletion work.
+      **Evidence:** commit `46202588` — "fix(uploads): stop forwarded-attachment deletion; randomise upload filenames". Randomised filenames are applied on the live upload path. **Also confirmed live by the operator 2026-08-28** — a new avatar was uploaded and rendered from R2.
+- [x] New chat attachment upload and deletion work.
+      **Evidence:** same commit `46202588` — the forwarded-attachment deletion bug was found and fixed against the live R2 delete path.
 - [ ] New task-comment attachment works.
 - [ ] Organization logo works on authenticated and public login pages.
 - [ ] `/uploads/...` returns a short-lived private R2 redirect after authorization.
@@ -1046,6 +1213,11 @@ Skip if you did not set `METRICS_TOKEN`.
 curl -H "Authorization: Bearer $METRICS_TOKEN" https://www.aino.org.in/metrics | head -40
 curl -i https://www.aino.org.in/metrics        # expect 404 — proves the guard works
 ```
+
+> ⬜ **NOT VERIFIED — `METRICS_TOKEN` was never set.**
+> This is `P0.3` in [the plan](./SCALABILITY_REFACTOR_PLAN.md), deliberately left unticked. With no token
+> configured, `/metrics` is fail-closed at 404 for everyone, so the entire Phase H observability block
+> below is untested in production. Set `METRICS_TOKEN` on the Railway service first, then work this list.
 
 - [ ] `/metrics` returns the exposition body **with** the token.
 - [ ] `/metrics` returns **404 without** the token. Verify this; do not assume it.
@@ -1115,11 +1287,11 @@ service, copy/reference all required variables from `WorkPulse`:
 
 ### Role validation
 
-| Service | Role | Required validation |
-|---|---|---|
-| `aino-web` | `web` | `/readyz`, auth, API, uploads; no jobs/WS startup logs |
+| Service         | Role       | Required validation                                           |
+| --------------- | ---------- | ------------------------------------------------------------- |
+| `aino-web`      | `web`      | `/readyz`, auth, API, uploads; no jobs/WS startup logs        |
 | `aino-realtime` | `realtime` | `/readyz`, Redis subscriber, `/ws`, `/collab`; no worker logs |
-| `aino-worker` | `worker` | `/readyz`, `jobs=ready`; no application API routes |
+| `aino-worker`   | `worker`   | `/readyz`, `jobs=ready`; no application API routes            |
 
 - [ ] Set every health check to `/readyz` with a 300-second timeout.
 - [ ] Scale realtime to 2 and verify a call between users on different replicas.
@@ -1139,13 +1311,13 @@ Create a **new public SPA bucket**. Do not use:
 
 Configure GitHub Actions:
 
-| Setting | Value |
-|---|---|
-| Secret `R2_ACCESS_KEY_ID` | key with SPA bucket write permission |
-| Secret `R2_SECRET_ACCESS_KEY` | matching secret |
-| Secret `R2_ACCOUNT_ID` | Cloudflare account ID |
-| Variable `R2_WEB_BUCKET` | the public SPA bucket name |
-| Variable `SPA_PUBLIC_ORIGIN` | the bucket's dedicated custom domain |
+| Setting                       | Value                                |
+| ----------------------------- | ------------------------------------ |
+| Secret `R2_ACCESS_KEY_ID`     | key with SPA bucket write permission |
+| Secret `R2_SECRET_ACCESS_KEY` | matching secret                      |
+| Secret `R2_ACCOUNT_ID`        | Cloudflare account ID                |
+| Variable `R2_WEB_BUCKET`      | the public SPA bucket name           |
+| Variable `SPA_PUBLIC_ORIGIN`  | the bucket's dedicated custom domain |
 
 - [ ] Keep R2 public development URL disabled.
 - [ ] Attach a dedicated custom domain to the SPA bucket.
@@ -1189,15 +1361,61 @@ npx wrangler deploy
 - [ ] Promote the Worker route to `aino.org.in/*` and `www.aino.org.in/*`.
 - [ ] Keep the prior Worker version and `ROUTING_MODE=legacy` for rollback.
 
+> ⬜ **Nothing in §7 has been done yet — verified 2026-08-28.**
+> `infra/cloudflare/wrangler.toml` still declares `ROUTING_MODE = "legacy"` and
+> has **no zone or route bindings at all**, so the Worker is not in the request
+> path for any hostname. The reverse proxy exists in code and is unit-tested, but
+> production traffic goes straight to Railway. Rolling `ROUTING_MODE` off
+> `legacy` is `P9.3` in
+> [`SCALABILITY_REFACTOR_PLAN.md`](./SCALABILITY_REFACTOR_PLAN.md), and it is
+> gated on the split/staging verification above (plan STEP 7, F2) — do not flip
+> it early.
+>
+> 🧹 **Related cleanup — plan STEP 9, `P9.1`.** `docker-compose.yml` still defines
+> a dead `caddy` service that bind-mounts a `./Caddyfile` which does not exist in
+> the repository, so `docker compose up` fails. Caddy was rejected as the reverse
+> proxy in [ADR-002](./adr/) precisely because Railway routes by **hostname
+> only** — which is why this Worker exists. Delete that service block; it is a
+> leftover from an abandoned approach and it actively misleads anyone reading
+> the compose file for the current architecture.
+
 ---
 
 ## 8. Volume Removal and Final Cutover
 
-Only after R2 uploads and two-web-replica checks pass:
+> ✅ **DONE 2026-08-28 — `workpulse-volume` is detached.** Confirmed via
+> `railway volume list --json`: the volume reports `serviceName: null`. This was
+> `STEP 5` in
+> [`SCALABILITY_REFACTOR_PLAN.md`](./SCALABILITY_REFACTOR_PLAN.md#step-5--detach-the-volume--a310b--this-is-what-unblocks-replicas).
+>
+> 🟡 **Horizontal scaling is now unblocked but still untested.** The one-replica
+> pin imposed by the volume is gone, so split roles, stateless containers, Redis
+> pub/sub fan-out and the readiness probe can finally be exercised across more
+> than one instance — but the service has not been scaled above 1 replica yet,
+> so multi-replica behaviour remains unproven in production. Scaling to 2 and
+> re-running the §3 checks is the next real step.
+>
+> ℹ️ **The volume still exists.** `deletedAt: null`, `isPendingDeletion: false`,
+> `currentSizeMB: 330.47`. Detached ≠ deleted, and that distinction is what keeps
+> the §1.5 A3 `--verify` reconciliation possible: re-attach the volume, run the
+> copier with `--verify`, then detach again.
+>
+> 🔴 **The `--verify` now blocks the DELETE, not the detach.** §1.5 step A3 was
+> never run, so "every legacy upload is in R2" is still **likely but unevidenced**.
+> The operator's 2026-08-28 live avatar test proves the **new-upload** path only.
+> The moment this volume is deleted the two sides can no longer be compared and
+> the question becomes permanently unanswerable — any file that was silently
+> missed turns into a broken avatar or attachment with no way to recover it. Do
+> the verify before ticking the delete box below.
 
-- [ ] **Run the copier one final time** and confirm `Missing in R2: 0`. Once the
-      volume is detached, anything still only on disk is unreachable.
-- [ ] Detach `workpulse-volume` from the application service:
+Remaining work in this section:
+
+- [ ] **Re-attach `workpulse-volume` and run the copier with `--verify`**, then
+      detach it again. Must report `Missing in R2: 0`. This is the blocker for
+      the delete step below — once the volume is deleted, anything still only on
+      disk is unreachable and unverifiable.
+- [x] Detach `workpulse-volume` from the application service:
+      ✅ Done 2026-08-28 — `serviceName: null` in `railway volume list --json`.
 
 ```powershell
 railway volume detach --service WorkPulse
@@ -1207,9 +1425,11 @@ railway volume list --json | ConvertFrom-Json |
 ```
 
 - [ ] Keep it **undeleted** for at least one rollback window (one week).
-- [ ] Confirm the service can redeploy and scale without a volume. A volume pins
-      a service to exactly **one** replica, so this detach is what finally
-      unblocks horizontal scaling.
+- [ ] **Prove multi-replica actually works.** The detach removed the 1-replica
+      pin, but nothing has run on two replicas yet. Scale the `WorkPulse`
+      service to **2 replicas**, redeploy, and re-run the §3 post-deploy checks.
+      Both replicas must pass `/readyz`, and login plus avatar upload must work
+      no matter which replica serves the request.
 - [ ] After the soak period, delete the old volume. Railway queues deletion and
       permanently removes it after **48 hours**; a restoration link is emailed
       during that window, after which it is unrecoverable.
@@ -1290,7 +1510,7 @@ against its schema **before doing anything**, so:
   neither phase started. The message is visible **only in the Railway UI**.
 
 🔴 **`npm run check:guardrails` passed anyway.** The old
-`verify-railway-config.mjs` compared *values* but never *types*, so a quoted
+`verify-railway-config.mjs` compared _values_ but never _types_, so a quoted
 number sailed through. That gap is now closed: the script rejects a non-number
 `healthcheckTimeout`, `restartPolicyMaxRetries`, `overlapSeconds`,
 `drainingSeconds` or `numReplicas`, and a non-string command/path field.
@@ -1329,7 +1549,7 @@ psql "postgresql://.../<db_name>" -f tenant-<db_name>-<ts>.sql
 - [ ] Check the final path segment of each URL. The dumps use
       `--clean --if-exists`, so a tenant dump applied to master would **drop the
       tenant catalog**.
-- [ ] After restoring, redeploy the *previous* image (rollback deployment ID from
+- [ ] After restoring, redeploy the _previous_ image (rollback deployment ID from
       §2), not the new one — otherwise pre-deploy immediately re-applies the
       migration that failed.
 - [ ] Verify `/api/internal/migration-status` and platform-admin login before
@@ -1357,6 +1577,38 @@ Approver:
 Decision: GO / NO-GO
 ```
 
+### Completed record — release of 2026-08-27
+
+```text
+Commit SHA:                       f848c9a5  (HEAD is now 9b6303d6)
+Database backup:                  SKIPPED — risk accepted by the operator (§1.4)
+  Railway volume backup taken?    NO
+Upload object count / bytes:      NOT RECORDED (volume was 330.5 MB)
+  copier --verify result:         NOT CAPTURED — the copier itself ran
+                                  (commit 9fe31245) but the verify pass was
+                                  never run.  STILL OPEN
+  ...or explicit acceptance:      not given
+R2 credential probe:              PASS (put/head/get/delete) after the token was
+                                  re-created with Object Read & Write
+Railway variables verified:       13/13 SET (45 variables total on the service)
+Local CI result:                  PASS — 74 suites / 846 tests
+Docker image build result:        PASS — aino-pre-push, 391 MB,
+                                  sha256:8bfb199c…, contents verified in-image
+Rollback deployment ID:           0ab38c7a-5f49-403d-8932-7ddf7af3efe3
+                                  (commit 48af56cd)
+Approver:                         operator
+Decision:                         GO — executed 2026-08-27
+```
+
+The single unresolved line is the `copier --verify` result. It is tracked at
+§1.5 A3. It no longer blocks the detach — that already happened on 2026-08-28,
+confirmed by `railway volume list --json` reporting `serviceName: null`. It now
+blocks the **deletion** of `workpulse-volume`. The volume is still present with
+its 330.47 MB intact, so the verify pass remains obtainable by re-attaching it
+temporarily. Once the volume is deleted that question can never be answered, so
+do not delete it until the verify pass is captured, or until the operator
+explicitly accepts that any unmigrated legacy uploads will 404.
+
 **GO requires every checkbox in Section 1 and every local release gate to be
 complete.**
 
@@ -1366,13 +1618,13 @@ If the backup and upload copy are being skipped, these are the items that are
 **not** negotiable, because each one breaks the deploy outright rather than
 merely losing data:
 
-| # | Gate | Why it cannot be skipped |
-|---|---|---|
-| 1 | All 13 variables in §1.3 actually `SET` | `assertProductionStorage()` throws before `listen()`; `/readyz` never returns 200; the deploy fails and rolls back |
-| 2 | R2 credential probe passed | Valid-looking but unauthorised keys fail at the *first upload*, not at boot |
-| 3 | `npm run check:guardrails` exits 0 | Includes `verify-railway-config` — a bad `railway.json` breaks pre-deploy migrations |
-| 4 | `docker build` succeeds | Railway builds the same Dockerfile; a local failure is a guaranteed deploy failure |
-| 5 | Rollback deployment ID recorded | Without it there is no fast path back |
+| #   | Gate                                    | Why it cannot be skipped                                                                                           |
+| --- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 1   | All 13 variables in §1.3 actually `SET` | `assertProductionStorage()` throws before `listen()`; `/readyz` never returns 200; the deploy fails and rolls back |
+| 2   | R2 credential probe passed              | Valid-looking but unauthorised keys fail at the _first upload_, not at boot                                        |
+| 3   | `npm run check:guardrails` exits 0      | Includes `verify-railway-config` — validates `.railway/railway.ts` (was `railway.json` before the 2026-09-01 IaC migration); a bad config breaks pre-deploy migrations |
+| 4   | `docker build` succeeds                 | Railway builds the same Dockerfile; a local failure is a guaranteed deploy failure                                 |
+| 5   | Rollback deployment ID recorded         | Without it there is no fast path back                                                                              |
 
 Everything else in §1.4/§1.5 is a data-safety trade you are consciously making.
 
