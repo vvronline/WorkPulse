@@ -89,10 +89,7 @@ let LOADED_GOOGLE_API_KEY = "";
           console.log(`[AINO] File not found: ${f}`);
         }
       } catch (err) {
-        console.warn(
-          `[AINO] Error reading ${f}:`,
-          (err as Error)?.message,
-        );
+        console.warn(`[AINO] Error reading ${f}:`, (err as Error)?.message);
       }
     }
   }
@@ -121,10 +118,7 @@ process.on("uncaughtException", (err) => {
   console.error("[AINO] Uncaught exception in main process:", err);
 });
 process.on("unhandledRejection", (reason) => {
-  console.error(
-    "[AINO] Unhandled promise rejection in main process:",
-    reason,
-  );
+  console.error("[AINO] Unhandled promise rejection in main process:", reason);
 });
 
 // ─── Configuration ───
@@ -133,6 +127,20 @@ process.on("unhandledRejection", (reason) => {
 // legacy `workpulse-prod.up.railway.app` origin still resolves to the same
 // server and must stay alive for already-installed builds that baked it in.
 const RAILWAY_URL = process.env.API_SERVER || "https://www.aino.org.in";
+// ─── Object storage (Cloudflare R2) origin ────────────────────────────────
+// A3 moved every upload out of the server's filesystem and into a PRIVATE R2
+// bucket. `GET /uploads/<key>` now authorizes the request and then
+// 302-redirects to a 60-second presigned URL on
+// `<bucket>.<account>.r2.cloudflarestorage.com` (see
+// server/http/middleware/uploads.ts). Two consequences for the desktop shell:
+//   1. The `/uploads/*` proxy below MUST follow that redirect itself, with a
+//      clean credential-free request — see the handler for why.
+//   2. CSP evaluates the FINAL origin of a redirect chain, so the R2 host has
+//      to be allowed for the case where the renderer talks to the API
+//      directly (VITE_API_URL builds) instead of via the proxy.
+// Wildcarded on the account subdomain rather than a bare `https:` so a
+// compromised renderer still can't pull media from arbitrary hosts.
+const R2_ORIGIN_PATTERN = "https://*.r2.cloudflarestorage.com";
 // In packaged build, client/dist is in extraResources; in dev, it's adjacent
 const CLIENT_DIST = app.isPackaged
   ? path.join(process.resourcesPath, "client", "dist")
@@ -515,10 +523,7 @@ app.whenReady().then(async () => {
       }
       return { ok: false, error: "unsupported_platform" };
     } catch (err) {
-      console.warn(
-        "[AINO] get-wifi-info failed:",
-        (err as Error)?.message,
-      );
+      console.warn("[AINO] get-wifi-info failed:", (err as Error)?.message);
       return {
         ok: false,
         error: (err as Error)?.message || "wifi_lookup_failed",
@@ -533,9 +538,7 @@ app.whenReady().then(async () => {
     if (process.platform !== "win32") {
       return { ok: false, error: "unsupported_platform" };
     }
-    console.log(
-      "[AINO] get-native-location: querying Windows Location API...",
-    );
+    console.log("[AINO] get-native-location: querying Windows Location API...");
     try {
       const script = `
 Add-Type -AssemblyName System.Device
@@ -737,18 +740,24 @@ $w.Stop()
             // Attendance Settings to pick an office location. We also
             // allow unpkg.com so Leaflet's default marker icons load
             // (they're served from the npm package's CDN copy).
-            `connect-src 'self' workpulse://app ${RAILWAY_URL} wss://${new URL(RAILWAY_URL).host} https://embed.diagrams.net https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://unpkg.com https://*.giphy.com; ` +
-            // The Railway origin must be allowed here too (not just connect-src):
-            // the client resolves avatar/logo <img> URLs to an absolute
-            // ${RAILWAY_URL}/uploads/... path on desktop builds, so without this
-            // the browser silently CSP-blocks those images (logo/avatar render
-            // broken) even though the same-origin `workpulse://` proxy works fine.
-            `img-src 'self' workpulse://app data: blob: ${RAILWAY_URL} https://embed.diagrams.net https://*.tile.openstreetmap.org https://unpkg.com https://*.giphy.com; ` +
-            "media-src 'self' workpulse://app blob:; " +
+            `connect-src 'self' workpulse://app ${RAILWAY_URL} ${R2_ORIGIN_PATTERN} wss://${new URL(RAILWAY_URL).host} https://embed.diagrams.net https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://unpkg.com https://*.giphy.com; ` +
+            // Uploads (avatars, org logos, chat images) normally arrive through
+            // the same-origin `workpulse://app/uploads/...` proxy below, so
+            // 'self' covers them. The API origin and the R2 origin are listed
+            // as well for defence in depth: if a build ever sets VITE_API_URL,
+            // the renderer resolves those <img> URLs to an absolute
+            // ${RAILWAY_URL}/uploads/... which then 302-redirects to a
+            // presigned *.r2.cloudflarestorage.com URL — CSP evaluates the
+            // FINAL origin, so both must be allowed or every avatar/logo is
+            // silently blocked with a 200 in the server log.
+            `img-src 'self' workpulse://app data: blob: ${RAILWAY_URL} ${R2_ORIGIN_PATTERN} https://embed.diagrams.net https://*.tile.openstreetmap.org https://unpkg.com https://*.giphy.com; ` +
+            `media-src 'self' workpulse://app blob: ${RAILWAY_URL} ${R2_ORIGIN_PATTERN}; ` +
             "font-src 'self' workpulse://app; " +
             // MediaPipe spawns helper workers from blob: URLs.
             "worker-src 'self' workpulse://app blob:; " +
-            "frame-src https://embed.diagrams.net; " +
+            // PDF/document previews render in an <iframe>, which follows the
+            // same /uploads -> R2 redirect.
+            `frame-src 'self' workpulse://app ${RAILWAY_URL} ${R2_ORIGIN_PATTERN} https://embed.diagrams.net; ` +
             "object-src 'none';",
         ],
       },
@@ -761,22 +770,116 @@ $w.Stop()
     const pathname = decodeURIComponent(url.pathname);
 
     // Proxy /uploads/* requests to server (cookies managed by Electron session)
+    //
+    // Since the A3 storage migration this is a TWO-HOP fetch:
+    //
+    //   hop 1  ${RAILWAY_URL}/uploads/<key>   -> 302 + Location: <presigned R2 URL>
+    //   hop 2  <presigned R2 URL>             -> 200 + the bytes
+    //
+    // Hop 1 must carry our auth cookie and the `origin` / `x-requested-with`
+    // pair the server's CSRF and CORS checks expect. Hop 2 must carry NONE of
+    // that: the bucket is private with no CORS configuration, so a request that
+    // announces an `Origin` and asks for credentials is evaluated as a
+    // credentialed cross-origin fetch, gets no `Access-Control-Allow-Origin`
+    // back, and is rejected by Chromium *before* we ever see the bytes. That
+    // rejection used to land in the catch below and be reported to the
+    // renderer as a plain 404 — a broken avatar/logo with a perfectly healthy
+    // 200 in the server log. Hence `redirect: "manual"` plus a deliberately
+    // bare second request; a presigned URL is self-authenticating and needs
+    // nothing else attached to it.
     if (pathname.startsWith("/uploads/") || pathname.startsWith("/uploads\\")) {
+      const startedAt = Date.now();
       try {
-        const headers: Record<string, string> = {};
-        for (const [key, value] of request.headers.entries()) {
-          if (key.toLowerCase() === "host") continue;
-          headers[key] = value;
+        // Only forward the few request headers the upload path actually needs.
+        // Blindly copying every header (the previous behaviour) leaked
+        // renderer-specific headers such as `sec-fetch-*` onto the R2 hop.
+        const headers: Record<string, string> = {
+          origin: "workpulse://app",
+          "x-requested-with": "WorkPulse",
+        };
+        const accept = request.headers.get("accept");
+        if (accept) headers["accept"] = accept;
+        // <video>/<audio> attachments seek with byte ranges; pass them through
+        // on both hops so scrubbing keeps working.
+        const range = request.headers.get("range");
+        if (range) headers["range"] = range;
+
+        let resp = await net.fetch(
+          `${RAILWAY_URL}${pathname}${url.search || ""}`,
+          {
+            method: request.method,
+            headers,
+            credentials: "include",
+            redirect: "manual",
+            bypassCustomProtocolHandlers: true,
+          },
+        );
+
+        let followed = false;
+        const location = resp.headers.get("location");
+        if (resp.status >= 300 && resp.status < 400 && location) {
+          followed = true;
+          const signedHeaders: Record<string, string> = {};
+          if (range) signedHeaders["range"] = range;
+          resp = await net.fetch(location, {
+            method: request.method,
+            headers: signedHeaders,
+            // No cookies, no Origin: the signature IS the credential, and
+            // anything extra turns this into a blocked CORS request.
+            credentials: "omit",
+            bypassCustomProtocolHandlers: true,
+          });
+        } else if (resp.type === "opaqueredirect" || resp.status === 0) {
+          // Per the Fetch spec, `redirect: "manual"` may surface the 302 as an
+          // OPAQUE redirect: status 0, no readable headers, no Location. We
+          // then can't drive the second hop ourselves, so repeat hop 1 and let
+          // the network stack follow the chain. The important part — not
+          // handing a *redirected* Response straight back to protocol.handle,
+          // which Chromium rejects — is preserved by the re-wrap below.
+          followed = true;
+          resp = await net.fetch(
+            `${RAILWAY_URL}${pathname}${url.search || ""}`,
+            {
+              method: request.method,
+              headers,
+              credentials: "include",
+              redirect: "follow",
+              bypassCustomProtocolHandlers: true,
+            },
+          );
         }
-        headers["origin"] = "workpulse://app";
-        headers["x-requested-with"] = "WorkPulse";
-        return await net.fetch(`${RAILWAY_URL}${pathname}`, {
-          method: request.method,
-          headers,
-          credentials: "include",
-          bypassCustomProtocolHandlers: true,
-        });
-      } catch {
+
+        console.log(
+          `[proxy] ${request.method} ${pathname} -> ${resp.status}` +
+            `${followed ? " (via R2 redirect)" : ""} (${Date.now() - startedAt}ms)`,
+        );
+
+        if (!resp.ok && resp.status !== 206) {
+          return new Response("File not found", { status: resp.status });
+        }
+
+        // Re-wrap the body so R2's CORS/auth headers never reach the renderer,
+        // and so the response is attributed to the workpulse:// origin.
+        const body = await resp.arrayBuffer();
+        const outHeaders: Record<string, string> = {
+          "Content-Type":
+            resp.headers.get("content-type") || getMimeType(pathname),
+          // Uploads are immutable (filenames embed a timestamp), but the URL we
+          // proxy through is per-user authorized, so keep it out of any shared
+          // cache while still letting the renderer reuse it. This is what stops
+          // every avatar re-render from costing two network round-trips.
+          "Cache-Control": "private, max-age=3600",
+          "Accept-Ranges": resp.headers.get("accept-ranges") || "bytes",
+        };
+        const contentRange = resp.headers.get("content-range");
+        if (contentRange) outHeaders["Content-Range"] = contentRange;
+
+        return new Response(body, { status: resp.status, headers: outHeaders });
+      } catch (err) {
+        console.error(
+          `[proxy] UPLOAD FETCH ERROR ${pathname}:`,
+          (err as Error)?.message,
+        );
         return new Response("File not found", { status: 404 });
       }
     }
@@ -798,7 +901,8 @@ $w.Stop()
         // read-only GETs (chat messages, members, read-status, presence),
         // forcing a full remote round-trip each time and adding latency on
         // the chat-open path. Mutating requests still bypass the cache.
-        const isReadOnly = request.method === "GET" || request.method === "HEAD";
+        const isReadOnly =
+          request.method === "GET" || request.method === "HEAD";
         const fetchOpts: RequestInit & {
           bypassCustomProtocolHandlers?: boolean;
         } = {
