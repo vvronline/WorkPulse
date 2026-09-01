@@ -738,7 +738,12 @@ $w.Stop()
             // allow unpkg.com so Leaflet's default marker icons load
             // (they're served from the npm package's CDN copy).
             `connect-src 'self' workpulse://app ${RAILWAY_URL} wss://${new URL(RAILWAY_URL).host} https://embed.diagrams.net https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://unpkg.com https://*.giphy.com; ` +
-            "img-src 'self' workpulse://app data: blob: https://embed.diagrams.net https://*.tile.openstreetmap.org https://unpkg.com https://*.giphy.com; " +
+            // The Railway origin must be allowed here too (not just connect-src):
+            // the client resolves avatar/logo <img> URLs to an absolute
+            // ${RAILWAY_URL}/uploads/... path on desktop builds, so without this
+            // the browser silently CSP-blocks those images (logo/avatar render
+            // broken) even though the same-origin `workpulse://` proxy works fine.
+            `img-src 'self' workpulse://app data: blob: ${RAILWAY_URL} https://embed.diagrams.net https://*.tile.openstreetmap.org https://unpkg.com https://*.giphy.com; ` +
             "media-src 'self' workpulse://app blob:; " +
             "font-src 'self' workpulse://app; " +
             // MediaPipe spawns helper workers from blob: URLs.
