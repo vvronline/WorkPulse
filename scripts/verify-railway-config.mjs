@@ -1,83 +1,76 @@
-/** Validate Railway config-as-code fields that gate automatic production deploys. */
+/**
+ * Validate Railway Infrastructure as Code fields that gate automatic production
+ * deploys. Static source checks only — this must run in CI without Railway auth,
+ * so it does not shell out to `railway config plan` (that needs a linked project).
+ */
 import fs from "node:fs";
 
-const config = JSON.parse(fs.readFileSync("railway.json", "utf8"));
+const path = ".railway/railway.ts";
+const src = fs.readFileSync(path, "utf8");
 const errors = [];
-const deploy = config.deploy || {};
 
-if (config.build?.builder !== "DOCKERFILE") errors.push("build.builder must be DOCKERFILE");
-if (config.build?.dockerfilePath !== "Dockerfile") errors.push("build.dockerfilePath must be Dockerfile");
-if (deploy.preDeployCommand !== "node migrate.js") errors.push("preDeployCommand must run node migrate.js");
+// Isolate the WorkPulse service block so checks cannot accidentally match one
+// of the aino-web/aino-realtime/aino-worker blocks instead.
+const workPulseMatch = src.match(/const WorkPulse = service\("WorkPulse",\s*\{([\s\S]*?)\n {2}\}\);/);
+if (!workPulseMatch) errors.push(`Could not find the WorkPulse service block in ${path}`);
+const workPulse = workPulseMatch?.[1] ?? "";
 
-// The start command must not re-run DATABASE migrations (that is pre-deploy's
-// job — running DDL from N replicas is the failure mode this guards against).
-//
-// A one-off prefix is tolerated so an operator can run a maintenance task that
-// needs the VOLUME, which pre-deploy cannot see (Railway does not mount volumes
-// during pre-deploy). `railway.json` outranks service settings, so the dashboard
-// start-command field is locked while this file defines it — editing this file
-// is the only way to schedule such a task.
-//
-// `migrate-uploads-to-r2.js` matches /migrate/ by name but touches no database;
-// it is a filesystem->R2 copier. Match on the database migrator specifically.
-const startCommand = deploy.startCommand || "";
-// `\b` after ".js" is NOT sufficient: in "migrate-uploads-to-r2.js" the token
-// "migrate" is followed by "-", so a naive /migrate\.js/ style match can still
-// hit. Require migrate.js to be a whole path segment, ending the token.
-const runsDbMigrations = /(^|[\s;&|"'/])migrate\.js(\s|$|["';&|])/.test(startCommand);
-if (runsDbMigrations) {
-  errors.push("startCommand must not run node migrate.js — migrations belong in preDeployCommand");
+// D4.5: health check must point at /readyz, not /healthz or /api/health.
+// Railway (dashboard) settings lose to config-as-code, so this is the one
+// place that matters.
+if (!/healthcheck:\s*"\/readyz"/.test(workPulse)) {
+  errors.push('WorkPulse healthcheck must be "/readyz"');
 }
-if (!/\bnode\s+index\.js\b/.test(startCommand)) {
-  errors.push(`startCommand must ultimately launch node index.js, got ${JSON.stringify(startCommand)}`);
+const healthcheckTimeoutMatch = workPulse.match(/healthcheckTimeout:\s*(\d+)/);
+if (!healthcheckTimeoutMatch || Number(healthcheckTimeoutMatch[1]) < 60) {
+  errors.push("WorkPulse healthcheckTimeout is missing or too short (must be >= 60)");
 }
-// Warn (do not fail) when a temporary one-off is staged, so it cannot be
-// forgotten in the repository after the release it was added for.
-if (startCommand !== "node index.js" && !runsDbMigrations) {
-  console.warn(
-    `WARNING: startCommand contains a one-off task:\n  ${startCommand}\n`
-    + "  Revert it to \"node index.js\" once the task has completed.",
-  );
+
+// E3.2: DB migrations run once in pre-deploy, never at runtime from N replicas.
+const preDeployMatch = workPulse.match(/preDeployCommand:\s*\[([^\]]*)\]/);
+const preDeployArgs = preDeployMatch?.[1] ?? "";
+// Railway's schema caps preDeployCommand at one array item (a single shell
+// command string), not an argv-split array — ["node", "migrate.js"] fails
+// apply with "too_big: expected array to have <=1 items".
+if (!/"node migrate\.js"/.test(preDeployArgs)) {
+  errors.push('WorkPulse preDeployCommand must run ["node migrate.js"] (single string, not argv-split)');
 }
-if (deploy.healthcheckPath !== "/readyz") errors.push("healthcheckPath must be /readyz");
-if (Number(deploy.healthcheckTimeout) < 60) errors.push("healthcheckTimeout is too short");
-if (deploy.restartPolicyType !== "ON_FAILURE") errors.push("restartPolicyType must be ON_FAILURE");
+
+// The start command (if the service overrides one) must not re-run DATABASE
+// migrations — that is pre-deploy's job. Running DDL from N replicas is the
+// failure mode this guards against. WorkPulse currently has no startCommand
+// override (it uses the Dockerfile CMD), so absence is fine; only flag it if
+// present and wrong.
+const startCommandMatch = workPulse.match(/(?<!pre)[Ss]tartCommand:\s*"([^"]*)"/);
+if (startCommandMatch) {
+  const startCommand = startCommandMatch[1];
+  const runsDbMigrations = /(^|[\s;&|"'/])migrate\.js(\s|$|["';&|])/.test(startCommand);
+  if (runsDbMigrations) {
+    errors.push("WorkPulse startCommand must not run node migrate.js — migrations belong in preDeployCommand");
+  }
+}
+
+if (!/restartPolicyType:\s*"ON_FAILURE"/.test(workPulse)) {
+  errors.push("WorkPulse restartPolicyType must be ON_FAILURE");
+}
+const maxRetriesMatch = workPulse.match(/restartPolicyMaxRetries:\s*(\d+)/);
+if (!maxRetriesMatch) errors.push("WorkPulse restartPolicyMaxRetries is missing");
 
 // ── Field TYPES, not just values ────────────────────────────────────────────
-// Railway validates railway.json against its own schema BEFORE the deploy runs.
-// A type mismatch aborts with "Failed to parse your service config" — the build
-// never starts and the error is only visible in the Railway UI, not in CI.
-//
-// This bit us on 2026-08-27: `"overlapSeconds": "30"` (string) failed the deploy
-// while this script reported success, because it only checked values.
-// Schema: https://railway.com/railway.schema.json — both are `number | null`.
-const numericFields = [
-  "healthcheckTimeout",
-  "restartPolicyMaxRetries",
-  "overlapSeconds",
-  "drainingSeconds",
-  "numReplicas",
-];
+// A prior incident: "overlapSeconds": "30" (string, in the old railway.json)
+// passed value checks but Railway's own schema rejects a string here — the
+// build never starts and the error is only visible in the Railway UI. Guard
+// against the same mistake by requiring bare numeric literals (no quotes) for
+// every numeric deploy field actually present in the WorkPulse block.
+const numericFields = ["healthcheckTimeout", "restartPolicyMaxRetries", "overlapSeconds", "drainingSeconds", "numReplicas"];
 for (const field of numericFields) {
-  const value = deploy[field];
-  if (value === undefined || value === null) continue;
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    errors.push(
-      `deploy.${field} must be a JSON number, got ${typeof value} (${JSON.stringify(value)}). `
-      + "Railway rejects the whole config and the deploy never starts.",
-    );
-  } else if (value < 0) {
-    errors.push(`deploy.${field} must be >= 0, got ${value}`);
+  const quoted = new RegExp(`${field}:\\s*"`);
+  if (quoted.test(workPulse)) {
+    errors.push(`WorkPulse deploy.${field} must be a bare number, not a quoted string`);
   }
 }
-
-for (const field of ["preDeployCommand", "startCommand", "healthcheckPath", "restartPolicyType"]) {
-  const value = deploy[field];
-  if (value === undefined || value === null) continue;
-  if (typeof value !== "string") {
-    errors.push(`deploy.${field} must be a JSON string, got ${typeof value}`);
-  }
-}
+if (!/overlapSeconds:\s*\d+/.test(workPulse)) errors.push("WorkPulse overlapSeconds is missing");
+if (!/drainingSeconds:\s*\d+/.test(workPulse)) errors.push("WorkPulse drainingSeconds is missing");
 
 const dockerfile = fs.readFileSync("Dockerfile", "utf8");
 if (/node migrate\.js\s*&&/.test(dockerfile)) errors.push("Dockerfile still runs migrations at startup");

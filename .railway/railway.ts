@@ -14,7 +14,7 @@ export default defineRailway(() => {
     healthcheckTimeout: 300,
     // E3.2: run DB migrations once, before the new deployment takes traffic —
     // never at runtime from N replicas. migrate.ts prefers DIRECT_DATABASE_URL.
-    preDeployCommand: ["node", "migrate.js"],
+    preDeployCommand: ["node migrate.js"],
     deploy: {
       restartPolicyType: "ON_FAILURE",
       restartPolicyMaxRetries: 10,
@@ -64,7 +64,7 @@ export default defineRailway(() => {
       source: github("vvronline/WorkPulse", { branch: "master" }),
       healthcheck: "/readyz",
       healthcheckTimeout: 300,
-      preDeployCommand: role === "web" ? ["node", "migrate.js"] : undefined,
+      preDeployCommand: role === "web" ? ["node migrate.js"] : undefined,
       deploy: {
         restartPolicyType: "ON_FAILURE",
         restartPolicyMaxRetries: 10,
