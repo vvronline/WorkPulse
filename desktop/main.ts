@@ -129,12 +129,12 @@ process.on("unhandledRejection", (reason) => {
 const RAILWAY_URL = process.env.API_SERVER || "https://www.aino.org.in";
 // ─── Object storage (Cloudflare R2) origin ────────────────────────────────
 // A3 moved every upload out of the server's filesystem and into a PRIVATE R2
-// bucket. `GET /uploads/<key>` now authorizes the request and then
+// bucket. `GET /uploads/<key>` now authorizes the request and normally
 // 302-redirects to a 60-second presigned URL on
 // `<bucket>.<account>.r2.cloudflarestorage.com` (see
 // server/http/middleware/uploads.ts). Two consequences for the desktop shell:
-//   1. The `/uploads/*` proxy below MUST follow that redirect itself, with a
-//      clean credential-free request — see the handler for why.
+//   1. Current servers stream desktop requests through the authenticated upload
+//      route. The proxy below also follows redirects for older server versions.
 //   2. CSP evaluates the FINAL origin of a redirect chain, so the R2 host has
 //      to be allowed for the case where the renderer talks to the API
 //      directly (VITE_API_URL builds) instead of via the proxy.
@@ -771,13 +771,15 @@ $w.Stop()
 
     // Proxy /uploads/* requests to server (cookies managed by Electron session)
     //
-    // Since the A3 storage migration this is a TWO-HOP fetch:
+    // Current servers stream R2 objects for desktop custom-protocol requests.
+    // Keep the two-hop path below for compatibility with older servers:
     //
     //   hop 1  ${RAILWAY_URL}/uploads/<key>   -> 302 + Location: <presigned R2 URL>
     //   hop 2  <presigned R2 URL>             -> 200 + the bytes
     //
     // Hop 1 must carry our auth cookie and the `origin` / `x-requested-with`
-    // pair the server's CSRF and CORS checks expect. Hop 2 must carry NONE of
+    // pair the server's CSRF and CORS checks expect. If it redirects, hop 2
+    // must carry NONE of
     // that: the bucket is private with no CORS configuration, so a request that
     // announces an `Origin` and asks for credentials is evaluated as a
     // credentialed cross-origin fetch, gets no `Access-Control-Allow-Origin`

@@ -101,19 +101,22 @@ const authMiddleware = require("../../middleware/auth");
         // ── A3: serve from object storage, not local disk ───────────────────────
         //
         // Every authorization check above (tenant prefix, org prefix, chat
-        // participant) has already passed by this point. Only now do we mint a
-        // credential for the object.
+        // participant) has already passed by this point. Only now do we retrieve
+        // the object or mint a short-lived credential for it.
         //
-        // R2  -> 302 to a 60-second presigned URL. The bytes never touch the Node
-        //        event loop, which is what lets the API scale horizontally.
-        // local (dev) -> getSignedUrl() returns null, so we stream the buffer.
+        // R2 web/mobile -> 302 to a 60-second presigned URL. Desktop requests
+        // use a custom origin and are streamed through this route because
+        // Chromium cannot reliably consume the private R2 redirect chain.
+        // Local dev also streams because getSignedUrl() returns null.
         const { getStorage, urlToKey } = require("../../platform/storage");
         const key = urlToKey(req.path);
         if (!key) return res.status(400).json({ error: "Invalid path" });
     
         try {
             const storage = getStorage();
-            const signed = await storage.getSignedUrl(key, 60);
+            const origin = String(req.headers.origin || "");
+            const isDesktop = origin.startsWith("workpulse://") || origin.startsWith("aino://");
+            const signed = isDesktop ? null : await storage.getSignedUrl(key, 60);
             if (signed) {
                 // Presigned URLs are per-user and short-lived — never cache them
                 // in a shared proxy.
