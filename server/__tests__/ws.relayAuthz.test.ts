@@ -83,6 +83,31 @@ describe("call_signal relay", () => {
             data: { conversationId: cid, targetUserId: 2, signal: { type: "ice-candidate", candidate: { candidate: "x" } } },
         }, ws);
         expect(redis.publish).toHaveBeenCalledTimes(1);
+        expect(redis.publish.mock.calls[0][1].data.signal).toMatchObject({
+            type: "ice-candidate",
+            signalId: expect.any(String),
+        });
+    });
+
+    test("assigns the same id to a replayed offer and a new id to renegotiation", async () => {
+        const cid = nextRoom();
+        const db = makeDb({ convMembers: new Set([SENDER, 2]) });
+        const sendOffer = (sdp: string) => handleChatMessage(db, SENDER, TENANT, {
+            type: "call_signal",
+            data: {
+                conversationId: cid,
+                targetUserId: 2,
+                signal: { type: "offer", sdp },
+            },
+        }, ws);
+
+        await sendOffer("v=0 same-offer");
+        await sendOffer("v=0 same-offer");
+        await sendOffer("v=0 new-generation");
+
+        const ids = redis.publish.mock.calls.map((call: any[]) => call[1].data.signal.signalId);
+        expect(ids[0]).toBe(ids[1]);
+        expect(ids[2]).not.toBe(ids[0]);
     });
 
     test("drops when sender is NOT a member even if target is", async () => {

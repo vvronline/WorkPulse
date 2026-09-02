@@ -1,5 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useRef } from "react";
+import {
+    applyVideoEncodingTarget,
+    classifyConnectionQuality,
+    nextAdaptiveVideoState,
+    VIDEO_ENCODING_TARGETS,
+    type ConnectionQuality,
+    type VideoEncodingTarget,
+} from "./callQuality";
 
 interface DetailedStats {
     rtt: number | null;
@@ -12,6 +20,12 @@ interface DetailedStats {
     audioCodec: string | null;
     videoCodec: string | null;
     localCandidateType: string | null;
+    remoteCandidateType: string | null;
+    transportProtocol: string | null;
+    qualityLimitationReason: string | null;
+    framesDropped: number;
+    freezeCount: number;
+    totalFreezesDuration: number;
 }
 
 interface UseCallControlsParams {
@@ -38,7 +52,7 @@ export default function useCallControls({
     const [screenSharing, setScreenSharing] = useState(false);
     const [onHold, setOnHold] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
-    const [connectionQuality, setConnectionQuality] = useState("unknown");
+    const [connectionQuality, setConnectionQuality] = useState<ConnectionQuality>("unknown");
 
     // Device switching
     const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
@@ -51,15 +65,26 @@ export default function useCallControls({
     // ─── Detailed stats ───
     const [detailedStats, setDetailedStats] = useState<DetailedStats | null>(null);
     const prevBytesRef = useRef({ sent: 0, received: 0, timestamp: 0 });
+    const goodVideoTargetRef = useRef<VideoEncodingTarget>({
+        ...VIDEO_ENCODING_TARGETS.good,
+        maxBitrate: /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+            ? 800_000
+            : VIDEO_ENCODING_TARGETS.good.maxBitrate,
+    });
+    const currentVideoTargetRef = useRef<VideoEncodingTarget>(goodVideoTargetRef.current);
+    const recoverySamplesRef = useRef(0);
 
     // ─── Connection quality monitor (enhanced with detailed stats) ───
     const startQualityMonitor = useCallback((pc: RTCPeerConnection) => {
+        currentVideoTargetRef.current = goodVideoTargetRef.current;
+        recoverySamplesRef.current = 0;
         const interval = setInterval(async () => {
             try {
                 const stats = await pc.getStats();
                 let rtt: number | null = null,
                     packetsLost = 0,
                     packetsReceived = 0;
+                let remoteLossRate = 0;
                 let bytesSent = 0,
                     bytesReceived = 0;
                 let frameRate: number | null = null,
@@ -67,32 +92,66 @@ export default function useCallControls({
                     frameHeight: number | null = null;
                 let audioCodec: string | null = null,
                     videoCodec: string | null = null;
-                let localCandidateType: string | null = null;
+                let localCandidateType: string | null = null,
+                    remoteCandidateType: string | null = null,
+                    transportProtocol: string | null = null,
+                    qualityLimitationReason: string | null = null;
+                let framesDropped = 0,
+                    freezeCount = 0,
+                    totalFreezesDuration = 0;
                 const codecIds: Record<string, string> = {};
 
                 stats.forEach((report: any) => {
-                    if (report.type === "candidate-pair" && report.state === "succeeded") {
-                        rtt = report.currentRoundTripTime;
+                    if (
+                        report.type === "candidate-pair" &&
+                        (report.nominated || report.state === "succeeded")
+                    ) {
+                        if (typeof report.currentRoundTripTime === "number") {
+                            rtt = report.currentRoundTripTime;
+                        }
                         if (report.localCandidateId) {
                             const local = stats.get(report.localCandidateId);
-                            if (local) localCandidateType = local.candidateType;
+                            if (local) {
+                                localCandidateType = local.candidateType || null;
+                                transportProtocol = local.protocol || null;
+                            }
+                        }
+                        if (report.remoteCandidateId) {
+                            const remote = stats.get(report.remoteCandidateId);
+                            if (remote) remoteCandidateType = remote.candidateType || null;
                         }
                     }
                     if (report.type === "inbound-rtp" && report.kind === "audio") {
-                        packetsLost = report.packetsLost || 0;
-                        packetsReceived = report.packetsReceived || 0;
+                        packetsLost += report.packetsLost || 0;
+                        packetsReceived += report.packetsReceived || 0;
                         bytesReceived += report.bytesReceived || 0;
                         if (report.codecId) codecIds[report.codecId] = "audio";
                     }
                     if (report.type === "inbound-rtp" && report.kind === "video") {
+                        packetsLost += report.packetsLost || 0;
+                        packetsReceived += report.packetsReceived || 0;
                         frameRate = report.framesPerSecond || null;
                         frameWidth = report.frameWidth || null;
                         frameHeight = report.frameHeight || null;
+                        framesDropped += report.framesDropped || 0;
+                        freezeCount += report.freezeCount || 0;
+                        totalFreezesDuration += report.totalFreezesDuration || 0;
                         bytesReceived += report.bytesReceived || 0;
                         if (report.codecId) codecIds[report.codecId] = "video";
                     }
                     if (report.type === "outbound-rtp") {
                         bytesSent += report.bytesSent || 0;
+                        if (report.kind === "video" && report.qualityLimitationReason) {
+                            qualityLimitationReason = report.qualityLimitationReason;
+                        }
+                    }
+                    if (report.type === "remote-inbound-rtp") {
+                        if (typeof report.fractionLost === "number") {
+                            remoteLossRate = Math.max(remoteLossRate, report.fractionLost);
+                        }
+                        if (typeof report.roundTripTime === "number") {
+                            rtt = Math.max(rtt ?? 0, report.roundTripTime);
+                        }
                     }
                 });
 
@@ -103,10 +162,22 @@ export default function useCallControls({
                     }
                 });
 
-                const lossRate = packetsReceived > 0 ? packetsLost / (packetsLost + packetsReceived) : 0;
-                if (rtt !== null && rtt < 0.15 && lossRate < 0.02) setConnectionQuality("good");
-                else if (rtt !== null && rtt < 0.4 && lossRate < 0.05) setConnectionQuality("fair");
-                else if (rtt !== null) setConnectionQuality("poor");
+                const inboundLossRate =
+                    packetsReceived > 0 ? packetsLost / (packetsLost + packetsReceived) : 0;
+                const lossRate = Math.max(inboundLossRate, remoteLossRate);
+                const quality = classifyConnectionQuality(rtt, lossRate);
+                setConnectionQuality(quality);
+
+                const adaptive = nextAdaptiveVideoState(
+                    quality,
+                    currentVideoTargetRef.current,
+                    recoverySamplesRef.current,
+                    goodVideoTargetRef.current,
+                );
+                recoverySamplesRef.current = adaptive.recoverySamples;
+                if (adaptive.changed && await applyVideoEncodingTarget(pc, adaptive.target)) {
+                    currentVideoTargetRef.current = adaptive.target;
+                }
 
                 const now = Date.now();
                 const elapsed = (now - prevBytesRef.current.timestamp) / 1000;
@@ -125,6 +196,12 @@ export default function useCallControls({
                     audioCodec,
                     videoCodec,
                     localCandidateType,
+                    remoteCandidateType,
+                    transportProtocol,
+                    qualityLimitationReason,
+                    framesDropped,
+                    freezeCount,
+                    totalFreezesDuration,
                 });
             } catch {
                 /* stats unavailable */

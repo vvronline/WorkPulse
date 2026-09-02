@@ -1,6 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getIceConfig } from "../../../api";
+import {
+    applyVideoEncodingTarget,
+    VIDEO_ENCODING_TARGETS,
+} from "./callQuality";
+import {
+    forgetInboundSignal,
+    rememberInboundSignal,
+} from "./callSignalDeduplicator";
 
 // Default ICE servers used when the server's /ice-config request fails.
 // Includes the free Metered Open Relay TURN service so calls still work for
@@ -148,6 +156,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
     const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
     const pendingSignalsRef = useRef<any[]>([]);
+    const seenSignalIdsRef = useRef(new Set<string>());
     const screenSenderRef = useRef<RTCRtpSender | null>(null);
     const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const ringtoneRef = useRef<any>(null);
@@ -357,6 +366,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
         if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
         pendingSignalsRef.current = [];
         pendingIceCandidatesRef.current = [];
+        seenSignalIdsRef.current.clear();
         if (connectionTimeoutRef.current) clearTimeout(connectionTimeoutRef.current);
         if (disconnectTimerRef.current) clearTimeout(disconnectTimerRef.current);
         // P1.10 — stop the black-video watchdog so it can't fire post-teardown.
@@ -369,21 +379,15 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
     const applyBitrateRampUp = useCallback((pc: RTCPeerConnection | null) => {
         if (!pc) return;
         const INITIAL_BITRATE = isMobile ? 300_000 : 400_000;
-        const TARGET_BITRATE = isMobile ? 800_000 : 1_500_000;
+        const TARGET_BITRATE = isMobile ? 800_000 : VIDEO_ENCODING_TARGETS.good.maxBitrate;
         const RAMP_STEPS = 3;
-        const RAMP_STEP_MS = 1000;
+        const RAMP_STEP_MS = 800;
 
         const setVideoBitrate = (bitrate: number) => {
-            for (const sender of pc.getSenders()) {
-                if (!sender.track || sender.track.kind !== "video") continue;
-                try {
-                    const params = sender.getParameters();
-                    if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-                    params.encodings[0].maxBitrate = bitrate;
-                    (params as any).degradationPreference = "maintain-framerate";
-                    sender.setParameters(params).catch(() => { });
-                } catch { /* ignore */ }
-            }
+            void applyVideoEncodingTarget(pc, {
+                maxBitrate: bitrate,
+                scaleResolutionDownBy: 1,
+            });
         };
 
         for (const sender of pc.getSenders()) {
@@ -817,6 +821,10 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
 
     const handleSignalInternal = useCallback(async (signal: any, fromUserId: any) => {
         if (!pcRef.current) return;
+        if (!rememberInboundSignal(signal, seenSignalIdsRef.current)) {
+            console.debug("[call-webrtc] ignored replayed signal:", signal.type);
+            return;
+        }
         try {
             console.log("[call-webrtc] handleSignal:", signal.type, "from:", fromUserId, "pcState:", pcRef.current.signalingState);
             if (signal.type === "offer") {
@@ -975,6 +983,7 @@ export default function useWebRTC({ callState, callType, wsSend, onEnd, onStatus
                 }
             }
         } catch (err) {
+            forgetInboundSignal(signal, seenSignalIdsRef.current);
             console.error("[call-webrtc] Signal handling error:", err);
         }
     }, [conversationId, wsSend, flushPendingIceCandidates, addIceCandidateSafe, callType, isIncoming, callerId, acceptedBy, reconnectTo]);

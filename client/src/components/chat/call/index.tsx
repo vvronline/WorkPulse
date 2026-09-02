@@ -1064,7 +1064,38 @@ export default function CallOverlay({
                         {controls.detailedStats.localCandidateType && (
                             <div className={s.statRow}>
                                 <span>Transport</span>
-                                <span>{controls.detailedStats.localCandidateType}</span>
+                                <span>
+                                    {controls.detailedStats.localCandidateType}
+                                    {controls.detailedStats.remoteCandidateType
+                                        ? ` → ${controls.detailedStats.remoteCandidateType}`
+                                        : ""}
+                                    {controls.detailedStats.transportProtocol
+                                        ? ` (${controls.detailedStats.transportProtocol})`
+                                        : ""}
+                                </span>
+                            </div>
+                        )}
+                        {controls.detailedStats.qualityLimitationReason && (
+                            <div className={s.statRow}>
+                                <span>Encoder Limit</span>
+                                <span>{controls.detailedStats.qualityLimitationReason}</span>
+                            </div>
+                        )}
+                        {controls.detailedStats.framesDropped > 0 && (
+                            <div className={s.statRow}>
+                                <span>Frames Dropped</span>
+                                <span>{controls.detailedStats.framesDropped}</span>
+                            </div>
+                        )}
+                        {controls.detailedStats.freezeCount > 0 && (
+                            <div className={s.statRow}>
+                                <span>Video Freezes</span>
+                                <span>
+                                    {controls.detailedStats.freezeCount}
+                                    {controls.detailedStats.totalFreezesDuration > 0
+                                        ? ` (${controls.detailedStats.totalFreezesDuration.toFixed(1)}s)`
+                                        : ""}
+                                </span>
                             </div>
                         )}
                     </div>

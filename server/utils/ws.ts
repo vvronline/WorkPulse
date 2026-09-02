@@ -10,7 +10,7 @@
  *     clients now subscribe to the unified `user_status` event broadcast by
  *     services/status/broadcaster.js.
  */
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import type { Server as HTTPServer } from "http";
 import type { IncomingMessage } from "http";
 import { logger, logPushCallLifecycle } from "./logger";
@@ -125,6 +125,36 @@ function clientKey(
   userId: number,
 ): string {
   return `${tenantId || 0}:${userId}`;
+}
+
+function identifyCallSignal(
+  tenantId: number | null | undefined,
+  callId: number,
+  conversationId: number,
+  senderId: number,
+  targetUserId: number,
+  signal: any,
+): any {
+  if (!["offer", "answer", "ice-candidate"].includes(signal?.type)) return signal;
+  const body =
+    signal.type === "ice-candidate"
+      ? JSON.stringify(signal.candidate ?? null)
+      : String(signal.sdp || "");
+  const signalId = createHash("sha256")
+    .update(
+      [
+        tenantId || 0,
+        callId || 0,
+        conversationId,
+        senderId,
+        targetUserId,
+        signal.type,
+        body,
+      ].join("\u001f"),
+    )
+    .digest("base64url")
+    .slice(0, 32);
+  return { ...signal, signalId };
 }
 
 // ── WS relay membership cache ──────────────────────────────────────────────
@@ -2038,6 +2068,16 @@ async function handleChatMessage(
       "call_signal: relaying",
     );
 
+    const callIdForBuffer = Number(msg.data?.callId) || 0;
+    const identifiedSignal = identifyCallSignal(
+      tenantId,
+      callIdForBuffer,
+      Number(conversationId),
+      senderId,
+      Number(targetUserId),
+      signal,
+    );
+
     // RELIABLE DELIVERY (Signal-Android parity): if the target has NO open
     // socket on this instance, buffer the OFFER / ICE so we can replay it the
     // moment they subscribe/accept/become ready. This is the core fix for
@@ -2047,13 +2087,18 @@ async function handleChatMessage(
     // that offer (and early ICE) was silently dropped and the call hung.
     // We STILL relay (sendToUser also publishes cross-instance) so a callee on
     // another instance / already-subscribed still receives it immediately.
-    const callIdForBuffer = Number(msg.data?.callId) || 0;
     if (
       (signal.type === "offer" || signal.type === "ice-candidate") &&
       !hasOpenSocket(tenantId, targetUserId)
     ) {
       if (callIdForBuffer) {
-        await signalStore.bufferCallSignal(tenantId, callIdForBuffer, senderId, targetUserId, signal);
+        await signalStore.bufferCallSignal(
+          tenantId,
+          callIdForBuffer,
+          senderId,
+          targetUserId,
+          identifiedSignal,
+        );
         logger.debug(
           {
             senderId,
@@ -2071,7 +2116,7 @@ async function handleChatMessage(
     sendToUser(tenantId, targetUserId, "call_signal", {
       conversationId,
       fromUserId: senderId,
-      signal,
+      signal: identifiedSignal,
     });
   } else if (msg.type === "call_subscribe") {
     // P0 — Reliable-delivery handshake. The callee's call screen sends this

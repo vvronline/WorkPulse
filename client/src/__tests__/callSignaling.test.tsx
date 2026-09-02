@@ -137,7 +137,8 @@ describe("call signaling races", () => {
 
         act(() => {
             onSignal.current({ type: "ice-candidate", candidate: { candidate: "early-candidate" } }, 9);
-            onSignal.current({ type: "offer", sdp: "offer-sdp" }, 9);
+            onSignal.current({ type: "offer", sdp: "offer-sdp", signalId: "offer-1" }, 9);
+            onSignal.current({ type: "offer", sdp: "offer-sdp", signalId: "offer-1" }, 9);
         });
 
         await waitFor(() => {
@@ -150,5 +151,6 @@ describe("call signaling races", () => {
             targetUserId: 9,
             signal: { type: "answer", sdp: "answer-sdp" },
         });
+        expect(fakePc.createAnswer).toHaveBeenCalledTimes(1);
     });
 });

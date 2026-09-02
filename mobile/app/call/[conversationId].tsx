@@ -89,6 +89,10 @@ import {
 } from "../../src/realtime/callIceConfig";
 import { useMobileCallControls } from "../../src/components/call/useMobileCallControls";
 import { useAuth } from "../../src/auth/AuthContext";
+import {
+  forgetInboundSignal,
+  rememberInboundSignal,
+} from "../../src/calls/p2p/callSignalDeduplicator";
 
 /**
  * Native audio/video call screen (react-native-webrtc). Mirrors the web call
@@ -452,6 +456,7 @@ export default function CallScreen() {
   // "Connecting…" forever. Chaining every signal task on one promise makes
   // processing strictly sequential, so that interleaving is impossible.
   const signalChainRef = useRef<Promise<void>>(Promise.resolve());
+  const seenSignalIdsRef = useRef(new Set<string>());
   const runSerialized = useCallback((task: () => Promise<void>) => {
     signalChainRef.current = signalChainRef.current.then(task).catch((err) => {
       console.warn("[call] signaling task failed:", err?.message || err);
@@ -555,6 +560,7 @@ export default function CallScreen() {
       pcRef.current = null;
       localStreamRef.current = null;
       remoteStreamRef.current = null;
+      seenSignalIdsRef.current.clear();
       // Return the app BEHIND the lock screen now that the call is over. While
       // the call UI was up we enabled show-over-lock-screen; disabling it here
       // (and on unmount below) ensures the device must be unlocked to use the
@@ -1639,6 +1645,7 @@ export default function CallScreen() {
       pcRef.current = null;
       localStreamRef.current = null;
       remoteStreamRef.current = null;
+      seenSignalIdsRef.current.clear();
       // The active-call foreground service + PiP flags have their own unmount
       // effects; the lock-screen flag likewise. Nothing further to stop here.
       // Safety net: always release the navigation guard on unmount, even if the
@@ -2290,6 +2297,10 @@ export default function CallScreen() {
           // ICE candidate / answer can never race a half-finished offer
           // handler (which awaits getUserMedia + ICE config for seconds).
           runSerialized(async () => {
+            if (!rememberInboundSignal(signal, seenSignalIdsRef.current)) {
+              console.debug("[call] ignored replayed signal:", signal.type);
+              return;
+            }
             let pc = pcRef.current;
             if (signal.type === "offer") {
               try {
@@ -2380,6 +2391,7 @@ export default function CallScreen() {
                   signal: { type: "video-state", videoOff },
                 });
               } catch (err: any) {
+                forgetInboundSignal(signal, seenSignalIdsRef.current);
                 // A fatal error while answering (bad SDP / wrong state) used
                 // to be an unhandled rejection that left the call hanging on
                 // "Connecting…" forever. End cleanly instead.
@@ -2407,6 +2419,7 @@ export default function CallScreen() {
                 );
                 await flushIce();
               } catch (err: any) {
+                forgetInboundSignal(signal, seenSignalIdsRef.current);
                 console.warn(
                   "[call] answer handling failed:",
                   err?.message || err,
@@ -2420,7 +2433,7 @@ export default function CallScreen() {
                     new RTCIceCandidate(signal.candidate),
                   );
                 } catch {
-                  /* ignore */
+                  forgetInboundSignal(signal, seenSignalIdsRef.current);
                 }
               } else {
                 pendingIce.current.push(signal.candidate);
