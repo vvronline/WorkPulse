@@ -81,5 +81,21 @@ export function createChatService() {
         async listStarred(db: ChatDb, userId: number) {
             return repository.listStarredMessages(db, userId);
         },
+
+        async listBlocked(db: ChatDb, userId: number) {
+            return repository.listBlockedUsers(db, userId);
+        },
+
+        async blockUser(db: ChatDb, blockerId: number, targetId: number) {
+            if (targetId === blockerId) throw new ChatError("Invalid user", 400);
+            const orgId = await repository.getUserOrgId(db, blockerId);
+            const target = await repository.getUserInOrg(db, targetId, orgId);
+            if (!target) throw new ChatError("User not found", 404);
+            await repository.insertBlock(db, blockerId, targetId);
+        },
+
+        async unblockUser(db: ChatDb, blockerId: number, targetId: number) {
+            await repository.deleteBlock(db, blockerId, targetId);
+        },
     };
 }

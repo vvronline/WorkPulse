@@ -6,7 +6,7 @@ const { sendToUser } = require("../../utils/ws");
 import { createChatService } from "./chat.service";
 import { ChatError } from "./chat.types";
 import type { ChatDb } from "./chat.types";
-import { parseMessageId, parseConversationId, parseEmoji } from "./chat.schema";
+import { parseMessageId, parseConversationId, parseEmoji, parseUserId } from "./chat.schema";
 
 const router = express.Router();
 const service = createChatService();
@@ -109,6 +109,64 @@ router.get("/starred", auth, async (req: Request, res: Response) => {
     } catch (err) {
         req.log.error({ err }, "Get starred error");
         res.status(500).json({ error: "Failed to get starred messages" });
+    }
+});
+
+/**
+ * GET /api/chat/blocked
+ */
+router.get("/blocked", auth, async (req: Request, res: Response) => {
+    try {
+        res.json(await service.listBlocked(db(req), req.userId!));
+    } catch (err) {
+        req.log.error({ err }, "Get blocked users error");
+        res.status(500).json({ error: "Failed to get blocked users" });
+    }
+});
+
+/**
+ * POST /api/chat/users/:userId/block
+ * Block a user. Idempotent.
+ */
+router.post("/users/:userId/block", auth, async (req: Request, res: Response) => {
+    try {
+        const targetId = parseUserId(req.params.userId);
+        await service.blockUser(db(req), req.userId!, targetId);
+
+        // Cross-device sync for the blocker only. Signal never notifies the
+        // blocked party.
+        sendToUser(req.tenantId, req.userId, "chat_user_blocked", {
+            userId: targetId,
+            blocked: true,
+        });
+
+        res.json({ ok: true, blocked: true });
+    } catch (err) {
+        if (err instanceof ChatError) return res.status(err.statusCode).json({ error: err.message });
+        req.log.error({ err }, "Block user error");
+        res.status(500).json({ error: "Failed to block user" });
+    }
+});
+
+/**
+ * DELETE /api/chat/users/:userId/block
+ * Unblock a user. Idempotent.
+ */
+router.delete("/users/:userId/block", auth, async (req: Request, res: Response) => {
+    try {
+        const targetId = parseUserId(req.params.userId);
+        await service.unblockUser(db(req), req.userId!, targetId);
+
+        sendToUser(req.tenantId, req.userId, "chat_user_blocked", {
+            userId: targetId,
+            blocked: false,
+        });
+
+        res.json({ ok: true, blocked: false });
+    } catch (err) {
+        if (err instanceof ChatError) return res.status(err.statusCode).json({ error: err.message });
+        req.log.error({ err }, "Unblock user error");
+        res.status(500).json({ error: "Failed to unblock user" });
     }
 });
 

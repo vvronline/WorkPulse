@@ -45,3 +45,15 @@ export interface TogglePinResult {
 export interface ToggleStarResult {
     starred: boolean;
 }
+
+export interface BlockedUserRow {
+    id: number;
+    username: string;
+    full_name: string;
+    avatar: string | null;
+    blocked_at: string;
+}
+
+export interface BlockUserResult {
+    blocked: boolean;
+}

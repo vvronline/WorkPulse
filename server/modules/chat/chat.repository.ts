@@ -170,3 +170,48 @@ export async function listStarredMessages(db: ChatDb, userId: number) {
         )
     ).rows;
 }
+
+// ── Blocking ────────────────────────────────────────────────────────────
+
+export async function listBlockedUsers(db: ChatDb, blockerId: number) {
+    return (
+        await db.query(
+            `SELECT u.id, u.username, u.full_name, u.avatar, b.created_at AS blocked_at
+               FROM blocked_users b
+               JOIN users u ON u.id = b.blocked_id
+              WHERE b.blocker_id = $1
+              ORDER BY u.full_name ASC`,
+            [blockerId],
+        )
+    ).rows;
+}
+
+export async function getUserInOrg(
+    db: ChatDb,
+    userId: number,
+    orgId: number | undefined,
+): Promise<{ id: number } | undefined> {
+    return (
+        await db.query("SELECT id FROM users WHERE id = $1 AND org_id = $2", [userId, orgId])
+    ).rows[0];
+}
+
+export async function getUserOrgId(db: ChatDb, userId: number | undefined): Promise<number | undefined> {
+    const row = (await db.query("SELECT org_id FROM users WHERE id = $1", [userId])).rows[0];
+    return row?.org_id;
+}
+
+export async function insertBlock(db: ChatDb, blockerId: number, blockedId: number): Promise<void> {
+    await db.query(
+        `INSERT INTO blocked_users (blocker_id, blocked_id)
+             VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [blockerId, blockedId],
+    );
+}
+
+export async function deleteBlock(db: ChatDb, blockerId: number, blockedId: number): Promise<void> {
+    await db.query(
+        "DELETE FROM blocked_users WHERE blocker_id = $1 AND blocked_id = $2",
+        [blockerId, blockedId],
+    );
+}

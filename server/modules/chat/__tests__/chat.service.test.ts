@@ -76,3 +76,40 @@ describe("chat.service toggleStar", () => {
         expect(result.starred).toBe(true);
     });
 });
+
+describe("chat.service blockUser/unblockUser", () => {
+    test("rejects blocking yourself", async () => {
+        const db = makeDb([]);
+        const service = createChatService();
+
+        await expect(service.blockUser(db, 1, 1)).rejects.toThrow(/invalid user/i);
+    });
+
+    test("rejects blocking a user outside the org", async () => {
+        const db = makeDb([
+            { rows: [{ org_id: 5 }] }, // getUserOrgId
+            { rows: [] }, // getUserInOrg miss
+        ]);
+        const service = createChatService();
+
+        await expect(service.blockUser(db, 1, 2)).rejects.toThrow(/not found/i);
+    });
+
+    test("blocks a valid same-org user", async () => {
+        const db = makeDb([
+            { rows: [{ org_id: 5 }] }, // getUserOrgId
+            { rows: [{ id: 2 }] }, // getUserInOrg hit
+            { rows: [] }, // insertBlock
+        ]);
+        const service = createChatService();
+
+        await expect(service.blockUser(db, 1, 2)).resolves.toBeUndefined();
+    });
+
+    test("unblocks a user (idempotent, no lookup required)", async () => {
+        const db = makeDb([{ rows: [] }]); // deleteBlock
+        const service = createChatService();
+
+        await expect(service.unblockUser(db, 1, 2)).resolves.toBeUndefined();
+    });
+});

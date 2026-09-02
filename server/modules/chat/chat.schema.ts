@@ -20,3 +20,9 @@ export function parseEmoji(body: unknown): string {
     }
     return emoji;
 }
+
+export function parseUserId(value: unknown): number {
+    const id = parseInt(String(value), 10);
+    if (isNaN(id)) throw new ChatError("Invalid user");
+    return id;
+}
