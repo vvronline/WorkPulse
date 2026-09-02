@@ -4,7 +4,7 @@
 > Every task has an explicit **Verify** step — do not tick a box until its Verify passes.
 
 **Created:** 2026-08-21
-**Last updated:** 2026-08-28
+**Last updated:** 2026-09-02
 **Owner:** Vishnu V R
 
 **Status:** 🟢 **ALL REPOSITORY WORK IS COMPLETE — AND THE FIRST SCALABILITY DEPLOY IS LIVE.**
@@ -1310,17 +1310,69 @@ routes → service → repository → db
 
 **Migration order — one module per PR, highest pain first:**
 
-- [ ] **G1** `chat` — **4,473 L / 51 routes / 333 SQL**. Split into `messages`, `conversations`,
-      `media`, `reactions` - [x] **G1.1** ✅ Created `modules/chat/{routes,service,repository,schema,types}.ts`
-      plus README and module tests. Moved reactions, pin/pinned-list, and star/starred-list
-      (**5 routes**) behind route → service → repository layers; public `/api/chat/...` paths
-      unchanged (mounted via `router.use("/", chatModuleRoutes)`). `chat.ts` reduced
-      **4,165 → 3,913 lines**. Remaining 46 routes (conversations, message CRUD, media jobs,
-      polls, calls, blocking, link previews) still in `routes/chat.ts`. - [x] **G1.2** ✅ Moved blocked-users list/block/unblock (**3 routes**) into the same
-      module: same-org validation and idempotent block/unblock now in
-      `chat.service.ts`; SQL in `chat.repository.ts`. `chat.ts` reduced
-      **3,913 → 3,831 lines**. Remaining 43 routes (conversations, message CRUD,
-      media jobs, polls, calls, link previews) still in `routes/chat.ts`.
+- [x] **G1** `chat` — **complete**. All **51** HTTP registrations now live in
+       `server/modules/chat/*.routes.ts` behind the existing public `/api/chat`
+       mount. `chat.routes.ts` composes those adapters; `server/routes/chat.ts` is a **11-line** composition router (tenant/feature
+       gates plus module mount), with **0** endpoint registrations and no chat helper or SQL
+       implementation. `chat.service.ts` is the route-to-repository workflow boundary and
+       `chat.repository.ts` owns every module SQL statement. Existing auth, validation,
+       status codes, transactions, WebSocket, Redis, job, storage, push, and status side
+       effects are preserved.
+
+       **Migrated endpoint list (51):**
+       - `POST /messages/:id/reactions`
+       - `POST /messages/:id/pin`
+       - `GET /conversations/:id/pinned`
+       - `POST /messages/:id/star`
+       - `GET /starred`
+       - `GET /blocked`
+       - `POST /users/:userId/block`
+       - `DELETE /users/:userId/block`
+       - `POST /conversations`
+       - `POST /conversations/group`
+       - `GET /conversations/:id/members`
+       - `POST /conversations/:id/pin`
+       - `POST /conversations/:id/favourite`
+       - `POST /conversations/:id/mute`
+       - `POST /conversations/:id/archive`
+       - `GET /ice-config`
+       - `GET /search`
+       - `GET /presence`
+       - `PUT /conversations/:id/group`
+       - `POST /conversations/:id/leave`
+       - `PUT /conversations/:id/participants/:userId/role`
+       - `POST /conversations/:id/transfer-owner`
+       - `GET /conversations`
+       - `GET /conversations/:id/messages`
+       - `POST /conversations/:id/read`
+       - `GET /conversations/:id/read-status`
+       - `POST /conversations/:id/messages`
+       - `POST /conversations/:id/files`
+       - `POST /media-jobs/:id/cancel`
+       - `POST /media-jobs/:id/retry`
+       - `PUT /messages/:id`
+       - `DELETE /messages/:id`
+       - `GET /search-messages`
+       - `POST /messages/:id/forward`
+       - `POST /conversations/:id/polls`
+       - `POST /polls/:id/vote`
+       - `GET /polls/:id`
+       - `GET /conversations/:id/files`
+       - `POST /conversations/:id/unread`
+       - `DELETE /conversations/:id/messages`
+       - `DELETE /conversations/:id`
+       - `POST /messages/:id/delivered`
+       - `POST /messages/:id/view`
+       - `GET /calls`
+       - `POST /calls/delete`
+       - `GET /calls/active`
+       - `GET /conversations/:id/calls`
+       - `POST /calls/:callId/reject`
+       - `POST /calls/:callId/accept`
+       - `POST /calls/:callId/end`
+       - `GET /link-preview`
+
+       **Remaining chat routes: 0.** See the Progress Log for final validation results.
 - [ ] **G2** `realtime/ws` — **3,782 L** → `server.ts`, `registry.ts`, `fanout.ts`,
       `signalStore.ts` (from D1), `handlers/{chat,calls,meetings,presence,status}.ts`
 - [ ] **G3** `tenancy` — 1,844 L / 37 routes
@@ -1508,6 +1560,14 @@ Append an entry per work session. Newest at the top.
 
 | Date       | Phase/Task                          | What changed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Verified by                                                                                                                                                                                                                                                                                              |
 | ---------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-09-02 | **G1 chat module complete**         | Migrated the remaining 36 chat registrations into ordered, bounded `modules/chat/*.routes.ts` adapters; all 51 public endpoints remain mounted under `/api/chat`. `routes/chat.ts` is now the 11-line tenant/feature-gated composition mount, with 0 HTTP registrations. All module SQL is in `chat.repository.ts`; routes reach it only through `chat.service.ts`. Existing auth, validation, status codes, transactions, WebSocket, Redis, media-job, storage, push, and status side effects remain in their original workflows. Added a 51-route composition contract test and service delegation tests. | Focused chat: **3 suites / 59 tests passed**; attachment contract: **1 suite / 10 tests passed**; full server: **83 suites / 932 tests passed** · `server npm run typecheck` passed · `server npm run lint:deps` **0 errors** (10 pre-existing legacy warnings) · root `npm run check:guardrails` passed |
+| 2026-09-02 | **G1.9 chat conversation archive**  | Extended `modules/chat/` with `POST /conversations/:id/archive`. Participant authorization is in `chat.service.ts`; the current-user archive toggle is in `chat.repository.ts`; the route retains `chat_conv_archived` WebSocket fan-out. `chat.ts` reduced 3,441 → 3,401 lines. The 36 remaining routes (conversation listing and group management, message CRUD, media, polls, calls, link previews) stay in the legacy file for later slices. | `tsc --noEmit` clean · `chat.routes.test.ts` **32/32** unchanged · `modules/chat/__tests__/chat.service.test.ts` **23/23** · `lint:deps` 0 errors (10 existing legacy warnings) · `npm run check:guardrails` exits 0 |
+| 2026-09-02 | **G1.8 chat conversation mute**     | Extended `modules/chat/` with `POST /conversations/:id/mute`. Participant authorization, duration validation, and the legacy toggle/unmute/permanent/timed mute behavior are in `chat.service.ts`; update SQL is in `chat.repository.ts`; the route retains `chat_conv_muted` WebSocket fan-out. `chat.ts` reduced 3,538 → 3,441 lines. The 37 remaining routes (conversation listing and group management, message CRUD, media, polls, calls, link previews) stay in the legacy file for later slices. | `tsc --noEmit` clean · `chat.routes.test.ts` **32/32** unchanged · `modules/chat/__tests__/chat.service.test.ts` **21/21** · `lint:deps` 0 errors (10 existing legacy warnings) · `npm run check:guardrails` exits 0 |
+| 2026-09-02 | **G1.7 chat conversation favourite** | Extended `modules/chat/` with `POST /conversations/:id/favourite`. Participant authorization is in `chat.service.ts`; the current-user favourite toggle is in `chat.repository.ts`. `chat.ts` reduced 3,573 → 3,538 lines. The 38 remaining routes (conversation listing and group management, message CRUD, media, polls, calls, link previews) stay in the legacy file for later slices. | `tsc --noEmit` clean · `chat.routes.test.ts` **32/32** unchanged · `modules/chat/__tests__/chat.service.test.ts` **19/19** · `lint:deps` 0 errors (10 existing legacy warnings) · `npm run check:guardrails` exits 0 |
+| 2026-09-02 | **G1.6 chat conversation pin**      | Extended `modules/chat/` with `POST /conversations/:id/pin`. Participant authorization is in `chat.service.ts`; the current-user pin toggle is in `chat.repository.ts`. `chat.ts` reduced 3,608 → 3,573 lines. The 39 remaining routes (conversation listing and group management, message CRUD, media, polls, calls, link previews) stay in the legacy file for later slices. | `tsc --noEmit` clean · `chat.routes.test.ts` **32/32** unchanged · `modules/chat/__tests__/chat.service.test.ts` **17/17** · `lint:deps` 0 errors (10 existing legacy warnings) · `npm run check:guardrails` exits 0 |
+| 2026-09-02 | **G1.5 chat member listing**        | Extended `modules/chat/` with `GET /conversations/:id/members`. Participant authorization is in `chat.service.ts`; the ordered member lookup is in `chat.repository.ts`. `chat.ts` reduced 3,649 → 3,608 lines. The 40 remaining routes (conversation listing and group management, message CRUD, media, polls, calls, link previews) stay in the legacy file for later slices. | `tsc --noEmit` clean · `chat.routes.test.ts` **32/32** unchanged · `modules/chat/__tests__/chat.service.test.ts` **15/15** · `lint:deps` 0 errors (10 existing legacy warnings) · `npm run check:guardrails` exits 0 |
+| 2026-09-02 | **G1.4 chat group creation**        | Extended `modules/chat/` with `POST /conversations/group`. Request validation stays at the route boundary; same-org member validation lives in `chat.service.ts`; all creation SQL and the transaction that assigns owner/member roles live in `chat.repository.ts`. The route retains `chat_group_created` WebSocket fan-out. `chat.ts` reduced 3,712 → 3,649 lines. The 41 remaining routes (group management, message CRUD, media, polls, calls, link previews) stay in the legacy file for later slices. | `tsc --noEmit` clean · `chat.routes.test.ts` **32/32** unchanged · `modules/chat/__tests__/chat.service.test.ts` **13/13** · `lint:deps` 0 errors (10 existing legacy warnings) · `npm run check:guardrails` exits 0 |
+| 2026-09-02 | **G1.3 chat direct conversation**   | Extended `modules/chat/` with `POST /conversations`. Active-user and same-organization validation is in `chat.service.ts`; all conversation and participant queries, including transactional duplicate prevention and corrupt direct-chat healing, are in `chat.repository.ts`. `chat.ts` reduced 3,831 → 3,712 lines. The 42 remaining routes (group management, message CRUD, media, polls, calls, link previews) stay in the legacy file for later slices. | `tsc --noEmit` clean · `chat.routes.test.ts` **32/32** unchanged · `modules/chat/__tests__/chat.service.test.ts` **11/11** · `lint:deps` 0 errors (10 existing legacy warnings) · `npm run check:guardrails` exits 0 |
 | 2026-09-02 | **G1.2 chat blocked-users**         | Extended `modules/chat/` with 3 more routes: blocked-list, block, unblock. Same-org validation and idempotent block/unblock now in `chat.service.ts`; SQL in `chat.repository.ts`; route owns HTTP status codes and WS fan-out (`chat_user_blocked`, blocker-only). `chat.ts` reduced 3,913 → 3,831 lines. Remaining 43 chat routes (conversations, message CRUD, media, polls, calls, link previews) still in `routes/chat.ts` for future slices.                                                                                                                                                                                                                                                                                                                                                                                                                                | `tsc --noEmit` clean · `chat.routes.test.ts` **32/32** unchanged · `modules/chat/__tests__/chat.service.test.ts` **9/9** (4 new block/unblock cases) · `lint:deps` 0 errors (0 new violations) · `npm run check:guardrails` exits 0 |
 | 2026-09-02 | **G1.1 chat reactions/pin/star**    | Created `server/modules/chat/{routes,service,repository,schema,types}.ts` plus README and module tests. Extracted 5 routes: reaction toggle, pin toggle, pinned-list, star toggle, starred-list. All module SQL is in repository; service owns message-not-found/deleted/not-a-participant checks and add/remove toggling; route owns HTTP status codes and WS fan-out. `chat.ts` reduced 4,165 → 3,913 lines. Remaining 46 chat routes (conversations, message CRUD, media, polls, calls, blocking, link previews) still in `routes/chat.ts` for future slices.                                                                                                                                                                                                                                                                                                                                                                                                                                | `tsc --noEmit` clean · `chat.routes.test.ts` **32/32** unchanged · new `modules/chat/__tests__/chat.service.test.ts` **5/5** · `lint:deps` 0 errors (0 new violations) · `npm run check:guardrails` exits 0 |
 | 2026-09-01 | **RAILWAY IaC MIGRATION**           | Migrated from the deprecated `railway.json` Config as Code to `.railway/railway.ts` TypeScript Infrastructure as Code (`railway config pull` imported the live project with zero drift; `railway.json` removed). Then used it to declare the remaining Railway-side scalability items as reviewable, diffable source instead of dashboard clicks: **D4.5** healthcheck/pre-deploy/restart-policy/overlap/draining settings moved onto the `WorkPulse` service node; **E1.1/E3.2** added a `PgBouncer` service (transaction pool mode, `Postgres.env.*` references, no literal secrets) and `preDeployCommand: ["node","migrate.js"]`; **F1** added `aino-web`/`aino-realtime`/`aino-worker` service nodes (`ROLE` env var each, secrets referenced from `WorkPulse.env.*`). Rewrote `scripts/verify-railway-config.mjs` to statically validate `.railway/railway.ts` instead of the removed `railway.json`. `WorkPulse` stays at `ROLE=all` and no service has replicas > 1 — D5's two-replica manual gate, secret rotation (A1.1–A1.3), and Cloudflare-side items (F2–F5b) are explicitly untouched. | `railway config plan`: **4 to add** (PgBouncer, aino-web, aino-realtime, aino-worker), **1 to change** (WorkPulse deploy fields), **0 to destroy** — re-run after the guardrail rewrite with an identical result; `node scripts/verify-railway-config.mjs` passes and was negative-tested (reverting `/readyz` → `/api/health` makes it fail as expected); `npm run check:guardrails` exits 0. **`railway config apply` was NOT run** — these are declared, not yet live. |
@@ -1548,7 +1608,7 @@ Find things by module path instead.
 | `server/app.ts`         | —          | **77**     | `buildApp()` composition root (Phase C section: 61) |
 | `server/db.ts`          | 2,166      | **2,319**  | ⬆️ **grew** — still the Phase G6 target             |
 | `server/jobs.ts`        | 878        | **869**    | GR2 ratchet holds it down                           |
-| `server/routes/chat.ts` | 4,473      | **3,831**  | G1.1+G1.2 done (8 routes); rest still the Phase G1 target |
+| `server/routes/chat.ts` | 4,473      | **11**     | G1 complete: composition-only router; all 51 chat endpoints are in `modules/chat/` |
 
 ### Concern → module
 

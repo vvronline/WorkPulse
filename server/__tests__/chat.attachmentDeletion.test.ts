@@ -153,15 +153,15 @@ describe("the production implementation keeps this contract", () => {
     });
 
     it("the delete route passes the message id so its own row is excluded", () => {
-        expect(read("../routes/chat.ts"))
+        expect(read("../modules/chat/chat.message-actions.routes.ts"))
             .toMatch(/deleteChatObject\(\s*msg\.file_url,[\s\S]{0,120}msgId/);
     });
 
     it("the route delegates to the service rather than deleting directly", () => {
         // GR1: routes must not contain SQL, and the invariant belongs in one
         // place — a second copy of this logic is how the bug would come back.
-        const src = read("../routes/chat.ts");
-        expect(src).toContain('require("../services/chatAttachments")');
+        const src = read("../modules/chat/chat.shared.ts");
+        expect(src).toContain('require("../../services/chatAttachments")');
         expect(src).toMatch(/deleteChatObject\s*=\s*deleteChatAttachment/);
         // The route must not carry its own reference query or delete call.
         expect(src).not.toContain("SELECT 1 FROM messages");

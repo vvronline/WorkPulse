@@ -1,4 +1,4 @@
-/** Chat business rules for the reactions/pin/star slice. */
+/** Chat workflows and the route-to-repository boundary. */
 import type {
     ChatDb,
     ToggleReactionResult,
@@ -10,6 +10,45 @@ import * as repository from "./chat.repository";
 
 export function createChatService() {
     return {
+        query(
+            db: Pick<ChatDb, "query">,
+            statement: keyof typeof repository.sql,
+            params?: unknown[],
+        ) {
+            return repository.query(db, repository.sql[statement], params);
+        },
+
+        listMessages(
+            db: Pick<ChatDb, "query">,
+            userId: number,
+            conversationId: number,
+            before: number | null,
+            limit: number,
+        ) {
+            const params: unknown[] = [userId, conversationId];
+            let statement = repository.sql.q084;
+            if (before) {
+                statement += `${repository.sql.q087}${params.length + 1}`;
+                params.push(before);
+            }
+            statement += `${repository.sql.q088}${params.length + 1}`;
+            params.push(limit);
+            return repository.query(db, statement, params);
+        },
+
+        searchMessages(
+            db: Pick<ChatDb, "query">,
+            userId: number,
+            conversationId: number | null,
+            searchPattern: string,
+        ) {
+            return repository.query(
+                db,
+                conversationId === null ? repository.sql.q086 : repository.sql.q085,
+                conversationId === null ? [userId, searchPattern] : [conversationId, searchPattern],
+            );
+        },
+
         async toggleReaction(
             db: ChatDb,
             userId: number,
@@ -96,6 +135,113 @@ export function createChatService() {
 
         async unblockUser(db: ChatDb, blockerId: number, targetId: number) {
             await repository.deleteBlock(db, blockerId, targetId);
+        },
+
+        async findOrCreateDirectConversation(db: ChatDb, userId: number, otherUserId: number) {
+            if (userId === otherUserId) {
+                const user = await repository.getActiveUser(db, userId);
+                if (!user) throw new ChatError("User not found", 400);
+                return repository.findOrCreateSelfConversation(db, userId, user.org_id);
+            }
+
+            const users = await repository.getActiveUsers(db, [userId, otherUserId]);
+            if (users.length !== 2) throw new ChatError("User not found", 400);
+            if (users[0].org_id !== users[1].org_id || !users[0].org_id) {
+                throw new ChatError("Users must be in the same organization", 403);
+            }
+            return repository.findOrCreateDirectConversation(db, userId, otherUserId, users[0].org_id);
+        },
+
+        async createGroupConversation(
+            db: ChatDb,
+            creatorId: number,
+            name: string,
+            userIds: unknown[],
+        ) {
+            const allIds = [...new Set([creatorId, ...userIds.map(Number)])];
+            const orgId = await repository.getUserOrgId(db, creatorId);
+            if (!orgId) throw new ChatError("No organization", 400);
+
+            const inOrg = await repository.getUsersInOrg(db, allIds, orgId);
+            if (inOrg.length !== allIds.length) {
+                throw new ChatError("Some users not found in your organization", 400);
+            }
+
+            return {
+                conversation: await repository.createGroupConversation(
+                    db,
+                    orgId,
+                    name.trim().slice(0, 100),
+                    creatorId,
+                    allIds,
+                ),
+                participantIds: allIds.filter((id) => id !== creatorId),
+            };
+        },
+
+        async listConversationMembers(db: ChatDb, userId: number, conversationId: number) {
+            if (!(await repository.verifyParticipant(db, conversationId, userId))) {
+                throw new ChatError("Not a participant", 403);
+            }
+            return repository.listConversationMembers(db, conversationId);
+        },
+
+        async toggleConversationPin(db: ChatDb, userId: number, conversationId: number) {
+            if (!(await repository.verifyParticipant(db, conversationId, userId))) {
+                throw new ChatError("Not a participant", 403);
+            }
+            return repository.toggleConversationPin(db, conversationId, userId);
+        },
+
+        async toggleConversationFavourite(db: ChatDb, userId: number, conversationId: number) {
+            if (!(await repository.verifyParticipant(db, conversationId, userId))) {
+                throw new ChatError("Not a participant", 403);
+            }
+            return repository.toggleConversationFavourite(db, conversationId, userId);
+        },
+
+        async setConversationMute(
+            db: ChatDb,
+            userId: number,
+            conversationId: number,
+            duration: unknown,
+        ) {
+            if (!(await repository.verifyParticipant(db, conversationId, userId))) {
+                throw new ChatError("Not a participant", 403);
+            }
+            if (duration === undefined) {
+                return repository.setConversationMute(db, conversationId, userId, "toggle");
+            }
+            if (duration === null || duration === "") {
+                return repository.setConversationMute(db, conversationId, userId, "unmute");
+            }
+            if (duration === "always") {
+                return repository.setConversationMute(db, conversationId, userId, "always");
+            }
+            const durationMs: Record<string, number> = {
+                "1h": 60 * 60 * 1000,
+                "8h": 8 * 60 * 60 * 1000,
+                "1d": 24 * 60 * 60 * 1000,
+                "1w": 7 * 24 * 60 * 60 * 1000,
+            };
+            const milliseconds = durationMs[String(duration)];
+            if (!milliseconds) {
+                throw new ChatError("Invalid duration (expected 1h | 8h | 1d | 1w | always | null)");
+            }
+            return repository.setConversationMute(
+                db,
+                conversationId,
+                userId,
+                "until",
+                new Date(Date.now() + milliseconds).toISOString(),
+            );
+        },
+
+        async toggleConversationArchive(db: ChatDb, userId: number, conversationId: number) {
+            if (!(await repository.verifyParticipant(db, conversationId, userId))) {
+                throw new ChatError("Not a participant", 403);
+            }
+            return repository.toggleConversationArchive(db, conversationId, userId);
         },
     };
 }

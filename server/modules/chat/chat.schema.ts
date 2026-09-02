@@ -1,4 +1,5 @@
 import { ChatError } from "./chat.types";
+import type { CreateGroupConversationInput } from "./chat.types";
 
 /** Validate the HTTP body/params before they reach service code. */
 export function parseMessageId(value: unknown): number {
@@ -25,4 +26,21 @@ export function parseUserId(value: unknown): number {
     const id = parseInt(String(value), 10);
     if (isNaN(id)) throw new ChatError("Invalid user");
     return id;
+}
+
+export function parseDirectConversationUserId(body: unknown): number {
+    const userId = (body as { userId?: unknown } | null)?.userId;
+    if (!userId) throw new ChatError("Invalid user");
+    return parseUserId(userId);
+}
+
+export function parseCreateGroupConversation(body: unknown): CreateGroupConversationInput {
+    const { name, userIds } = (body ?? {}) as { name?: unknown; userIds?: unknown };
+    if (!name || typeof name !== "string" || !name.trim()) {
+        throw new ChatError("Group name is required");
+    }
+    if (!Array.isArray(userIds) || userIds.length < 1) {
+        throw new ChatError("At least one other user is required");
+    }
+    return { name, userIds };
 }

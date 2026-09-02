@@ -57,3 +57,13 @@ export interface BlockedUserRow {
 export interface BlockUserResult {
     blocked: boolean;
 }
+
+export interface DirectConversationResult {
+    id: number;
+    existed?: boolean;
+}
+
+export interface CreateGroupConversationInput {
+    name: string;
+    userIds: unknown[];
+}

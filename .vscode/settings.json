@@ -12,6 +12,14 @@
     "/^git diff --stat \\.railway/railway\\.ts; node scripts/verify-railway-config\\.mjs$/": {
       "approve": true,
       "matchCommandLine": true
+    },
+    "/^Select-String -Path 'server\\\\__tests__\\\\chat\\.routes\\.test\\.ts' -Pattern 'POST /api/chat/conversations' \\| ForEach-Object \\{ \\$_\\.LineNumber \\}; Select-String -Path 'server\\\\routes\\\\chat\\.ts' -Pattern 'async function getUserOrg' \\| ForEach-Object \\{ \\$_\\.LineNumber \\}$/": {
+      "approve": true,
+      "matchCommandLine": true
+    },
+    "/^Set-Location 'D:\\\\Learnings\\\\WorkPulse\\\\server'; npx jest __tests__/chat\\.routes\\.test\\.ts modules/chat/__tests__/chat\\.service\\.test\\.ts --forceExit --detectOpenHandles; if \\(\\$LASTEXITCODE -eq 0\\) \\{ npm run typecheck \\}; if \\(\\$LASTEXITCODE -eq 0\\) \\{ npm run lint:deps \\}; if \\(\\$LASTEXITCODE -eq 0\\) \\{ Set-Location 'D:\\\\Learnings\\\\WorkPulse'; npm run check:guardrails \\}$/": {
+      "approve": true,
+      "matchCommandLine": true
     }
   }
 }
