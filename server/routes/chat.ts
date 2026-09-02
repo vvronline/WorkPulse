@@ -22,9 +22,13 @@ import {
   copyForwardedMediaMetadata,
 } from "../utils/chatMediaMetadata";
 const { canDo, loadGroupContext } = require("../utils/groupPerms");
+import chatModuleRoutes from "../modules/chat/chat.routes";
 
 const router = express.Router();
 router.use(requireTenant, requireFeature("chat"));
+// G1: reactions/pin/star handed off to the migrated module slice.
+// Public /api/chat/... paths are unchanged.
+router.use("/", chatModuleRoutes);
 
 interface DbLike {
   query: (
@@ -2146,93 +2150,7 @@ router.post(
   },
 );
 
-/**
- * POST /api/chat/messages/:id/reactions  { emoji }
- */
-router.post(
-  "/messages/:id/reactions",
-  auth,
-  async (req: Request, res: Response) => {
-    try {
-      const msgId = parseInt(String(req.params.id), 10);
-      if (isNaN(msgId))
-        return res.status(400).json({ error: "Invalid message" });
-
-      const { emoji } = req.body;
-      if (!emoji || emoji.length > 20)
-        return res.status(400).json({ error: "Invalid emoji" });
-
-      const msg = (
-        await req.db!.query(
-          "SELECT conversation_id, deleted_at FROM messages WHERE id = $1",
-          [msgId],
-        )
-      ).rows[0];
-      if (!msg) return res.status(404).json({ error: "Message not found" });
-      if (msg.deleted_at)
-        return res.status(400).json({ error: "Message is deleted" });
-      if (
-        !(await verifyParticipant(
-          msg.conversation_id,
-          req.userId,
-          req.db as unknown as DbLike,
-        ))
-      ) {
-        return res.status(403).json({ error: "Not a participant" });
-      }
-
-      const existing = (
-        await req.db!.query(
-          "SELECT id FROM message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3",
-          [msgId, req.userId, emoji],
-        )
-      ).rows[0];
-
-      let action;
-      if (existing) {
-        await req.db!.query("DELETE FROM message_reactions WHERE id = $1", [
-          existing.id,
-        ]);
-        action = "removed";
-      } else {
-        await req.db!.query(
-          "INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1, $2, $3) ON CONFLICT (message_id, user_id, emoji) DO NOTHING",
-          [msgId, req.userId, emoji],
-        );
-        action = "added";
-      }
-
-      const sender = (
-        await req.db!.query("SELECT full_name FROM users WHERE id = $1", [
-          req.userId,
-        ])
-      ).rows[0];
-
-      const participants = (
-        await req.db!.query(
-          "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
-          [msg.conversation_id],
-        )
-      ).rows;
-
-      for (const p of participants) {
-        sendToUser(req.tenantId, p.user_id, "chat_reaction", {
-          messageId: msgId,
-          conversationId: msg.conversation_id,
-          userId: req.userId,
-          fullName: sender.full_name,
-          emoji,
-          action,
-        });
-      }
-
-      res.json({ ok: true, action });
-    } catch (err) {
-      req.log.error({ err }, "Reaction error");
-      res.status(500).json({ error: "Failed to toggle reaction" });
-    }
-  },
-);
+// Reactions moved to modules/chat/chat.routes.ts (POST /messages/:id/reactions)
 
 /**
  * PUT /api/chat/messages/:id  { content }
@@ -2346,116 +2264,8 @@ router.delete("/messages/:id", auth, async (req: Request, res: Response) => {
   }
 });
 
-/**
- * POST /api/chat/messages/:id/pin
- */
-router.post("/messages/:id/pin", auth, async (req: Request, res: Response) => {
-  try {
-    const msgId = parseInt(String(req.params.id), 10);
-    if (isNaN(msgId)) return res.status(400).json({ error: "Invalid message" });
-
-    const msg = (
-      await req.db!.query("SELECT * FROM messages WHERE id = $1", [msgId])
-    ).rows[0];
-    if (!msg) return res.status(404).json({ error: "Message not found" });
-    if (
-      !(await verifyParticipant(
-        msg.conversation_id,
-        req.userId,
-        req.db as unknown as DbLike,
-      ))
-    ) {
-      return res.status(403).json({ error: "Not a participant" });
-    }
-
-    const isPinned = !!msg.pinned_at;
-    if (isPinned) {
-      await req.db!.query(
-        "UPDATE messages SET pinned_at = NULL, pinned_by = NULL WHERE id = $1",
-        [msgId],
-      );
-    } else {
-      await req.db!.query(
-        "UPDATE messages SET pinned_at = NOW(), pinned_by = $1 WHERE id = $2",
-        [req.userId, msgId],
-      );
-    }
-
-    const participants = (
-      await req.db!.query(
-        "SELECT user_id FROM conversation_participants WHERE conversation_id = $1",
-        [msg.conversation_id],
-      )
-    ).rows;
-
-    const sender = (
-      await req.db!.query("SELECT full_name FROM users WHERE id = $1", [
-        req.userId,
-      ])
-    ).rows[0];
-
-    for (const p of participants) {
-      sendToUser(req.tenantId, p.user_id, "chat_pin", {
-        messageId: msgId,
-        conversationId: msg.conversation_id,
-        pinned: !isPinned,
-        pinnedBy: req.userId,
-        pinnedByName: sender.full_name,
-      });
-    }
-
-    res.json({ ok: true, pinned: !isPinned });
-  } catch (err) {
-    req.log.error({ err }, "Pin message error");
-    res.status(500).json({ error: "Failed to pin message" });
-  }
-});
-
-/**
- * GET /api/chat/conversations/:id/pinned
- */
-router.get(
-  "/conversations/:id/pinned",
-  auth,
-  async (req: Request, res: Response) => {
-    try {
-      const convId = parseInt(String(req.params.id), 10);
-      if (isNaN(convId))
-        return res.status(400).json({ error: "Invalid conversation" });
-      if (
-        !(await verifyParticipant(
-          convId,
-          req.userId,
-          req.db as unknown as DbLike,
-        ))
-      ) {
-        return res.status(403).json({ error: "Not a participant" });
-      }
-
-      const rows = (
-        await req.db!.query(
-          `
-            SELECT m.id, m.sender_id, m.content, m.created_at, m.pinned_at, m.pinned_by,
-                   m.file_url, m.file_name, m.file_type,
-                   u.full_name AS sender_name, u.avatar AS sender_avatar,
-                   pb.full_name AS pinned_by_name
-            FROM messages m
-            JOIN users u ON u.id = m.sender_id
-            LEFT JOIN users pb ON pb.id = m.pinned_by
-            WHERE m.conversation_id = $1 AND m.pinned_at IS NOT NULL AND m.deleted_at IS NULL
-            ORDER BY m.pinned_at DESC
-        `,
-          [convId],
-        )
-      ).rows;
-
-      res.json(rows);
-    } catch (err) {
-      req.log.error({ err }, "Get pinned error");
-      res.status(500).json({ error: "Failed to get pinned messages" });
-    }
-  },
-);
+// Pin/pinned-list moved to modules/chat/chat.routes.ts
+// (POST /messages/:id/pin, GET /conversations/:id/pinned)
 
 /**
  * GET /api/chat/search-messages?q=term&convId=id
@@ -2650,93 +2460,8 @@ router.post(
   },
 );
 
-// ─────────────────────────────────────────────
-// STARRED MESSAGES
-// ─────────────────────────────────────────────
-
-/**
- * POST /api/chat/messages/:id/star
- */
-router.post("/messages/:id/star", auth, async (req: Request, res: Response) => {
-  try {
-    const msgId = parseInt(String(req.params.id), 10);
-    if (isNaN(msgId)) return res.status(400).json({ error: "Invalid message" });
-
-    const msg = (
-      await req.db!.query(
-        "SELECT conversation_id FROM messages WHERE id = $1",
-        [msgId],
-      )
-    ).rows[0];
-    if (!msg) return res.status(404).json({ error: "Message not found" });
-    if (
-      !(await verifyParticipant(
-        msg.conversation_id,
-        req.userId,
-        req.db as unknown as DbLike,
-      ))
-    ) {
-      return res.status(403).json({ error: "Not a participant" });
-    }
-
-    const existing = (
-      await req.db!.query(
-        "SELECT 1 FROM starred_messages WHERE user_id = $1 AND message_id = $2",
-        [req.userId, msgId],
-      )
-    ).rows[0];
-
-    if (existing) {
-      await req.db!.query(
-        "DELETE FROM starred_messages WHERE user_id = $1 AND message_id = $2",
-        [req.userId, msgId],
-      );
-      res.json({ ok: true, starred: false });
-    } else {
-      await req.db!.query(
-        "INSERT INTO starred_messages (user_id, message_id) VALUES ($1, $2)",
-        [req.userId, msgId],
-      );
-      res.json({ ok: true, starred: true });
-    }
-  } catch (err) {
-    req.log.error({ err }, "Star message error");
-    res.status(500).json({ error: "Failed to star message" });
-  }
-});
-
-/**
- * GET /api/chat/starred
- */
-router.get("/starred", auth, async (req: Request, res: Response) => {
-  try {
-    const rows = (
-      await req.db!.query(
-        `
-            SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
-                   m.file_url, m.file_name, m.file_type, m.file_size,
-                   m.format_type, m.metadata,
-                   u.full_name AS sender_name, u.avatar AS sender_avatar,
-                   sm.created_at AS starred_at,
-                   c.name AS group_name, c.is_group
-            FROM starred_messages sm
-            JOIN messages m ON m.id = sm.message_id
-            JOIN users u ON u.id = m.sender_id
-            JOIN conversations c ON c.id = m.conversation_id
-            WHERE sm.user_id = $1 AND m.deleted_at IS NULL
-            ORDER BY sm.created_at DESC
-            LIMIT 100
-        `,
-        [req.userId],
-      )
-    ).rows;
-
-    res.json(rows);
-  } catch (err) {
-    req.log.error({ err }, "Get starred error");
-    res.status(500).json({ error: "Failed to get starred messages" });
-  }
-});
+// Star/starred-list moved to modules/chat/chat.routes.ts
+// (POST /messages/:id/star, GET /starred)
 
 // ─────────────────────────────────────────────
 // POLLS
