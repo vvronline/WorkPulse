@@ -1,418 +1,46 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  BackHandler,
-  InteractionManager,
-  Keyboard,
-  Vibration,
-  View,
-  type TextInput,
-  useWindowDimensions,
-} from "react-native";
-import type { FlashListRef } from "@shopify/flash-list";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import * as ImagePicker from "expo-image-picker";
-import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system/legacy";
-import * as Clipboard from "expo-clipboard";
-import {
-  AudioModule,
-  createAudioPlayer,
-  setAudioModeAsync,
-  type AudioPlayer,
-} from "expo-audio";
-import type { VoiceRecorderControllerHandle } from "./VoiceRecorderController";
-import useMobileConversationDraft, {
-  type PendingMediaSource,
-} from "./useMobileConversationDraft";
-import useChatMessageSelection from "./useChatMessageSelection";
-import {
-  applyMediaJobUpdate,
-  applyMessageDelete,
-  applyMessageEdit,
-  applyMessagePin,
-  applyMessageReaction,
-  mapRealtimeChatMessage,
-  normalizeUploadedMessage as normalizeUploadedMessageReducer,
-  replaceUploadedMessage,
-  updateMessageById,
-} from "./chatMessageReducers";
-import { getNotificationPreviewDataUri } from "../../utils/notificationSoundPreview";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useAuth } from "../../auth/AuthContext";
 import { useDialog } from "../../hooks/useDialog";
-import {
-  ackDelivered,
-  blockUser,
-  unblockUser,
-  cancelChatMediaJob,
-  createMeeting,
-  deleteMessage,
-  editMessage,
-  forwardMessage,
-  getConversations,
-  getChatPresence,
-  getMessages,
-  getPinnedMessages,
-  getReadStatus,
-  getSharedFiles,
-  getStarredMessages,
-  markConversationRead,
-  pinMessage,
-  retryChatMediaJob,
-  searchMessages,
-  starMessage,
-  toggleReaction,
-  uploadChatFile,
-  type ChatMessage,
-  type Conversation,
-  type MessageSearchResult,
-  type PinnedMessage,
-  type SharedFile,
-  type StarredMessage,
-} from "../../features";
-import { socket } from "../../realtime/socket";
-import { notifeeService } from "../../services/notifeeService";
-import { setActiveConversation } from "../../realtime/activeConversation";
-import {
-  emitChatUnreadChanged,
-  chatUnreadManager,
-} from "../../realtime/chatUnreadEvents";
-import {
-  subscribeChatJump,
-  consumePendingChatJump,
-} from "../../realtime/chatJumpEvents";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
-import { hydrateEmojiStore } from "../../emoji/emojiStore";
+import type { ChatMessage } from "../../features";
+import { getCachedMessages } from "../../storage/chatCache";
 import {
-  getCachedMessages,
-  setCachedMessages,
-  clearCachedMessages,
-  getCachedReadStatus,
-  setCachedReadStatus,
-  getCachedConversations,
-} from "../../storage/chatCache";
-import {
-  getLocalDeletedIds,
-  addLocalDeletedIds,
-  setClearedAt,
-  getClearedAt,
-} from "../../storage/chatLocalDeletes";
-import {
-  enqueueOutboxMessage,
-  getOutboxMessagesForConversation,
-  markOutboxRetrying,
-  removeOutboxMessage,
-  type OutboxMessage,
-} from "../../storage/chatOutbox";
-import { STATUS_LABEL, isSameDay, type HeaderSheet } from "./chatUtils";
-import type { MessageDeliveryPhase } from "./MsgTicks";
-
-// Keep the first synchronous thread paint bounded. A cached thread can contain
-// hundreds of messages after paging; processing all of them on route mount is
-// what makes tapping a busy chat freeze on the chat list for 2–3 seconds. Signal
-// loads a page first and pages older history on demand, so we mirror that here.
-const INITIAL_THREAD_PAGE_SIZE = 50;
-
-// Skip repaying a full messages/read-receipts/pins reconcile when the same
-// conversation is reopened quickly. With single-active route replacement the
-// hook remounts on every list→thread open, so per-instance refs cannot remember
-// the previous load. This module-level TTL mirrors Signal/WhatsApp's cache-first
-// open: show the warm page immediately and avoid doing the same network + state
-// reconcile during repeated quick open/exit cycles.
-const THREAD_RECONCILE_TTL_MS = 10_000;
-// Bounded LRU. This map is module-level and previously grew without limit —
-// every conversation ever opened in the session kept an entry forever. Cap it
-// so a long session browsing many chats can't leak.
-const THREAD_RECONCILE_MAX_ENTRIES = 50;
-const __LAST_THREAD_RECONCILE_AT = new Map<number, number>();
-
-function rememberThreadReconcile(convId: number, at: number): void {
-  // Re-insert so the key moves to the end of the Map's insertion order,
-  // making the first key the least-recently-used one.
-  __LAST_THREAD_RECONCILE_AT.delete(convId);
-  __LAST_THREAD_RECONCILE_AT.set(convId, at);
-  while (__LAST_THREAD_RECONCILE_AT.size > THREAD_RECONCILE_MAX_ENTRIES) {
-    const oldest = __LAST_THREAD_RECONCILE_AT.keys().next().value;
-    if (oldest === undefined) break;
-    __LAST_THREAD_RECONCILE_AT.delete(oldest);
-  }
-}
+  INITIAL_THREAD_PAGE_SIZE,
+  mergeOutboxIntoMessages,
+} from "./chatThreadMessageUtils";
+import useMobileConversationDraft from "./useMobileConversationDraft";
+import useChatMessageSelection from "./useChatMessageSelection";
+import useChatComposerKeyboard from "./useChatComposerKeyboard";
+import useChatPeerIdentity from "./useChatPeerIdentity";
+import useChatThreadScroll from "./useChatThreadScroll";
+import useChatMessageContextMenu from "./useChatMessageContextMenu";
+import useChatPinsAndStars from "./useChatPinsAndStars";
+import useChatMessageLoader from "./useChatMessageLoader";
+import useChatSearchPanels from "./useChatSearchPanels";
+import useChatRealtimeSync from "./useChatRealtimeSync";
+import useChatMediaUploads from "./useChatMediaUploads";
+import useChatVoiceRecording from "./useChatVoiceRecording";
+import useChatForwardActions from "./useChatForwardActions";
+import useChatComposerActions from "./useChatComposerActions";
+import useChatDeleteActions from "./useChatDeleteActions";
+import useChatThreadNavigation from "./useChatThreadNavigation";
+import useChatListPresentation from "./useChatListPresentation";
 
 /**
- * Normalize the server's file-upload response into a snake_case ChatMessage.
+ * Conversation-thread controller.
  *
- * ROOT CAUSE of "image stuck on Queued" + "attachment invisible until I reopen
- * the chat": the `POST /chat/conversations/:id/files` endpoint returns a
- * CAMELCASE payload (`fileUrl`, `fileType`, `fileSize`, `mediaState`,
- * `mediaJobId`, …) — but the rest of the mobile app (the ChatMessage type,
- * isImageFile(), FilePreview, and the media-job "delivered" guard) reads
- * SNAKE_CASE (`file_url`, `file_type`, `media_state`, …). Spreading the raw
- * `{ ...data }` therefore produced a message with `fileUrl` but NO `file_url`,
- * so:
- *   • FilePreview rendered nothing (no `file_url`/`file_type`) until the chat
- *     was reloaded (the GET /messages endpoint returns snake_case), and
- *   • the chat_media_job handler's `!!m.file_url` "upload done" guard stayed
- *     false forever, so pipeline `queued`/`processing` events kept dragging the
- *     bubble back to "Queued" even after it was delivered + read.
+ * This hook is a COMPOSER: it owns only the state that genuinely crosses every
+ * concern (the message array + its ref, the composer text and the mounted
+ * guard) and wires together the focused sub-hooks that each own one concern —
+ * identity/presence, scrolling, the loader/pagination, realtime, media uploads,
+ * reactions, pins/stars, search panels, navigation and list presentation.
  *
- * Mapping the camelCase response → snake_case here fixes both at once.
- */
-function normalizeUploadedMessage(data: any): ChatMessage {
-  return normalizeUploadedMessageReducer(data);
-}
-
-/**
- * Normalize the REST `GET /conversations/:id/messages` response into the
- * canonical snake_case `reply_to_*` shape the mobile app renders from.
- *
- * ROOT CAUSE of "the reply quote flashes the quoted message then collapses to
- * the generic word 'Message'": the mobile app (ReplyQuote, the optimistic-send
- * path and the WS `chat_message` echo) all read the quoted-message fields as
- * `reply_to_content` / `reply_to_sender_name` / `reply_to_file_*`. But the REST
- * messages endpoint returns them aliased as `reply_content` /
- * `reply_sender_name` / `reply_file_*` (kept that way for web parity). So when
- * `load()` refreshed the thread and wholesale-replaced the optimistic/WS rows
- * with the REST payload, `reply_to_content` became undefined and ReplyQuote's
- * `snippet || mediaLabel || "Message"` fallback rendered "Message" — the
- * fraction-of-a-second flicker the user saw.
- *
- * Mapping the REST aliases → the canonical `reply_to_*` here keeps the quote
- * stable across the refresh. Idempotent: already-canonical rows pass through.
- */
-function normalizeFetchedMessage(row: any): ChatMessage {
-  if (!row || typeof row !== "object") return row;
-  if (!row.reply_to_id) return row as ChatMessage;
-  return {
-    ...row,
-    reply_to_content: row.reply_to_content ?? row.reply_content ?? null,
-    reply_to_sender_name:
-      row.reply_to_sender_name ?? row.reply_sender_name ?? null,
-    reply_to_file_url: row.reply_to_file_url ?? row.reply_file_url ?? null,
-    reply_to_file_type: row.reply_to_file_type ?? row.reply_file_type ?? null,
-    reply_to_file_name: row.reply_to_file_name ?? row.reply_file_name ?? null,
-  } as ChatMessage;
-}
-
-/**
- * Render a persisted-but-not-yet-delivered outbox entry as a pending
- * ChatMessage bubble (clock tick). The clientMsgId is carried through so the
- * eventual server echo replaces this bubble in place (no duplicate).
- */
-function outboxEntryToMessage(
-  entry: OutboxMessage,
-  userId: number,
-  userName: string,
-): ChatMessage {
-  return {
-    id: -(Date.parse(entry.createdAt) || Date.now()),
-    sender_id: userId,
-    sender_name: userName,
-    content: entry.content,
-    created_at: entry.createdAt,
-    reply_to_id: entry.replyToId ?? null,
-    reply_to_content: entry.replyToContent ?? null,
-    reply_to_sender_name: entry.replyToSenderName ?? null,
-    reply_to_file_url: entry.replyToFileUrl ?? null,
-    reply_to_file_type: entry.replyToFileType ?? null,
-    reply_to_file_name: entry.replyToFileName ?? null,
-    clientMsgId: entry.clientMsgId,
-    _pending: !entry.failed,
-    _failed: !!entry.failed,
-    _failureReason: entry.failureReason ?? null,
-  } as ChatMessage;
-}
-
-/**
- * Append this conversation's pending outbox messages (sent while offline,
- * not yet acknowledged by the server) to a message list, deduping by
- * clientMsgId.
- *
- * OFFLINE-SEND FIX: an optimistic message used to live ONLY in React state,
- * so exiting the chat screen (or the server refresh in `load()` wholesale-
- * replacing the list) erased any message that hadn't reached the server yet.
- * Merging the durable outbox here means an unsent message survives leaving
- * the screen, app restarts, and background reconciles — it stays visible as
- * a pending bubble until the reconnect flush (ChatOutboxSync) delivers it.
- */
-function mergeOutboxIntoMessages(
-  msgs: ChatMessage[],
-  convId: number,
-  userId?: number | null,
-  userName?: string | null,
-): ChatMessage[] {
-  if (!userId) return msgs;
-  const pending = getOutboxMessagesForConversation(convId);
-  if (pending.length === 0) return msgs;
-  const have = new Set(
-    msgs.map((m) => m.clientMsgId).filter(Boolean) as string[],
-  );
-  const extra = pending
-    .filter((e) => !have.has(e.clientMsgId))
-    .map((e) => outboxEntryToMessage(e, userId, userName || "You"));
-  if (extra.length === 0) return msgs;
-  return [...msgs, ...extra];
-}
-
-/**
- * Signal-Android-style lightweight diffing helpers.
- *
- * Signal's conversation adapter updates/invalidates specific paged rows instead
- * of replacing and rebinding the whole thread. In React Native we approximate
- * that by merging the refreshed newest page into already-loaded older history
- * and skipping setMessages entirely when the refreshed page is equivalent.
- */
-function reactionsSigForDiff(m: ChatMessage): string {
-  const rs = m.reactions || [];
-  if (rs.length === 0) return "";
-  let s = "";
-  for (const r of rs) s += `${r.userId}:${r.emoji},`;
-  return s;
-}
-
-function messagesEquivalentForThread(a: ChatMessage, b: ChatMessage): boolean {
-  return (
-    a.id === b.id &&
-    a.clientMsgId === b.clientMsgId &&
-    a.content === b.content &&
-    a.created_at === b.created_at &&
-    a.edited_at === b.edited_at &&
-    a.deleted_at === b.deleted_at &&
-    a.pinned_at === b.pinned_at &&
-    a.file_url === b.file_url &&
-    a.file_type === b.file_type &&
-    a.file_name === b.file_name &&
-    a.file_size === b.file_size &&
-    a.sender_name === b.sender_name &&
-    a.format_type === b.format_type &&
-    a.reply_to_id === b.reply_to_id &&
-    a.reply_to_content === b.reply_to_content &&
-    a.reply_to_sender_name === b.reply_to_sender_name &&
-    a.reply_to_file_url === b.reply_to_file_url &&
-    a.reply_to_file_type === b.reply_to_file_type &&
-    a.reply_to_file_name === b.reply_to_file_name &&
-    a.metadata?.viewOnce === b.metadata?.viewOnce &&
-    a.metadata?.width === b.metadata?.width &&
-    a.metadata?.height === b.metadata?.height &&
-    a.metadata?.type === b.metadata?.type &&
-    a.metadata?.status === b.metadata?.status &&
-    a.metadata?.duration === b.metadata?.duration &&
-    deliveredSigForDiff(a) === deliveredSigForDiff(b) &&
-    a.media_state === b.media_state &&
-    a.media_stage === b.media_stage &&
-    a.media_progress === b.media_progress &&
-    a._pending === b._pending &&
-    a._failed === b._failed &&
-    a._mediaState === b._mediaState &&
-    a._mediaProgress === b._mediaProgress &&
-    reactionsSigForDiff(a) === reactionsSigForDiff(b)
-  );
-}
-
-function deliveredSigForDiff(message: ChatMessage): string {
-  const delivered = message.delivered_to;
-  return delivered?.length ? delivered.join(",") : "";
-}
-
-function messageArraysEquivalentForThread(
-  a: ChatMessage[],
-  b: ChatMessage[],
-): boolean {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (!messagesEquivalentForThread(a[i], b[i])) return false;
-  }
-  return true;
-}
-
-// Shallow-equal two read-receipt maps ({ userId → ISO last_read_at }). Live
-// `chat_read_receipt` pulses and each `load()` reconcile otherwise replace the
-// `readReceipts` object wholesale — a new identity that (because MessageBubble
-// reference-compares `readReceipts`) forces EVERY mounted bubble to re-render.
-// Skipping the state update when the map is unchanged keeps that churn off the
-// JS thread (Signal only rebinds rows whose receipt state actually changed).
-function readMapsEqual(
-  a: Record<number, string>,
-  b: Record<number, string>,
-): boolean {
-  if (a === b) return true;
-  const ak = Object.keys(a);
-  const bk = Object.keys(b);
-  if (ak.length !== bk.length) return false;
-  for (const k of ak) {
-    if (a[k as unknown as number] !== b[k as unknown as number]) return false;
-  }
-  return true;
-}
-
-function mergeNewestPageIntoLoadedThread(
-  current: ChatMessage[],
-  newestPage: ChatMessage[],
-): ChatMessage[] {
-  if (current.length === 0) return newestPage;
-  // A transient empty refresh must not erase already-loaded history. An empty
-  // conversation is handled by explicit clear/delete events; the newest-page
-  // reconcile is only allowed to add/update a window it actually received.
-  if (newestPage.length === 0) return current;
-  if (current.length <= newestPage.length) return newestPage;
-
-  const firstNewest = newestPage[0];
-  const firstIdx = current.findIndex((m) => {
-    if (firstNewest.clientMsgId && m.clientMsgId === firstNewest.clientMsgId) {
-      return true;
-    }
-    return m.id === firstNewest.id;
-  });
-
-  if (firstIdx === 0) return newestPage;
-  // No overlap means this response cannot safely identify the boundary between
-  // older history and the refreshed tail. Keep the continuous loaded thread;
-  // realtime delivery/cache sync will add genuinely new tail rows separately.
-  if (firstIdx < 0) return current;
-
-  const olderHistory = current.slice(0, firstIdx);
-  const seen = new Set<string>();
-  for (const m of newestPage) {
-    seen.add(m.clientMsgId ? `c:${m.clientMsgId}` : `i:${m.id}`);
-  }
-
-  const localOnlyTail = current.slice(firstIdx).filter((m) => {
-    const key = m.clientMsgId ? `c:${m.clientMsgId}` : `i:${m.id}`;
-    return (m.id < 0 || m._pending || m._failed) && !seen.has(key);
-  });
-
-  return [...olderHistory, ...newestPage, ...localOnlyTail];
-}
-
-function messageIdentity(message: ChatMessage): string {
-  return message.clientMsgId ? `c:${message.clientMsgId}` : `i:${message.id}`;
-}
-
-/** True only when reconciliation adds a server row after the existing tail. */
-function appendsNewerServerTail(
-  current: ChatMessage[],
-  newestPage: ChatMessage[],
-): boolean {
-  if (current.length === 0 || newestPage.length === 0) return false;
-
-  const currentKeys = new Set(current.map(messageIdentity));
-  let lastOverlapIndex = -1;
-  for (let index = 0; index < newestPage.length; index += 1) {
-    if (currentKeys.has(messageIdentity(newestPage[index]))) {
-      lastOverlapIndex = index;
-    }
-  }
-  if (lastOverlapIndex < 0) return false;
-
-  return newestPage
-    .slice(lastOverlapIndex + 1)
-    .some((message) => message.id > 0 && !currentKeys.has(messageIdentity(message)));
-}
-
-/**
- * All state, side-effects and handlers for the chat thread screen. Extracted
- * from `app/chat/[id].tsx` so the screen is a thin presentational orchestrator
- * (mirrors the web ChatMessages container/hook split). Behavior-preserving.
+ * The sub-hooks are called in DEPENDENCY ORDER: a hook that consumes another
+ * hook's callbacks or refs is called after it. The returned object is the
+ * screen's full view model (see app/chat/[id].tsx).
  */
 export function useChatThread() {
   const params = useLocalSearchParams<{
@@ -435,40 +63,21 @@ export function useChatThread() {
     try {
       const parsed = JSON.parse(params.groupMemberAvatars);
       return Array.isArray(parsed)
-        ? parsed.filter((v): v is string => typeof v === "string" && v.length > 0)
+        ? parsed.filter(
+            (v): v is string => typeof v === "string" && v.length > 0,
+          )
         : [];
     } catch {
       return [];
     }
   }, [params.groupMemberAvatars]);
-  // Header identity (name + avatar). Seeded from the route params for the
-  // common case (opened from the conversation list, which passes them), but
-  // held in STATE so it can be RESOLVED when missing — e.g. a notification tap
-  // cold-starts the app and only the conversationId is passed (no name/avatar),
-  // which previously left the header showing the generic "Chat" + "?" avatar.
-  // We backfill from the cached conversation list (synchronous) and a network
-  // refresh below. Mirrors Signal-Android's ConversationIntents, where the
-  // thread resolves the recipient from its id when launched from a notification.
-  const [name, setName] = useState<string | undefined>(params.name);
-  const [headerAvatar, setHeaderAvatar] = useState<string | null>(
-    params.avatar || null,
-  );
-  // Whether this conversation is a group thread. Group calls now stay on the
-  // unified call path (no forced meeting redirect).
-  const [isGroupConv, setIsGroupConv] = useState(params.isGroup === "1");
-  const [groupMemberAvatars, setGroupMemberAvatars] = useState<string[]>(
-    parsedGroupMemberAvatars,
-  );
-  // Caller's local group role + the group's description, surfaced to the
-  // group-settings screen (Phase 1). Resolved from the conversation row.
-  const [myGroupRole, setMyGroupRole] = useState<string>("member");
-  const [groupDescription, setGroupDescription] = useState<string>("");
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const kbInset = useKeyboardInset();
   const { width: winWidth, height: winHeight } = useWindowDimensions();
   const { user } = useAuth();
   const { alert, confirm, dialog } = useDialog();
+
   // Seed from the on-device cache SYNCHRONOUSLY so the thread paints instantly
   // (Signal-style) instead of blocking on a full-screen spinner. The network
   // refresh in `load()` reconciles in the background. `loading` only stays true
@@ -496,109 +105,63 @@ export function useChatThread() {
   // entire array (and therefore change callback identity after every page).
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-  const [loading, setLoading] = useState(
-    () => !initialCachedMessages || initialCachedMessages.length === 0,
-  );
-  // "Delete for me" hidden ids (local-only, persisted per conversation). The
-  // source `messages` array stays intact for server reconciliation; the
-  // rendered list filters these out (see `visibleMessages`).
-  const [locallyDeleted, setLocallyDeleted] = useState<Set<number>>(
-    () => new Set(getLocalDeletedIds(convId)),
-  );
-  // Cursor pagination for older history (mirrors web loadMore). A full cached
-  // newest page means older history MAY exist, so keep pagination enabled until
-  // an actual older-page request proves otherwise. The latest-page refresh must
-  // never turn this off: it only knows about newest rows, not historical depth.
-  const [hasMore, setHasMore] = useState(
-    () => (initialCachedMessages?.length || 0) >= INITIAL_THREAD_PAGE_SIZE,
-  );
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  const [loadOlderError, setLoadOlderError] = useState<string | null>(null);
   const [text, setText] = useState("");
-  const [peerTyping, setPeerTyping] = useState(false);
-  const [reactTarget, setReactTarget] = useState<ChatMessage | null>(null);
-  // Window-space rect of the long-pressed bubble so the reaction bar can be
-  // positioned right next to it (matching the web behavior), instead of being
-  // fixed in the middle of the screen.
-  const [reactAnchor, setReactAnchor] = useState<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    mine: boolean;
-  } | null>(null);
-  const [barSize, setBarSize] = useState<{ width: number; height: number }>({
-    width: 300,
-    height: 44,
+  // Guards async continuations after route replacement / back navigation. A
+  // replaced chat screen can unmount while messages/read-status/presence requests
+  // are still in flight; without this guard their `.then()` continuations can
+  // still allocate objects and call setState on a dead conversation.
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Docked in-app emoji keyboard + composer input handle.
+  const {
+    inputRef,
+    emojiKeyboardOpen,
+    emojiKeyboardHeight,
+    toggleEmojiKeyboard,
+    insertEmoji,
+    emojiBackspace,
+    onComposerInputFocus,
+    onEmojiSearchFocus,
+    onEmojiSearchBlur,
+  } = useChatComposerKeyboard({
+    setText,
+    kbInset,
+    windowHeight: winHeight,
   });
-  const [actionTarget, setActionTarget] = useState<ChatMessage | null>(null);
-  // When true, the action-sheet modal shows the "Forward to…" conversation
-  // picker INSTEAD of the action rows. Forward used to live in a separate
-  // <Modal> opened via setTimeout after dismissing the action sheet — on
-  // Android presenting a modal while another is dismissing silently fails,
-  // which is why Forward appeared broken. A single modal with switching
-  // content has no such race.
-  const [forwardMode, setForwardMode] = useState(false);
-  const [showAllEmoji, setShowAllEmoji] = useState(false);
-  // Whether the emoji grid inserts into the composer ("compose") or reacts to
-  // the selected message ("react").
-  const [emojiMode, setEmojiMode] = useState<"react" | "compose">("react");
-  const [plusOpen, setPlusOpen] = useState(false);
-  // Signal-style in-app camera (full-screen). Opened from the composer camera
-  // button; supports tap-for-photo / hold-for-video + an in-camera recent-
-  // gallery strip (see CameraCapture).
-  const [cameraOpen, setCameraOpen] = useState(false);
-  // Signal-style media editor: the picked/captured images awaiting edit + send.
-  const [editorItems, setEditorItems] = useState<
-    { uri: string; width?: number; height?: number }[] | null
-  >(null);
-  // Captured/picked VIDEO awaiting review in the Signal-style preview screen
-  // (caption + view-once + send/discard). Videos used to upload the instant the
-  // shutter was released, with no chance to review or cancel.
-  const [videoPreview, setVideoPreview] = useState<{
-    uri: string;
-    fileName: string;
-    mimeType: string;
-    width?: number;
-    height?: number;
-  } | null>(null);
-  const [tenorOpen, setTenorOpen] = useState(false);
-  const [tenorKind, setTenorKind] = useState<"gif" | "sticker">("gif");
-  // Docked in-app emoji keyboard (Signal-style). When open we hide the system
-  // keyboard and show EmojiKeyboard at the last-measured keyboard height so the
-  // message list doesn't jump.
-  const [emojiKeyboardOpen, setEmojiKeyboardOpen] = useState(false);
-  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [uploading, setUploading] = useState(false);
-  // Peer (1:1) identity + live status for the header avatar badge.
-  const [peerUserId, setPeerUserId] = useState<number | null>(
-    params.peerId ? Number(params.peerId) : null,
-  );
-  const [peerStatus, setPeerStatus] = useState<string | null>(null);
-  // Whether the peer is currently logged in from the office or working remotely
-  // (from today's attendance clock-in). null = logged out / no data. Shown as a
-  // badge in the header. Updated on presence fetch only (no live WS event).
-  const [peerWorkMode, setPeerWorkMode] = useState<string | null>(null);
-  // Delivery / read receipts (userId → ISO last_read_at) + participant count.
-  // Seed from the on-device cache SYNCHRONOUSLY (same pattern as `messages`)
-  // so the read-receipt tick colour is correct on the FIRST frame. Without
-  // this, the cached messages painted instantly but `readReceipts` started
-  // empty and was only filled by the async `getReadStatus()` round-trip in
-  // `load()` — so the ticks flipped from delivered (muted) → read (accent) a
-  // fraction of a second after the chat opened. The network refresh below now
-  // just confirms what's already shown instead of causing a visible flip.
-  const cachedReceipts = useMemo(() => getCachedReadStatus(convId), [convId]);
-  const [readReceipts, setReadReceipts] = useState<Record<number, string>>(
-    () => cachedReceipts || {},
-  );
-  const [participantCount, setParticipantCount] = useState(2);
-  // Pinned messages (banner at the top of the chat).
-  const [pinnedMsgs, setPinnedMsgs] = useState<PinnedMessage[]>([]);
-  // Locally-tracked starred message ids (server list doesn't return per-message
-  // starred state, so we reflect it optimistically after the action).
-  const [starredIds, setStarredIds] = useState<Set<number>>(new Set());
+
+  // Header identity (name / avatar / group flag) + live peer presence + block.
+  const {
+    name,
+    headerAvatar,
+    isGroupConv,
+    groupMemberAvatars,
+    myGroupRole,
+    groupDescription,
+    peerUserId,
+    peerStatus,
+    peerWorkMode,
+    participantCount,
+    isBlocked,
+    headerSubtitle,
+    doToggleBlock,
+  } = useChatPeerIdentity({
+    convId,
+    paramName: params.name,
+    paramAvatar: params.avatar,
+    paramPeerId: params.peerId,
+    paramIsGroup: params.isGroup,
+    paramGroupMemberAvatars: params.groupMemberAvatars,
+    parsedGroupMemberAvatars,
+    confirm,
+  });
+
   const {
     selectedIds,
     selectedMessages,
@@ -609,1479 +172,263 @@ export function useChatThread() {
     toggleSelect,
     selectOnly,
   } = useChatMessageSelection(messages, user?.id);
-  // Top-anchored overflow menu (Signal-style) open state.
-  const [menuOpen, setMenuOpen] = useState(false);
-  // Block state for the 1:1 peer (Signal parity). When blocked, the composer
-  // is replaced with an Unblock banner and sends are rejected server-side.
-  const [isBlocked, setIsBlocked] = useState(false);
-  // ── Signal-style IN-CONVERSATION search ──────────────────────────────────
-  // Instead of pushing a separate route, search runs in-place over the
-  // currently-loaded thread: the header swaps to a search bar and a bottom
-  // match-navigation bar steps through hits, scrolling the (inverted) list to
-  // each and flashing a highlight on the matched bubble.
-  const [searchMode, setSearchMode] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  // Matching message ids in OLDEST-FIRST order (same order as `messages`).
-  const [searchMatchIds, setSearchMatchIds] = useState<number[]>([]);
-  const [searchActiveIdx, setSearchActiveIdx] = useState(0);
-  // The message currently focused by search — drives the bubble highlight flash.
-  const [highlightedId, setHighlightedId] = useState<number | null>(null);
-  // Header 3-dot menu + its panels (search / pinned / shared files / saved).
-  const [headerSheet, setHeaderSheet] = useState<HeaderSheet>(null);
-  const [sheetSearchQ, setSheetSearchQ] = useState("");
-  const [sheetSearchResults, setSheetSearchResults] = useState<
-    MessageSearchResult[]
-  >([]);
-  const [sheetLoading, setSheetLoading] = useState(false);
-  const [sharedFiles, setSharedFiles] = useState<SharedFile[]>([]);
-  const [savedMsgs, setSavedMsgs] = useState<StarredMessage[]>([]);
-  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Explicit recording flag: true WHILE the user is recording a voice message.
-  // It also GATES the mount of <VoiceRecorderController> (which owns the native
-  // recorder) — see the recording handlers below.
-  const [isRecordingActive, setIsRecordingActive] = useState(false);
-  // Live recording duration (ms), pushed up from VoiceRecorderController so the
-  // composer's recording bar shows the counter.
-  const [recordingMillis, setRecordingMillis] = useState(0);
-  // Voice recording (expo-audio).
-  //
-  // PERF (chat-open jank root cause): `useAudioRecorder` / `useAudioRecorderState`
-  // and `useAudioPlayer` each construct a NATIVE shared object on mount. Creating
-  // them here meant every chat OPEN allocated a native recorder + player (and a
-  // status poll) on the critical first-render path, competing with the
-  // navigation slide-in. Signal only touches the audio session WHILE recording /
-  // when a sound actually plays, so both are now created lazily:
-  //   • the recorder lives in <VoiceRecorderController>, mounted ONLY while
-  //     recording (gated by isRecordingActive);
-  //   • the reaction-sound player is created on first react (see playReactionSound).
-  // Imperative handle into the mounted recorder controller (stop / cancel).
-  const voiceHandleRef = useRef<VoiceRecorderControllerHandle | null>(null);
-  // Dedicated player for the short "reaction added" feedback tone, created
-  // lazily on first use and released on unmount.
-  const reactionSoundPlayerRef = useRef<AudioPlayer | null>(null);
-  // Release the lazily-created reaction-sound player when the thread unmounts.
-  useEffect(
-    () => () => {
-      try {
-        reactionSoundPlayerRef.current?.release();
-      } catch {
-        /* ignore */
-      }
-      reactionSoundPlayerRef.current = null;
-    },
-    [],
-  );
 
-  // Ref mirror of isRecordingActive — guards against double-start re-entrancy
-  // in the recording handlers without depending on the stale polled value.
-  const recordingRef = useRef(false);
-  const listRef = useRef<FlashListRef<ChatMessage>>(null);
-  // Whether the list is currently near the visual bottom (newest message).
-  // We only auto-scroll to the newest message on an
-  // INCOMING message when the user is already at the bottom — otherwise we keep
-  // their scroll position (Signal-style) and let the floating "scroll to latest"
-  // pill surface instead of yanking them down mid-read.
-  const atBottomRef = useRef(true);
-  // A stale warm cache may receive a genuinely newer server tail during the
-  // first REST reconcile. Follow that tail only while this remains an untouched
-  // normal open; a drag or any targeted jump permanently takes precedence.
-  const initialReconcileTailAllowedRef = useRef(notificationMessageId == null);
-  // Tail appends are committed asynchronously. Record scroll intent and execute
-  // it after the new last row is in FlashList; calling scrollToEnd immediately
-  // after setMessages can only reach the old measured end.
-  const pendingTailScrollRef = useRef<{
-    animated: boolean;
-    requireUntouchedOpen?: boolean;
-  } | null>(null);
-  // `initialScrollIndex` is only an estimate until FlashList has measured the
-  // variable-height message rows. The measurement-aware correction triggered by
-  // FlashList's first `onLoad` runs a short, bounded settle loop (re-pinning to
-  // the tail each frame while content height is still growing); these refs hold
-  // the pending frame handle and the loop's start timestamp so it can be capped
-  // and cancelled on unmount.
-  const initialTailScrollFrameRef = useRef<number | null>(null);
-  const initialTailSettleStartRef = useRef<number>(0);
-  // Invalidates async page/reconcile responses after a destructive dataset
-  // change (for example chat_cleared), preventing stale history resurrection.
-  const messageGenerationRef = useRef(0);
-  const latestLoadRequestRef = useRef(0);
-  // Whether THIS thread screen is the one currently focused. Expo Router keeps
-  // previously-visited `chat/[id]` screens mounted in the stack, so without this
-  // gate every backgrounded thread's socket handler would still run the full
-  // heavy per-event work (setMessages reconciles, receipt maps, pin refreshes)
-  // for EVERY live event — cost that scales with how many chats you opened this
-  // session and is the root cause of the "fast at first, then lags/freezes"
-  // degradation. Signal keeps a single active conversation data source; we
-  // mirror that by making backgrounded threads inert for non-critical events.
-  const isFocusedRef = useRef(true);
-  // Timestamp (ms) of the last completed network reconcile. Used to skip a
-  // redundant `load()` when the same thread is re-focused within a short window
-  // (quickly bouncing in/out of a chat shouldn't repay the full reconcile).
-  const lastLoadedAtRef = useRef(__LAST_THREAD_RECONCILE_AT.get(convId) || 0);
-  // Guards async continuations after route replacement / back navigation. A
-  // replaced chat screen can unmount while messages/read-status/presence requests
-  // are still in flight; without this guard their `.then()` continuations can
-  // still allocate objects and call setState on a dead conversation.
-  const mountedRef = useRef(true);
-  // Bubble host-node refs so we can reliably measure each bubble's window rect
-  // for the reaction-bar anchor (Pressable forwards its ref to the host View,
-  // which exposes measureInWindow — currentTarget often does not).
-  const bubbleRefs = useRef<Map<number, View>>(new Map());
-  const mediaUploadControllers = useRef<Map<number, AbortController>>(
-    new Map(),
-  );
-  const mediaUploadSources = useRef<Map<number, PendingMediaSource>>(new Map());
-  // Per-upload throughput sampler: last {timestamp, bytes} so we can derive a
-  // live bytes/sec speed for the Signal-style upload label.
-  const uploadProgressTs = useRef<Map<number, { t: number; loaded: number }>>(
-    new Map(),
-  );
-  const typingSentAt = useRef(0);
-  const typingClear = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Synchronous pagination lock. React state is not updated until the next
-  // render, so repeated start-reached events could otherwise observe
-  // loadingOlder=false and issue the same cursor request in one frame.
-  const olderRequestCursorRef = useRef<number | null>(null);
-  // TextInput handle so we can blur/focus when switching between the system
-  // keyboard and the in-app emoji keyboard.
-  const inputRef = useRef<TextInput>(null);
-  const emojiKeyboardOpenRef = useRef(false);
-  const emojiKeyboardFocusTimer = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  // One-shot guard so the "system keyboard appeared → close emoji" safety
-  // effect below ignores the STALE keyboard height reported while the OS
-  // keyboard is still animating away after we deliberately switched to the
-  // in-app emoji keyboard. Without it, tapping the emoji toggle WHILE typing
-  // immediately re-closed the emoji panel (the dismiss is async, so kbInset
-  // was still > 100 on the render that opened it). Re-armed once the system
-  // keyboard is genuinely hidden (kbInset back to 0). Mirrors Signal-Android's
-  // transition-based InputAwareLayout (it tracks the keyboard transition, not a
-  // momentary height value).
-  const ignoreKbForEmoji = useRef(false);
-  // True while the emoji keyboard's search field has focus so the system
-  // keyboard is intentionally visible — suppresses the safety effect that
-  // auto-closes the emoji panel when kbInset rises.
-  const emojiSearchFocused = useRef(false);
-  // Last-measured system keyboard height — the in-app emoji keyboard is shown
-  // at this height so toggling between them doesn't shift the message list.
-  // Seeded from ~40 % of the screen height (a reliable cross-device estimate)
-  // so the panel is correctly sized even before the system keyboard has ever
-  // appeared this session.
-  const lastKbHeight = useRef(Math.round(winHeight * 0.4));
-  if (kbInset > 100) lastKbHeight.current = kbInset;
+  const {
+    listRef,
+    atBottomRef,
+    initialReconcileTailAllowedRef,
+    pendingTailScrollRef,
+    scrollToEnd,
+    onListLoad,
+    requestTailScroll,
+    onListScroll,
+    onListInteraction,
+    jumpToMessage,
+  } = useChatThreadScroll({
+    messages,
+    messagesRef,
+    mountedRef,
+    allowInitialTailScroll: notificationMessageId == null,
+  });
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (typingClear.current) clearTimeout(typingClear.current);
-      for (const controller of mediaUploadControllers.current.values()) {
-        try {
-          controller.abort();
-        } catch {
-          /* ignore */
-        }
-      }
-      mediaUploadControllers.current.clear();
-      mediaUploadSources.current.clear();
-      uploadProgressTs.current.clear();
-      if (initialTailScrollFrameRef.current != null) {
-        cancelAnimationFrame(initialTailScrollFrameRef.current);
-        initialTailScrollFrameRef.current = null;
-      }
-    };
-  }, []);
+  // Long-press surfaces: the reaction bar/overlay, the action sheet target and
+  // the emoji picker they share.
+  const {
+    reactTarget,
+    setReactTarget,
+    reactAnchor,
+    setReactAnchor,
+    actionTarget,
+    setActionTarget,
+    showAllEmoji,
+    setShowAllEmoji,
+    emojiMode,
+    setEmojiMode,
+    registerBubbleRef,
+    react,
+    pickEmoji,
+    closeEmojiPicker,
+    enterSelectionWith,
+    openReactionBar,
+    computeBarPosition,
+    onReactionBarLayout,
+  } = useChatMessageContextMenu({
+    user,
+    setMessages,
+    setText,
+    selectedIds,
+    toggleSelect,
+    selectOnly,
+    windowWidth: winWidth,
+    windowHeight: winHeight,
+    insetTop: insets.top,
+  });
 
-  useEffect(() => {
-    emojiKeyboardOpenRef.current = emojiKeyboardOpen;
-  }, [emojiKeyboardOpen]);
-
-  useEffect(
-    () => () => {
-      if (emojiKeyboardFocusTimer.current) {
-        clearTimeout(emojiKeyboardFocusTimer.current);
-      }
-    },
-    [],
-  );
-
-  // Hydrate emoji recents + skin-tone preference once — but DEFER it past the
-  // open transition. It's only needed when the emoji panel/picker is first
-  // opened, so running it eagerly on mount just added JS-thread work competing
-  // with the screen's slide-in animation (part of the laggy open). Running it
-  // after interactions keeps the open snappy without any user-visible delay.
-  useEffect(() => {
-    const task = InteractionManager.runAfterInteractions(() => {
-      hydrateEmojiStore();
-    });
-    return () => task.cancel();
-  }, []);
-
-  // If the system keyboard GENUINELY appears (user tapped the field), close the
-  // in-app emoji keyboard so the two never stack. We must ignore the STALE
-  // keyboard height reported while the OS keyboard is still animating away
-  // right after we deliberately switched to the emoji keyboard — otherwise
-  // tapping the emoji toggle WHILE typing instantly re-closed the panel that
-  // had just opened (the dismiss is async, so kbInset was momentarily still
-  // > 100 on the render that set emojiKeyboardOpen=true). Once the keyboard is
-  // fully hidden (kbInset back to 0) we re-arm the guard so a real later
-  // keyboard appearance still closes the emoji panel.
-  useEffect(() => {
-    if (kbInset > 100) {
-      if (ignoreKbForEmoji.current) return; // stale height from the dismissing keyboard
-      // Emoji search field is focused → system keyboard is intentional; keep
-      // the emoji panel open so the user can see search results above the keyboard.
-      if (emojiSearchFocused.current) return;
-      if (emojiKeyboardOpen) setEmojiKeyboardOpen(false);
-    } else {
-      ignoreKbForEmoji.current = false; // keyboard fully hidden → re-arm
-      emojiSearchFocused.current = false;
-    }
-  }, [kbInset, emojiKeyboardOpen]);
-
-  // Scroll to the newest message. FlashList renders the oldest-first data from
-  // the bottom and preserves the visible position when history is prepended.
-  const scrollToEnd = useCallback((animated = false) => {
-    atBottomRef.current = true;
-    listRef.current?.scrollToEnd({ animated });
-  }, []);
-
-  // FlashList applies `initialScrollIndex` before variable-height bubbles have
-  // their final measurements, which can leave a normal chat open ABOVE the true
-  // tail (the reported "not at the latest message on open" bug). `onLoad` only
-  // fires after the FIRST layout — media / reply / reaction rows below the fold
-  // are often still expanding at that point, and this FlashList's `scrollToEnd`
-  // is itself async (scrollToIndex → setTimeout → scrollToEnd), so a single
-  // correction lands short and nothing re-pins after later growth.
-  //
-  // Fix: run a short, BOUNDED settle loop. Each animation frame we re-pin to the
-  // end and read the last row's measured bottom; while that keeps growing (rows
-  // still expanding) we scroll again, stopping as soon as it stabilises or a
-  // small cap (~8 frames / ~250ms) is reached. `onPositioned` is invoked only
-  // once the position has settled so the caller can reveal the list already at
-  // the newest message (no visible jump). Targeted opens (notification / search
-  // / pinned / reply) and any user interaction disable this through the same
-  // `initialReconcileTailAllowedRef` guard used by the stale-cache reconcile —
-  // in those cases we reveal immediately without forcing the tail.
-  const onListLoad = useCallback(
-    (onPositioned?: () => void) => {
-      if (
-        !initialReconcileTailAllowedRef.current ||
-        messagesRef.current.length === 0
-      ) {
-        onPositioned?.();
-        return;
-      }
-      if (initialTailScrollFrameRef.current != null) {
-        cancelAnimationFrame(initialTailScrollFrameRef.current);
-        initialTailScrollFrameRef.current = null;
-      }
-
-      const MAX_SETTLE_MS = 250;
-      const MAX_SETTLE_FRAMES = 8;
-      initialTailSettleStartRef.current = Date.now();
-
-      // Reachable bottom of the last row. Prefer the measured layout; fall back
-      // to the child container height when a build doesn't expose getLayout.
-      const measureBottom = (): number => {
-        const list = listRef.current;
-        if (!list) return 0;
-        const lastIndex = messagesRef.current.length - 1;
-        try {
-          const layout = list.getLayout?.(lastIndex);
-          if (layout) return layout.y + layout.height;
-        } catch {
-          /* getLayout can throw before the row is measured — ignore */
-        }
-        try {
-          const dims = (
-            list as unknown as {
-              getChildContainerDimensions?: () => { height: number };
-            }
-          ).getChildContainerDimensions?.();
-          if (dims) return dims.height;
-        } catch {
-          /* optional API — ignore */
-        }
-        return 0;
-      };
-
-      // Guarantee the list is revealed exactly once even if the loop is aborted.
-      let revealed = false;
-      const reveal = () => {
-        if (revealed) return;
-        revealed = true;
-        onPositioned?.();
-      };
-
-      let prevBottom = -1;
-      let frameCount = 0;
-
-      const step = () => {
-        initialTailScrollFrameRef.current = null;
-        // Component gone, or a drag / targeted jump took precedence: stop
-        // forcing the tail and reveal whatever the user is now looking at.
-        if (!mountedRef.current || !initialReconcileTailAllowedRef.current) {
-          reveal();
-          return;
-        }
-
-        scrollToEnd(false);
-
-        const bottom = measureBottom();
-        const grew = bottom > prevBottom + 0.5;
-        prevBottom = bottom;
-        frameCount += 1;
-
-        const elapsed = Date.now() - initialTailSettleStartRef.current;
-        const capped =
-          frameCount >= MAX_SETTLE_FRAMES || elapsed >= MAX_SETTLE_MS;
-
-        if (grew && !capped) {
-          // Rows still expanding — pin again next frame.
-          initialTailScrollFrameRef.current = requestAnimationFrame(step);
-          return;
-        }
-
-        // Height stabilised (or cap hit): one final pin, then reveal.
-        scrollToEnd(false);
-        reveal();
-      };
-
-      initialTailScrollFrameRef.current = requestAnimationFrame(step);
-    },
-    [scrollToEnd],
-  );
-
-  const requestTailScroll = useCallback((animated = true) => {
-    pendingTailScrollRef.current = { animated };
-  }, []);
-
-  const newestMessageKey =
-    messages.length > 0
-      ? (messages[messages.length - 1].clientMsgId ??
-        String(messages[messages.length - 1].id))
-      : null;
-
-  // FlashList's old autoscroll threshold treated `80` as 80 VIEWPORTS, not
-  // pixels, and could jump from nearly anywhere on every prepend. Tail scrolling
-  // is now explicit and only armed by a genuine append/send.
-  useEffect(() => {
-    const pending = pendingTailScrollRef.current;
-    if (!pending || newestMessageKey == null) return;
-    pendingTailScrollRef.current = null;
-    const frame = requestAnimationFrame(() => {
-      if (!mountedRef.current) return;
-      if (
-        pending.requireUntouchedOpen &&
-        !initialReconcileTailAllowedRef.current
-      )
-        return;
-      scrollToEnd(pending.animated);
-      if (pending.requireUntouchedOpen) {
-        initialReconcileTailAllowedRef.current = false;
-      }
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [newestMessageKey, scrollToEnd]);
-
-  // Track whether the list is near the visual bottom. The chat screen forwards
-  // the already-computed distance from the bottom here. This
-  // gates the incoming-message auto-scroll so a new message never yanks the
-  // user down while they're reading history (Signal keeps the position and
-  // surfaces the "scroll to latest" pill instead).
-  const onListScroll = useCallback((distanceFromBottom: number) => {
-    atBottomRef.current = distanceFromBottom <= 80;
-  }, []);
-
-  const onListInteraction = useCallback(() => {
-    initialReconcileTailAllowedRef.current = false;
-  }, []);
-
-  // When the peer starts typing, keep the newest bubble visible only if the user
-  // is already near latest. Never restore/jump away from a historical window.
-  useEffect(() => {
-    if (peerTyping && atBottomRef.current) scrollToEnd(true);
-  }, [peerTyping, scrollToEnd]);
-
-  // Register/unregister a bubble's host node so the reaction bar can measure
-  // it (see openReactionBar). Keeping this stable avoids re-registering on
-  // every render.
-  const registerBubbleRef = useCallback((msgId: number, node: View | null) => {
-    if (node) bubbleRefs.current.set(msgId, node);
-    else bubbleRefs.current.delete(msgId);
-  }, []);
-
-  const loadPinned = useCallback(() => {
-    getPinnedMessages(convId)
-      .then((r) => setPinnedMsgs(r.data || []))
-      .catch(() => {});
-  }, [convId]);
-
-  const markReadAndSync = useCallback(() => {
-    markConversationRead(convId)
-      .then(() => {
-        // T030: Update unread manager when conversation is marked read
-        chatUnreadManager.markConversationRead(convId);
-        emitChatUnreadChanged();
-      })
-      .catch(() => {});
-    // SIGNAL PARITY: opening/reading a conversation in-app must also dismiss its
-    // status-bar message notification AND refresh/cancel the cross-conversation
-    // group summary so the umbrella count stays accurate (and disappears with
-    // the last chat). Best-effort; no-ops when Notifee is unavailable.
-    void notifeeService.cancelMessageNotification(convId);
-  }, [convId]);
-
-  // Track the conversation currently ON SCREEN so the push-notification handler
-  // can SUPPRESS the status-bar banner for messages that belong to the chat the
-  // user is already reading (WhatsApp/Signal/Teams parity — you never get a
-  // banner for the conversation that's open in the foreground). The server has
-  // no idea which screen the recipient is on, so it always sends a message push
-  // (correct — it guarantees delivery for backgrounded/offline devices); this
-  // lets the CLIENT make the "I'm already here, don't show a banner" decision in
-  // backgroundPushService.handleNotificationPayload. We use useFocusEffect (not
-  // a plain useEffect) so the id is cleared when this screen loses focus —
-  // navigating to a sub-screen (info/search/saved) or backing out to the list —
-  // and re-set when it regains focus, so banners resume the moment you leave.
-  useFocusEffect(
-    useCallback(() => {
-      isFocusedRef.current = true;
-      setActiveConversation(convId);
-      // Signal single-active-conversation model: the thread body is UNMOUNTED
-      // while a sub-screen (search / saved / pinned) is on top, so a jump that
-      // screen emitted while we were gone never reached a live subscriber. On
-      // refocus (remount) consume any recent pending jump for THIS conversation
-      // and scroll to it once the list has settled.
-      const pendingJumpId = consumePendingChatJump(convId);
-      if (pendingJumpId != null) {
-        setTimeout(() => jumpToMessage(pendingJumpId), 120);
-      }
-      return () => {
-        isFocusedRef.current = false;
-        setActiveConversation(null);
-      };
-      // jumpToMessage reads refs + current messages and is stable enough; convId
-      // is the only real dependency.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [convId]),
-  );
-
-  const load = useCallback(async (opts?: { force?: boolean }) => {
-    const force = opts?.force === true;
-    const now = Date.now();
-    if (
-      !force &&
-      initialCachedMessages &&
-      initialCachedMessages.length > 0 &&
-      now - lastLoadedAtRef.current < THREAD_RECONCILE_TTL_MS
-    ) {
-      // Warm cache + very recent reconcile: do not repay the full messages /
-      // read-status / pinned refresh on quick repeated open/exit cycles. The
-      // global cache sync keeps incoming messages current while the thread is
-      // closed; the next open after the TTL will reconcile normally.
-      setLoading(false);
-      return;
-    }
-
-    const requestId = ++latestLoadRequestRef.current;
-    const generation = messageGenerationRef.current;
-    try {
-      const { data } = await getMessages(convId);
-      if (
-        !mountedRef.current ||
-        requestId !== latestLoadRequestRef.current ||
-        generation !== messageGenerationRef.current
-      )
-        return;
-      // Map the REST reply aliases (reply_content / reply_sender_name /
-      // reply_file_*) to the canonical reply_to_* shape so the in-bubble quote
-      // doesn't collapse to the generic "Message" when this refresh replaces
-      // the optimistic / WS rows (see normalizeFetchedMessage).
-      const normalized = (Array.isArray(data) ? data : []).map(
-        normalizeFetchedMessage,
-      );
-      // Re-append any still-pending outbox messages — the server obviously
-      // doesn't have them yet, and wholesale-replacing the list without them
-      // would make an unsent (offline) message vanish mid-session.
-      const refreshed = mergeOutboxIntoMessages(
-        normalized,
-        convId,
-        user?.id,
-        user?.full_name,
-      );
-      if (
-        initialReconcileTailAllowedRef.current &&
-        appendsNewerServerTail(messagesRef.current, refreshed)
-      ) {
-        pendingTailScrollRef.current = {
-          animated: false,
-          requireUntouchedOpen: true,
-        };
-      }
-      setMessages((prev) => {
-        // Keep already-loaded history and reconcile the newest server page into
-        // the same continuous oldest-first collection. FlashList virtualizes the
-        // native cells; removing rows from the opposite edge here would make the
-        // latest messages unreachable by manual scrolling.
-        const merged = mergeNewestPageIntoLoadedThread(prev, refreshed);
-        return messageArraysEquivalentForThread(prev, merged) ? prev : merged;
-      });
-      // Persist the freshest page so the next open paints instantly from disk.
-      setCachedMessages(convId, normalized);
-      // Do NOT set hasMore=false from this newest-page refresh. Only loadOlder()
-      // can know when older history is exhausted; otherwise waiting for this
-      // reconcile could disable pagination before the user scrolls up.
-      if (normalized.length >= INITIAL_THREAD_PAGE_SIZE) setHasMore(true);
-      markReadAndSync();
-      // Seed read receipts so own messages show the correct tick immediately.
-      // Also persist them to the on-device cache so the NEXT open paints the
-      // read colour on the first frame (no delivered→read flip).
-      getReadStatus(convId)
-        .then((r) => {
-          if (
-            !mountedRef.current ||
-            requestId !== latestLoadRequestRef.current ||
-            generation !== messageGenerationRef.current
-          )
-            return;
-          const map: Record<number, string> = {};
-          for (const row of r.data || []) {
-            if (row.user_id != null && row.last_read_at) {
-              map[row.user_id] = row.last_read_at;
-            }
-          }
-          // Skip the state update when the map is unchanged. Every `load()`
-          // otherwise replaced `readReceipts` with a NEW object identity even
-          // when the receipts were identical — and since MessageBubble
-          // reference-compares `readReceipts`, that rebound EVERY mounted row on
-          // each refocus/reconcile. Only commit a genuine change.
-          setReadReceipts((prev) => (readMapsEqual(prev, map) ? prev : map));
-          setCachedReadStatus(convId, map);
-        })
-        .catch(() => {});
-      // Record the reconcile time so a quick re-focus of the same thread can
-      // skip repaying this whole `load()` (see the focus-gated effect below).
-      const loadedAt = Date.now();
-      lastLoadedAtRef.current = loadedAt;
-      rememberThreadReconcile(convId, loadedAt);
-    } catch {
-      /* keep the cached thread visible */
-    } finally {
-      if (mountedRef.current && requestId === latestLoadRequestRef.current)
-        setLoading(false);
-    }
-  }, [
+  const {
+    pinnedMsgs,
+    setPinnedMsgs,
+    latestPin,
+    starredIds,
+    setStarredIds,
+    loadPinned,
+    doPin,
+    doStar,
+    unpinFromBanner,
+    pinSelected,
+    saveSelected,
+  } = useChatPinsAndStars({
     convId,
-    initialCachedMessages,
+    setMessages,
+    setActionTarget,
+    selectedMessages,
+    clearSelection,
+    alert,
+  });
+
+  const {
+    loading,
+    hasMore,
+    setHasMore,
+    loadingOlder,
+    setLoadingOlder,
+    loadOlderError,
+    setLoadOlderError,
+    setLocallyDeleted,
+    readReceipts,
+    setReadReceipts,
+    visibleMessages,
+    loadOlder,
     markReadAndSync,
-    user?.id,
-    user?.full_name,
-  ]);
-
-  // A notification tap carries the exact message id that must be visible. The
-  // normal open path intentionally delays `load()` until after navigation
-  // interactions and may skip it for THREAD_RECONCILE_TTL_MS on a warm cache.
-  // That is good for ordinary chat-list opens, but bad for notification opens:
-  // the status-bar push can arrive while the websocket/cache path is suspended,
-  // so the cached thread may not yet contain the tapped message. If the route
-  // includes a messageId and the synchronous cache seed does not contain it,
-  // force an immediate reconcile that bypasses both the animation delay and TTL.
-  useEffect(() => {
-    if (!notificationMessageId) return;
-    if (messages.some((m) => Number(m.id) === notificationMessageId)) return;
-    void load({ force: true });
-  }, [load, messages, notificationMessageId]);
-
-  // Defer the network refresh + its (large) setMessages re-render until AFTER
-  // the screen's open transition has settled. The cached page is already on
-  // screen (see cachedMessages), so this is a pure background reconcile — running
-  // it synchronously on mount used to fire a heavy re-render DURING the
-  // slide-in animation, which dropped frames and made the open feel laggy.
-  // InteractionManager runs it on the first idle frame after the transition,
-  // keeping the animation smooth (Signal-Android feel).
-  //
-  // CRITICAL: that reasoning only holds for a WARM thread, where the cached
-  // page is already painted and the reconcile is genuinely cosmetic. On a COLD
-  // thread (first-ever open, or a cache cleared/expired) the screen is EMPTY —
-  // deferring behind InteractionManager plus a 250ms timer is pure dead time
-  // stacked on top of the network round-trip, and it is exactly what made a
-  // first open feel slow. When there is nothing to show, fetch immediately.
-  const hasWarmCache = (initialCachedMessages?.length || 0) > 0;
-  useEffect(() => {
-    if (!hasWarmCache) {
-      // Cold open: nothing on screen, so there is no animation to protect.
-      load();
-      loadPinned();
-      return;
-    }
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const task = InteractionManager.runAfterInteractions(() => {
-      // Give the native push animation a short quiet window after interactions
-      // settle before doing the first network reconcile. This avoids a large
-      // setMessages/read-receipts/pinned commit landing in the same frame range
-      // as the screen slide-in, which was the remaining "fast but not smooth"
-      // open stutter on long conversations.
-      timer = setTimeout(() => {
-        load();
-        loadPinned();
-      }, 250);
-    });
-    return () => {
-      task.cancel();
-      if (timer) clearTimeout(timer);
-    };
-  }, [hasWarmCache, load, loadPinned]);
-
-  // Cross-screen "jump to message": the in-conversation search / saved / pinned
-  // screens live on separate routes. When the user taps a result there, they
-  // pop back to this (already-mounted) thread and emit a jump event — subscribe
-  // here and scroll to the target once it lands.
-  useEffect(() => {
-    const off = subscribeChatJump((cid, messageId) => {
-      if (cid !== convId) return;
-      // Defer a touch so the back-navigation transition has fully settled.
-      setTimeout(() => jumpToMessage(messageId), 80);
-    });
-    return off;
-    // jumpToMessage is stable enough (reads refs + current messages); convId is
-    // the only real dependency.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [convId]);
-
-  // Load an older page of messages using the oldest real message id as a
-  // cursor (mirrors the web loadMore). Triggered by the "load earlier"
-  // header button / top-reach.
-  const loadOlder = useCallback(async () => {
-    if (loadingOlder || !hasMore || olderRequestCursorRef.current != null) return;
-    // Oldest REAL (server-assigned) id — skip optimistic negative ids.
-    const oldest = messagesRef.current.find((m) => m.id > 0);
-    if (!oldest) return;
-    // Acquire before setState so two edge callbacks in the same JS turn cannot
-    // race. The cursor also makes the guard explicit in profiler traces.
-    olderRequestCursorRef.current = oldest.id;
-    const generation = messageGenerationRef.current;
-    setLoadingOlder(true);
-    setLoadOlderError(null);
-    try {
-      const { data } = await getMessages(convId, oldest.id);
-      if (!mountedRef.current || generation !== messageGenerationRef.current)
-        return;
-      // Same reply-alias normalization as load() so prepended history keeps its
-      // quoted-message text instead of collapsing to "Message".
-      const older = (Array.isArray(data) ? data : []).map(
-        normalizeFetchedMessage,
-      );
-      setHasMore(older.length >= 50);
-      if (older.length > 0) {
-        setMessages((prev) => {
-          const serverIds = new Set(
-            prev.filter((m) => m.id > 0).map((m) => m.id),
-          );
-          const clientIds = new Set(
-            prev.map((m) => m.clientMsgId).filter(Boolean) as string[],
-          );
-          return [
-            ...older.filter(
-              (m) =>
-                !serverIds.has(m.id) &&
-                (!m.clientMsgId || !clientIds.has(m.clientMsgId)),
-            ),
-            ...prev,
-          ];
-        });
-      }
-    } catch {
-      if (mountedRef.current && generation === messageGenerationRef.current) {
-        // Keep hasMore intact: a network failure is not proof that history ended.
-        setLoadOlderError("Could not load earlier messages. Tap to retry.");
-      }
-    } finally {
-      if (olderRequestCursorRef.current === oldest.id) {
-        olderRequestCursorRef.current = null;
-      }
-      if (mountedRef.current && generation === messageGenerationRef.current) {
-        setLoadingOlder(false);
-      }
-    }
-  }, [convId, hasMore, loadingOlder]);
-
-  // Resolve the 1:1 peer's status for the header badge.
-  //
-  // PERF: this used to fetch the ENTIRE conversation list (`getConversations`)
-  // on every chat open just to find this one conversation's peer id / group
-  // flag — a wasteful full round-trip on the critical open path. The peer id,
-  // name, avatar and group flag are ALREADY passed as route params from the
-  // conversation list (see `openConv` in app/(tabs)/chat.tsx), so we use those
-  // and only make the cheap presence call for the live status badge. If a peer
-  // id wasn't supplied (e.g. deep-link), we fall back to the cached
-  // conversation list instead of hitting the network.
-  useEffect(() => {
-    let active = true;
-    const peerFromParam = params.peerId ? Number(params.peerId) : null;
-    // Whether the route already supplied the header identity (opened from the
-    // conversation list). When it did NOT (e.g. a notification tap cold-start),
-    // we must RESOLVE name/avatar from the conversation so the header doesn't
-    // show the generic "Chat" + "?" avatar.
-    const haveIdentity = !!params.name;
-
-    // Apply a resolved conversation's identity (name / avatar / group flag /
-    // peer) to the header state. Used both from the synchronous cache lookup
-    // and the network fallback below. Only fills fields the route didn't give.
-    const applyConv = (conv: Conversation) => {
-      if (!active) return;
-      if (conv.member_count) setParticipantCount(conv.member_count);
-      setIsGroupConv(!!conv.is_group);
-      if (conv.is_group) {
-        setGroupMemberAvatars(
-          Array.isArray(conv.group_member_avatars)
-            ? conv.group_member_avatars.filter(
-                (v): v is string => typeof v === "string" && v.length > 0,
-              )
-            : [],
-        );
-      }
-      if (conv.my_role) setMyGroupRole(conv.my_role);
-      if (conv.group_description != null)
-        setGroupDescription(conv.group_description);
-      const resolvedName = conv.is_group
-        ? conv.group_name || "Group"
-        : conv.other_full_name || conv.other_username || "Chat";
-      const resolvedAvatar = conv.is_group
-        ? conv.group_avatar || null
-        : conv.other_avatar || null;
-      if (!params.name && resolvedName) setName(resolvedName);
-      if (!params.avatar && resolvedAvatar) setHeaderAvatar(resolvedAvatar);
-      if (typeof conv.is_blocked === "boolean") setIsBlocked(conv.is_blocked);
-      if (!conv.is_group && conv.other_user_id) {
-        const uid = conv.other_user_id;
-        setPeerUserId(uid);
-        getChatPresence([uid])
-          .then((r) => {
-            if (active) {
-              setPeerStatus(r.data?.[uid]?.userStatus ?? null);
-              setPeerWorkMode(r.data?.[uid]?.workMode ?? null);
-            }
-          })
-          .catch(() => {});
-      }
-    };
-
-    // Resolve the peer identity/status + block state. The header NAME/AVATAR
-    // already paint instantly from the route params (seeded into state above),
-    // so none of this is needed for the first frame — it only fills the live
-    // status badge, block banner and (on a cold deep-link) the resolved name.
-    // Running the presence network call + the cached-conversations scan eagerly
-    // on mount added JS-thread work that competed with the open animation, so
-    // we DEFER the whole resolution past the slide-in (Signal-Android feel).
-    // The badge/block/name simply light up a beat after the chat has opened,
-    // with no visible downgrade.
-    const task = InteractionManager.runAfterInteractions(() => {
-      if (!active) return;
-
-      // Seed the block state from the cached conversation row even when the
-      // route already supplied the header identity (list-open path early-returns
-      // below and would otherwise skip applyConv → isBlocked stays false).
-      const cachedBlockConv = (getCachedConversations() || []).find(
-        (c) => c.id === convId,
-      );
-      if (typeof cachedBlockConv?.is_blocked === "boolean") {
-        setIsBlocked(cachedBlockConv.is_blocked);
-      }
-
-      if (peerFromParam) {
-        setPeerUserId(peerFromParam);
-        getChatPresence([peerFromParam])
-          .then((r) => {
-            if (active) {
-              setPeerStatus(r.data?.[peerFromParam]?.userStatus ?? null);
-              setPeerWorkMode(r.data?.[peerFromParam]?.workMode ?? null);
-            }
-          })
-          .catch(() => {});
-        // The header name/avatar were supplied alongside the peer id — nothing
-        // to resolve. (This is the conversation-list open path.)
-        if (haveIdentity) return;
-      }
-
-      // Resolve identity from the cached conversation list FIRST (synchronous,
-      // no network) so deep-links / notification taps light up the header
-      // when the cache is warm.
-      const cachedConvs = getCachedConversations();
-      const conv = (cachedConvs || []).find((c) => c.id === convId);
-      if (conv) {
-        applyConv(conv);
-      }
-
-      // If identity is STILL unresolved (cold cache after a notification cold-
-      // start — the #1 case for "tapping a message shows 'Chat' + '?'"), fetch
-      // the conversation list from the network and backfill. Mirrors Signal-
-      // Android resolving the recipient from its id on a notification launch.
-      if (!haveIdentity && !conv) {
-        getConversations()
-          .then((r) => {
-            if (!active) return;
-            const fresh = (r.data || []).find((c) => c.id === convId);
-            if (fresh) applyConv(fresh);
-          })
-          .catch(() => {});
-      }
-    });
-
-    return () => {
-      active = false;
-      task.cancel();
-    };
-  }, [
+    messageGenerationRef,
+    latestLoadRequestRef,
+    olderRequestCursorRef,
+  } = useChatMessageLoader({
     convId,
-    params.peerId,
-    params.name,
-    params.avatar,
-    params.groupMemberAvatars,
-  ]);
+    user,
+    messages,
+    setMessages,
+    messagesRef,
+    mountedRef,
+    initialCachedMessages,
+    notificationMessageId,
+    loadPinned,
+    pendingTailScrollRef,
+    initialReconcileTailAllowedRef,
+  });
 
-  // Keep the peer's header status live via the unified `user_status` event.
-  useEffect(() => {
-    const off = socket.subscribe((msg) => {
-      if (msg.type !== "user_status") return;
-      if (!peerUserId || msg.data?.userId !== peerUserId) return;
-      setPeerStatus(msg.data.effective);
-    });
-    return off;
-  }, [peerUserId]);
-
-  // Live incoming messages / typing / read receipts / pins for this conversation.
-  useEffect(() => {
-    const off = socket.subscribe((msg) => {
-      const d = msg.data || {};
-      // Signal-Android single-active-thread model: backgrounded thread screens
-      // (kept mounted in the Expo Router stack) do NOT reprocess the high-
-      // frequency live stream. Typing pulses and read-receipt fan-out for a
-      // thread the user isn't looking at would otherwise run setState on EVERY
-      // mounted thread per event — cost that compounds with how many chats were
-      // opened this session (the "fast at first, then lags/freezes" symptom).
-      // Terminal lifecycle events (message/clear/delete/removed) still process
-      // so the cache + unread stay correct; only the cosmetic, high-rate
-      // typing/receipt updates are skipped while unfocused.
-      const nonCritical =
-        msg.type === "chat_typing" || msg.type === "chat_read_receipt";
-      if (nonCritical && !isFocusedRef.current) return;
-      if (msg.type === "chat_typing") {
-        if (Number(d.conversationId) !== convId) return;
-        if (d.userId === user?.id) return;
-        setPeerTyping(true);
-        if (typingClear.current) clearTimeout(typingClear.current);
-        typingClear.current = setTimeout(() => setPeerTyping(false), 3500);
-        return;
-      }
-      if (msg.type === "chat_read_receipt") {
-        if (Number(d.conversationId) !== convId) return;
-        if (d.userId && d.readAt) {
-          setReadReceipts((prev) => {
-            const next = { ...prev, [d.userId]: d.readAt };
-            // Keep the on-device cache in sync so the read colour is correct on
-            // the FIRST frame of the next open (no delivered→read flip).
-            setCachedReadStatus(convId, next);
-            return next;
-          });
-        }
-        return;
-      }
-      if (msg.type === "chat_message_error") {
-        const clientMsgId =
-          typeof d.clientMsgId === "string" ? d.clientMsgId : null;
-        if (!clientMsgId) return;
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.clientMsgId === clientMsgId
-              ? {
-                  ...m,
-                  _failed: true,
-                  _pending: false,
-                  _failureReason:
-                    typeof d.reason === "string" && d.reason
-                      ? d.reason
-                      : "Could not send message.",
-                }
-              : m,
-          ),
-        );
-        return;
-      }
-      if (msg.type === "chat_media_job") {
-        if (Number(d.conversationId) !== convId) return;
-        setMessages((prev) =>
-          updateMessageById(prev, d.messageId, (message) =>
-            applyMediaJobUpdate(message, d, true),
-          ),
-        );
-        return;
-      }
-      if (msg.type === "chat_pin") {
-        if (Number(d.conversationId) !== convId) return;
-        setMessages((prev) =>
-          updateMessageById(prev, d.messageId, (message) =>
-            applyMessagePin(message, d),
-          ),
-        );
-        loadPinned();
-        return;
-      }
-      // Peer reactions — add/remove live (mirrors web chat_reaction handler).
-      if (msg.type === "chat_reaction") {
-        if (Number(d.conversationId) !== convId) return;
-        setMessages((prev) =>
-          updateMessageById(prev, d.messageId, (message) =>
-            applyMessageReaction(message, d),
-          ),
-        );
-        return;
-      }
-      // Peer edits — update content live (mirrors web chat_edit handler).
-      if (msg.type === "chat_edit") {
-        if (Number(d.conversationId) !== convId) return;
-        setMessages((prev) =>
-          updateMessageById(prev, d.messageId, (message) =>
-            applyMessageEdit(message, d),
-          ),
-        );
-        return;
-      }
-      // Peer deletions — mark deleted live (mirrors web chat_delete handler).
-      if (msg.type === "chat_delete") {
-        if (Number(d.conversationId) !== convId) return;
-        setMessages((prev) =>
-          updateMessageById(prev, d.messageId, applyMessageDelete),
-        );
-        return;
-      }
-      // Conversation cleared by a peer — empty the list (mirrors web).
-      if (msg.type === "chat_cleared") {
-        if (Number(d.conversationId) !== convId) return;
-        messageGenerationRef.current += 1;
-        latestLoadRequestRef.current += 1;
-        olderRequestCursorRef.current = null;
-        pendingTailScrollRef.current = null;
-        setMessages([]);
-        setPinnedMsgs([]);
-        setHasMore(false);
-        setLoadingOlder(false);
-        setLoadOlderError(null);
-        // Drop the on-disk cache too so reopening doesn't resurrect the cleared
-        // messages from the instant-render seed.
-        clearCachedMessages(convId);
-        return;
-      }
-      // Conversation deleted, or current user removed from the group —
-      // leave the screen (the web equivalent clears activeConv).
-      if (msg.type === "chat_conv_deleted") {
-        if (Number(d.conversationId) !== convId) return;
-        router.back();
-        return;
-      }
-      if (msg.type === "chat_group_removed") {
-        if (Number(d.conversationId) !== convId) return;
-        if (d.userId === user?.id) router.back();
-        return;
-      }
-      if (msg.type !== "chat_message") return;
-      if (Number(d.conversationId) !== convId) return;
-      // Unfocused thread: skip the heavy live-append work. The global
-      // ChatCacheSync (mounted in app/_layout) already appends every incoming
-      // message to the on-device cache regardless of which screen is mounted,
-      // and this thread re-seeds from that cache + runs a fresh load() reconcile
-      // when it regains focus — so the message is never lost. Running the full
-      // setMessages/markRead/ack/scroll reconcile on EVERY backgrounded thread
-      // per incoming message is exactly the work that compounds per open (the
-      // "fine for 5–6 opens, then lags/freezes" symptom). The focused thread
-      // still does the full live append + read/ack/scroll below.
-      if (!isFocusedRef.current) return;
-      setMessages((prev) => {
-        const realtimeMessage = mapRealtimeChatMessage(d);
-        if (d.clientMsgId) {
-          const idx = prev.findIndex((m) => m.clientMsgId === d.clientMsgId);
-          if (idx >= 0) {
-            const copy = [...prev];
-            copy[idx] = realtimeMessage;
-            return copy;
-          }
-        }
-        if (prev.some((m) => m.id === d.id)) return prev;
-        return [...prev, realtimeMessage];
-      });
-      markReadAndSync();
-      // Acknowledge delivery so the sender sees "✓✓ delivered" (mirrors the
-      // web ackDelivered call in the chat_message WS handler).
-      if (d.senderId !== user?.id && d.id) {
-        ackDelivered(d.id).catch(() => {});
-      }
-      // Only auto-scroll to the newest message when the user is ALREADY at the
-      // bottom, OR when the new message is the user's OWN (sent from another of
-      // their devices). If they've scrolled up to read history, keep their
-      // position — the floating "scroll to latest" pill (driven by the list's
-      // own scroll tracking) lets them jump down deliberately, exactly like
-      // Signal-Android. This removes the "a new message yanks me to the bottom
-      // mid-read" jump.
-      const isOwn = d.senderId === user?.id;
-      if (isOwn || atBottomRef.current) requestTailScroll(true);
-    });
-    return off;
-  }, [
+  // In-conversation search, the header 3-dot menu panels and Clear chat.
+  const {
+    menuOpen,
+    setMenuOpen,
+    searchMode,
+    searchQuery,
+    searchMatchIds,
+    searchActiveIdx,
+    highlightedId,
+    headerSheet,
+    setHeaderSheet,
+    sheetSearchQ,
+    sheetSearchResults,
+    sheetLoading,
+    sharedFiles,
+    savedMsgs,
+    jumpToReply,
+    openSearch,
+    closeSearch,
+    onSearchQueryChange,
+    searchPrev,
+    searchNext,
+    openHeaderPanel,
+    onSheetSearchChange,
+    jumpFromSheet,
+    doClearChat,
+    unstarFromSheet,
+  } = useChatSearchPanels({
     convId,
-    user?.id,
+    messages,
+    jumpToMessage,
+    loadPinned,
+    setMessages,
+    setPinnedMsgs,
+    setStarredIds,
+    setHasMore,
+    setLoadingOlder,
+    setLoadOlderError,
+    messageGenerationRef,
+    latestLoadRequestRef,
+    olderRequestCursorRef,
+    pendingTailScrollRef,
+    confirm,
+  });
+
+  // Live socket stream for this conversation (messages, typing, receipts, pins).
+  const { peerTyping } = useChatRealtimeSync({
+    convId,
+    user,
+    router,
+    setMessages,
+    setPinnedMsgs,
+    setReadReceipts,
+    setHasMore,
+    setLoadingOlder,
+    setLoadOlderError,
     loadPinned,
     markReadAndSync,
     requestTailScroll,
-    router,
-  ]);
+    scrollToEnd,
+    jumpToMessage,
+    atBottomRef,
+    pendingTailScrollRef,
+    messageGenerationRef,
+    latestLoadRequestRef,
+    olderRequestCursorRef,
+  });
 
-  const send = useCallback(() => {
-    const content = text.trim();
-    if (!content || !user) return;
-    const clientMsgId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const replyToId = replyTo?.id;
-    const createdAt = new Date().toISOString();
-    // Persist to the durable OUTBOX first (Signal-Android model: write the
-    // message locally before attempting delivery). If the socket is down
-    // (offline) the message is NOT lost — it survives leaving the screen and
-    // app restarts, and ChatOutboxSync auto-delivers it (same clientMsgId, so
-    // no duplicates) the moment the socket reconnects.
-    enqueueOutboxMessage({
-      clientMsgId,
-      conversationId: convId,
-      content,
-      replyToId: replyToId ?? null,
-      replyToContent: replyTo?.content ?? null,
-      replyToSenderName: replyTo?.sender_name ?? null,
-      replyToFileUrl: replyTo?.file_url ?? null,
-      replyToFileType: replyTo?.file_type ?? null,
-      replyToFileName: replyTo?.file_name ?? null,
-      createdAt,
-      attempts: 0,
-    });
-    // Optimistic append. Keep the loaded history intact; sending and scrolling
-    // must never swap the list's data window underneath FlashList.
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: -Date.now(),
-        sender_id: user.id,
-        sender_name: user.full_name,
-        content,
-        created_at: createdAt,
-        reply_to_id: replyToId ?? null,
-        reply_to_content: replyTo?.content ?? null,
-        reply_to_sender_name: replyTo?.sender_name ?? null,
-        reply_to_file_url: replyTo?.file_url ?? null,
-        reply_to_file_type: replyTo?.file_type ?? null,
-        reply_to_file_name: replyTo?.file_name ?? null,
-        _pending: true,
-        clientMsgId,
-      },
-    ]);
-    const sentNow = socket.send("chat_message", {
-      conversationId: convId,
-      content,
-      clientMsgId,
-      ...(replyToId ? { replyToId } : {}),
-    });
-    if (!sentNow) {
-      // Socket is down (offline / reconnecting). Kick a reconnect attempt —
-      // the outbox flush on the next OPEN transition will deliver the message.
-      // The bubble stays in the "pending" (clock) state meanwhile.
-      void socket.connect();
-    }
-    setText("");
-    setReplyTo(null);
-    requestTailScroll(true);
-  }, [text, user, convId, replyTo, requestTailScroll]);
+  const {
+    uploading,
+    setUploading,
+    plusOpen,
+    setPlusOpen,
+    cameraOpen,
+    setCameraOpen,
+    editorItems,
+    setEditorItems,
+    videoPreview,
+    setVideoPreview,
+    tenorOpen,
+    setTenorOpen,
+    tenorKind,
+    mediaUploadControllers,
+    mediaUploadSources,
+    enqueueMediaUpload,
+    attachFile,
+    attachCamera,
+    handleCameraPhoto,
+    handleCameraVideo,
+    sendVideoPreview,
+    handlePickRecentMedia,
+    handleMediaEditorSend,
+    attachGifFromEmoji,
+    attachStickerFromEmoji,
+    pickTenorMedia,
+    attachDocument,
+    cancelMediaUpload,
+    retryMediaUpload,
+  } = useChatMediaUploads({
+    convId,
+    user,
+    setMessages,
+    requestTailScroll,
+    alert,
+  });
 
-  const retryFailedMessage = useCallback(
-    (message: ChatMessage) => {
-      if (Number(message.id) < 0 && message.file_url) {
-        const id = Number(message.id);
-        const source = mediaUploadSources.current.get(id);
-        if (!source) return;
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === id
-              ? {
-                  ...m,
-                  _pending: true,
-                  _failed: false,
-                  _mediaState: "queued",
-                  _mediaProgress: 0,
-                  _failureReason: null,
-                }
-              : m,
-          ),
-        );
-        const controller = new AbortController();
-        mediaUploadControllers.current.set(id, controller);
-        setUploading(true);
-        uploadChatFile(convId, source.uri, source.fileName, source.mimeType, {
-          signal: controller.signal,
-          viewOnce: source.viewOnce,
-          caption: source.caption,
-          width: source.width,
-          height: source.height,
-          quality: source.quality,
-          onUploadProgress: (evt) => {
-            const total = evt.total || 0;
-            const progress =
-              total > 0
-                ? Math.max(
-                    0,
-                    Math.min(100, Math.round((evt.loaded / total) * 100)),
-                  )
-                : 0;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === id
-                  ? { ...m, _mediaState: "uploading", _mediaProgress: progress }
-                  : m,
-              ),
-            );
-          },
-        })
-          .then(({ data }) => {
-            const normalized = normalizeUploadedMessage(data);
-            setMessages((prev) =>
-              replaceUploadedMessage(prev, id, normalized),
-            );
-            mediaUploadControllers.current.delete(id);
-            mediaUploadSources.current.delete(id);
-            if (mediaUploadControllers.current.size === 0) setUploading(false);
-          })
-          .catch((e: any) => {
-            mediaUploadControllers.current.delete(id);
-            if (mediaUploadControllers.current.size === 0) setUploading(false);
-            const cancelled =
-              e?.name === "CanceledError" ||
-              e?.code === "ERR_CANCELED" ||
-              e?.message === "canceled";
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === id
-                  ? {
-                      ...m,
-                      _pending: false,
-                      _failed: true,
-                      _mediaState: "failed",
-                      _failureReason: cancelled
-                        ? "Upload cancelled"
-                        : e?.response?.data?.error ||
-                          "Could not send this media.",
-                    }
-                  : m,
-              ),
-            );
-          });
-        return;
-      }
-      if (!user) return;
-      const content = (message.content || "").trim();
-      const clientMsgId = message.clientMsgId || null;
-      if (!content || !clientMsgId) return;
-      const replyToId = message.reply_to_id || null;
+  const {
+    isRecordingActive,
+    recordingMillis,
+    voiceHandleRef,
+    startRecording,
+    stopRecordingAndSend,
+    cancelRecording,
+    onRecorderDuration,
+    onRecorderError,
+    onRecorderStartFailed,
+  } = useChatVoiceRecording({ alert, enqueueMediaUpload });
 
-      // Refresh / re-arm the durable outbox entry so the retry also benefits
-      // from the reconnect auto-flush (and survives leaving the screen).
-      markOutboxRetrying(clientMsgId);
-      enqueueOutboxMessage({
-        clientMsgId,
-        conversationId: convId,
-        content,
-        replyToId,
-        replyToContent: message.reply_to_content ?? null,
-        replyToSenderName: message.reply_to_sender_name ?? null,
-        replyToFileUrl: message.reply_to_file_url ?? null,
-        replyToFileType: message.reply_to_file_type ?? null,
-        replyToFileName: message.reply_to_file_name ?? null,
-        createdAt: new Date().toISOString(),
-        attempts: 0,
-      });
+  const {
+    replyTo,
+    setReplyTo,
+    editingId,
+    setEditingId,
+    send,
+    retryFailedMessage,
+    onChangeText,
+    startReply,
+    copyMessage,
+    copySelected,
+    cancelEdit,
+    startEdit,
+    saveEdit,
+  } = useChatComposerActions({
+    convId,
+    user,
+    text,
+    setText,
+    setMessages,
+    inputRef,
+    requestTailScroll,
+    scrollToEnd,
+    setReactTarget,
+    setReactAnchor,
+    setActionTarget,
+    selectedMessages,
+    clearSelection,
+    mediaUploadControllers,
+    mediaUploadSources,
+    setUploading,
+  });
 
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.clientMsgId === clientMsgId
-            ? {
-                ...m,
-                _failed: false,
-                _pending: true,
-                _failureReason: null,
-                created_at: new Date().toISOString(),
-              }
-            : m,
-        ),
-      );
-
-      const sentNow = socket.send("chat_message", {
-        conversationId: convId,
-        content,
-        clientMsgId,
-        ...(replyToId ? { replyToId } : {}),
-      });
-      if (!sentNow) {
-        void socket.connect();
-      }
-    },
-    [convId, scrollToEnd, user],
-  );
-
-  const onChangeText = useCallback(
-    (v: string) => {
-      setText(v);
-      // Throttle typing pings to one per ~2s.
-      const now = Date.now();
-      if (now - typingSentAt.current > 2000) {
-        typingSentAt.current = now;
-        socket.send("chat_typing", { conversationId: convId });
-      }
-    },
-    [convId],
-  );
-
-  async function startRecording() {
-    // Guard against a double-tap while a recording is already underway.
-    if (recordingRef.current) return;
-    let granted = false;
-    try {
-      const perm = await AudioModule.requestRecordingPermissionsAsync();
-      granted = perm.granted;
-    } catch {
-      granted = false;
-    }
-    if (!granted) {
-      alert(
-        "Microphone needed",
-        "Allow microphone access to record a voice message.",
-      );
-      return;
-    }
-    // Flip the recording UI ON synchronously and MOUNT the recorder controller
-    // (gated by isRecordingActive). The controller owns the native recorder and
-    // auto-prepares + starts recording on mount — keeping all audio init OFF the
-    // chat-open path (see VoiceRecorderController).
-    recordingRef.current = true;
-    setRecordingMillis(0);
-    setIsRecordingActive(true);
-  }
-
-  // Push the live recording duration up from the mounted controller.
-  const onRecorderDuration = useCallback((millis: number) => {
-    setRecordingMillis(millis);
-  }, []);
-
-  // Surface a recorder error via the shared dialog.
-  const onRecorderError = useCallback(
-    (title: string, message: string) => {
-      alert(title, message);
-    },
-    [alert],
-  );
-
-  // The controller failed to START (permission/prepare) — collapse the UI and
-  // unmount it so the mic can be tapped again cleanly.
-  const onRecorderStartFailed = useCallback(() => {
-    recordingRef.current = false;
-    setIsRecordingActive(false);
-    setRecordingMillis(0);
-  }, []);
-
-  async function stopRecordingAndSend() {
-    if (!recordingRef.current) return;
-    recordingRef.current = false;
-    const handle = voiceHandleRef.current;
-
-    let result: { uri: string; durationMillis: number } | null = null;
-    try {
-      result = handle ? await handle.stopAndSend() : null;
-    } finally {
-      // Unmount the recorder controller (releases the native recorder) and
-      // collapse the recording bar.
-      setIsRecordingActive(false);
-      setRecordingMillis(0);
-    }
-
-    if (!result) return; // controller already surfaced any error
-    const { uri, durationMillis } = result;
-
-    if (durationMillis < 350) {
-      alert(
-        "Recording too short",
-        "Hold the mic a little longer before sending.",
-      );
-      return;
-    }
-    try {
-      const info = await FileSystem.getInfoAsync(uri);
-      if (!info.exists || (info.size ?? 0) <= 0) {
-        alert("Recording failed", "The recorded file is empty.");
-        return;
-      }
-    } catch {
-      alert("Recording failed", "The recorded file could not be read.");
-      return;
-    }
-
-    enqueueMediaUpload({
-      uri,
-      fileName: `voice-${Date.now()}.m4a`,
-      mimeType: "audio/mp4",
-    });
-  }
-
-  async function cancelRecording() {
-    if (!recordingRef.current) return;
-    recordingRef.current = false;
-    const handle = voiceHandleRef.current;
-    try {
-      await handle?.cancel();
-    } finally {
-      // Unmount the recorder controller + collapse the recording bar.
-      setIsRecordingActive(false);
-      setRecordingMillis(0);
-    }
-  }
-
-  const uploadSingleMedia = useCallback(
-    async (tempId: number, source: PendingMediaSource) => {
-      const controller = new AbortController();
-      mediaUploadControllers.current.set(tempId, controller);
-      setUploading(true);
-      try {
-        const { data } = await uploadChatFile(
-          convId,
-          source.uri,
-          source.fileName,
-          source.mimeType,
-          {
-            viewOnce: source.viewOnce,
-            caption: source.caption,
-            width: source.width,
-            height: source.height,
-            quality: source.quality,
-            signal: controller.signal,
-            onUploadProgress: (evt) => {
-              const total = evt.total || 0;
-              const progress =
-                total > 0
-                  ? Math.max(
-                      0,
-                      Math.min(100, Math.round((evt.loaded / total) * 100)),
-                    )
-                  : 0;
-              // Live throughput (bytes/sec) for the Signal-style speed label.
-              const now = Date.now();
-              const prevTs = uploadProgressTs.current.get(tempId);
-              let speed = 0;
-              if (prevTs && now > prevTs.t) {
-                const dBytes = evt.loaded - prevTs.loaded;
-                const dt = (now - prevTs.t) / 1000;
-                if (dt > 0 && dBytes > 0) speed = dBytes / dt;
-              }
-              uploadProgressTs.current.set(tempId, {
-                t: now,
-                loaded: evt.loaded,
-              });
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === tempId
-                    ? {
-                        ...m,
-                        _mediaState: "uploading",
-                        _mediaProgress: progress,
-                        _uploadSpeed: speed || m._uploadSpeed,
-                      }
-                    : m,
-                ),
-              );
-            },
-          },
-        );
-        uploadProgressTs.current.delete(tempId);
-        const normalized = normalizeUploadedMessage(data);
-        setMessages((prev) =>
-          replaceUploadedMessage(prev, tempId, normalized),
-        );
-        mediaUploadControllers.current.delete(tempId);
-        mediaUploadSources.current.delete(tempId);
-        if (mediaUploadControllers.current.size === 0) setUploading(false);
-      } catch (e: any) {
-        mediaUploadControllers.current.delete(tempId);
-        if (mediaUploadControllers.current.size === 0) setUploading(false);
-        const cancelled =
-          e?.name === "CanceledError" ||
-          e?.code === "ERR_CANCELED" ||
-          e?.message === "canceled";
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === tempId
-              ? {
-                  ...m,
-                  _pending: false,
-                  _failed: true,
-                  _mediaState: "failed",
-                  _failureReason: cancelled
-                    ? "Upload cancelled"
-                    : e?.response?.data?.error || "Could not send this media.",
-                }
-              : m,
-          ),
-        );
-      }
-    },
-    [convId],
-  );
-
-  const enqueueMediaUpload = useCallback(
-    (source: PendingMediaSource) => {
-      const tempId = -(Date.now() + Math.floor(Math.random() * 1000));
-      mediaUploadSources.current.set(tempId, source);
-      // Carry intrinsic dimensions in metadata so the optimistic bubble sizes
-      // itself by aspect ratio immediately (Signal-style) — no reflow once the
-      // server row arrives.
-      const dimMeta =
-        source.width && source.height
-          ? { width: source.width, height: source.height }
-          : {};
-      const mediaMeta = {
-        ...dimMeta,
-        ...(source.quality ? { quality: source.quality } : {}),
-      };
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: tempId,
-          sender_id: user?.id || 0,
-          sender_name: user?.full_name || "You",
-          content: source.caption || "",
-          created_at: new Date().toISOString(),
-          file_url: source.uri,
-          file_name: source.fileName,
-          file_type: source.mimeType || null,
-          file_size: null,
-          metadata: source.viewOnce
-            ? { viewOnce: true, viewedBy: [], ...mediaMeta }
-            : Object.keys(mediaMeta).length
-              ? mediaMeta
-              : null,
-          reactions: [],
-          _pending: true,
-          _failed: false,
-          _mediaState: "queued",
-          _mediaProgress: 0,
-          _failureReason: null,
-        },
-      ]);
-      uploadSingleMedia(tempId, source);
-      requestTailScroll(true);
-    },
-    [requestTailScroll, uploadSingleMedia, user?.full_name, user?.id],
-  );
-
+  // Persist / restore the per-conversation composer draft (text, reply target,
+  // pending edit and any picked media) across screen exits and app restarts.
   useMobileConversationDraft({
     conversationId: convId,
     user,
@@ -2096,1505 +443,83 @@ export function useChatThread() {
     mediaUploadSources,
   });
 
-  async function uploadPickedMedia(
-    uri: string,
-    fallbackName: string,
-    mimeType?: string,
-  ) {
-    enqueueMediaUpload({ uri, fileName: fallbackName, mimeType });
-  }
+  const {
+    forwardMode,
+    conversations,
+    openForward,
+    openForwardFor,
+    closeActionSheet,
+    doForward,
+    forwardSelected,
+  } = useChatForwardActions({
+    actionTarget,
+    setActionTarget,
+    setReactTarget,
+    setReactAnchor,
+    selectedMessages,
+    clearSelection,
+    alert,
+  });
 
-  async function attachFile() {
-    setPlusOpen(false);
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) {
-      alert("Permission needed", "Allow Photos access to share media.");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      quality: 1,
-      allowsMultipleSelection: true,
-    });
-    if (result.canceled || !result.assets?.length) return;
-    // Route picked images through the Signal-style media editor.
-    setEditorItems(
-      result.assets.map((a) => ({
-        uri: a.uri,
-        width: a.width,
-        height: a.height,
-      })),
-    );
-  }
+  const {
+    deleteTargets,
+    deleteCanForEveryone,
+    doDelete,
+    closeDeleteSheet,
+    deleteForEveryone,
+    deleteForMe,
+    deleteSelected,
+  } = useChatDeleteActions({
+    convId,
+    user,
+    setMessages,
+    setLocallyDeleted,
+    setReactTarget,
+    setReactAnchor,
+    setActionTarget,
+    selectedMessages,
+    clearSelection,
+    alert,
+  });
 
-  // Open the Signal-style in-app camera (full-screen). Replaces the old OS-only
-  // image picker so the user can TAP for a photo, HOLD for video, flip/flash and
-  // pick from a recent-gallery strip — none of which the OS launchCameraAsync
-  // (image-only) supported. The camera UI lives in CameraCapture, rendered as a
-  // full-screen Modal by the chat screen; its callbacks below route captures.
-  function attachCamera() {
-    setPlusOpen(false);
-    setCameraOpen(true);
-  }
-
-  // A still PHOTO captured in the in-app camera → close the camera and route it
-  // through the Signal-style media editor (pen/crop/quality/view-once + caption).
-  const handleCameraPhoto = useCallback(
-    (item: { uri: string; width?: number; height?: number }) => {
-      setCameraOpen(false);
-      setEditorItems([
-        { uri: item.uri, width: item.width, height: item.height },
-      ]);
-    },
-    [],
-  );
-
-  // A recorded VIDEO from the in-app camera → close the camera and open the
-  // Signal-style preview (review + caption + view-once + send/discard) instead
-  // of uploading immediately on shutter release.
-  const handleCameraVideo = useCallback(
-    (item: {
-      uri: string;
-      fileName: string;
-      mimeType: string;
-      width?: number;
-      height?: number;
-    }) => {
-      setCameraOpen(false);
-      setVideoPreview({
-        uri: item.uri,
-        fileName: item.fileName,
-        mimeType: item.mimeType,
-        width: item.width,
-        height: item.height,
-      });
-    },
-    [],
-  );
-
-  // Send the previewed video (from the VideoPreview screen) with its caption and
-  // view-once flag.
-  const sendVideoPreview = useCallback(
-    (opts: { caption?: string; viewOnce: boolean }) => {
-      const v = videoPreview;
-      setVideoPreview(null);
-      if (!v) return;
-      enqueueMediaUpload({
-        uri: v.uri,
-        fileName: v.fileName,
-        mimeType: v.mimeType,
-        viewOnce: opts.viewOnce,
-        caption: opts.caption,
-        width: v.width,
-        height: v.height,
-      });
-    },
-    [videoPreview, enqueueMediaUpload],
-  );
-
-  // A recent-gallery thumbnail tapped inside the in-app camera (or the "+"
-  // attach sheet). Images go through the editor; videos upload directly.
-  const handlePickRecentMedia = useCallback(
-    (item: {
-      uri: string;
-      width?: number;
-      height?: number;
-      kind: "image" | "video";
-      fileName?: string;
-      mimeType?: string;
-    }) => {
-      setCameraOpen(false);
-      setPlusOpen(false);
-      if (item.kind === "video") {
-        // Route videos through the review/caption preview (same as a recorded
-        // clip) rather than uploading on tap.
-        setVideoPreview({
-          uri: item.uri,
-          fileName: item.fileName || `video-${Date.now()}.mp4`,
-          mimeType: item.mimeType || "video/mp4",
-          width: item.width,
-          height: item.height,
-        });
-      } else {
-        setEditorItems([
-          { uri: item.uri, width: item.width, height: item.height },
-        ]);
-      }
-    },
-    [],
-  );
-
-  // Called by the MediaEditor when the user taps Send. Each processed item is
-  // enqueued for upload carrying its view-once flag + caption.
-  const handleMediaEditorSend = useCallback(
-    (
-      results: {
-        uri: string;
-        fileName: string;
-        mimeType: string;
-        viewOnce: boolean;
-        caption?: string;
-        width: number;
-        height: number;
-        quality: "standard" | "hd";
-      }[],
-    ) => {
-      results.forEach((r, i) => {
-        enqueueMediaUpload({
-          uri: r.uri,
-          fileName: r.fileName,
-          mimeType: r.mimeType,
-          viewOnce: r.viewOnce,
-          width: r.width,
-          height: r.height,
-          quality: r.quality,
-          // Attach the caption to the first item only (matches Signal/web).
-          caption: i === 0 ? r.caption : undefined,
-        });
-      });
-      setEditorItems(null);
-    },
-    [enqueueMediaUpload],
-  );
-
-  async function attachGifFromEmoji() {
-    setTenorKind("gif");
-    setTenorOpen(true);
-  }
-
-  async function attachStickerFromEmoji() {
-    setTenorKind("sticker");
-    setTenorOpen(true);
-  }
-
-  async function pickTenorMedia(
-    item: { mediaUrl: string },
-    kind: "gif" | "sticker",
-  ) {
-    try {
-      setTenorOpen(false);
-      const ext = kind === "sticker" ? "webp" : "gif";
-      const target = `${FileSystem.cacheDirectory}${kind}-${Date.now()}.${ext}`;
-      const dl = await FileSystem.downloadAsync(item.mediaUrl, target);
-      if (dl.status !== 200) {
-        alert("Upload failed", "Could not download selected media.");
-        return;
-      }
-      await uploadPickedMedia(
-        dl.uri,
-        `${kind}-${Date.now()}.${ext}`,
-        kind === "sticker" ? "image/webp" : "image/gif",
-      );
-    } catch (e: any) {
-      alert("Upload failed", e?.message || "Could not attach selected media.");
-    }
-  }
-
-  // Document attachment — the old single "Photo / File" option only opened
-  // the IMAGE library despite its label, so PDFs/docs could never be sent
-  // from mobile (the web supports them). Uses expo-document-picker.
-  async function attachDocument() {
-    setPlusOpen(false);
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        copyToCacheDirectory: true,
-        multiple: false,
-      });
-      if (result.canceled || !result.assets?.[0]?.uri) return;
-      const asset = result.assets[0];
-      await uploadPickedMedia(
-        asset.uri,
-        asset.name || `file-${Date.now()}`,
-        asset.mimeType || undefined,
-      );
-    } catch (e: any) {
-      alert(
-        "Upload failed",
-        e?.response?.data?.error || "Could not send this file.",
-      );
-    }
-  }
-
-  const cancelMediaUpload = useCallback((message: ChatMessage) => {
-    const id = Number(message.id);
-    const mediaJobId = Number(message.media_job_id || 0);
-    if (mediaJobId > 0) {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === message.id
-            ? {
-                ...m,
-                _pending: false,
-                _failed: true,
-                _mediaState: "failed",
-                _failureReason: "Upload cancelled",
-              }
-            : m,
-        ),
-      );
-      cancelChatMediaJob(mediaJobId).catch(() => {});
-      return;
-    }
-    if (!Number.isFinite(id) || id >= 0) return;
-    const controller = mediaUploadControllers.current.get(id);
-    controller?.abort();
-  }, []);
-
-  const retryMediaUpload = useCallback(
-    (message: ChatMessage) => {
-      const id = Number(message.id);
-      const mediaJobId = Number(message.media_job_id || 0);
-      if (mediaJobId > 0) {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === message.id
-              ? {
-                  ...m,
-                  _pending: true,
-                  _failed: false,
-                  _mediaState: "queued",
-                  _mediaProgress: 0,
-                  _failureReason: null,
-                }
-              : m,
-          ),
-        );
-        retryChatMediaJob(mediaJobId).catch((e: any) => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === message.id
-                ? {
-                    ...m,
-                    _pending: false,
-                    _failed: true,
-                    _mediaState: "failed",
-                    _failureReason: e?.response?.data?.error || "Retry failed",
-                  }
-                : m,
-            ),
-          );
-        });
-        return;
-      }
-      if (!Number.isFinite(id) || id >= 0) return;
-      const source = mediaUploadSources.current.get(id);
-      if (!source) return;
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === id
-            ? {
-                ...m,
-                _pending: true,
-                _failed: false,
-                _mediaState: "queued",
-                _mediaProgress: 0,
-                _failureReason: null,
-              }
-            : m,
-        ),
-      );
-      uploadSingleMedia(id, source);
-    },
-    [uploadSingleMedia],
-  );
-
-  // Cancel an in-progress edit (Signal-style "X" on the editing strip). Clears
-  // the editing target and the prefilled draft text.
-  function cancelEdit() {
-    setEditingId(null);
-    setText("");
-  }
-
-  function startEdit(message: ChatMessage) {
-    // Tear down BOTH long-press surfaces. Editing can be triggered from the
-    // long-press reaction overlay (driven by reactTarget/reactAnchor) OR the
-    // action sheet (actionTarget). Previously startEdit only cleared
-    // actionTarget, so when reached via the long-press overlay the dimmed
-    // ReactionOverlay modal stayed ON TOP of the screen and the edit never
-    // appeared to take. Clear all three, load the draft, then focus the
-    // composer so the system keyboard opens ready to edit.
-    setReactTarget(null);
-    setReactAnchor(null);
-    setActionTarget(null);
-    setEditingId(message.id);
-    setText(message.content);
-    // Focus after the overlay/sheet modals have dismissed so the keyboard
-    // reliably opens (focusing while a modal is still up is dropped on Android).
-    setTimeout(() => inputRef.current?.focus(), 150);
-  }
-
-  async function saveEdit() {
-    if (editingId == null) return;
-    const content = text.trim();
-    if (!content) return;
-    try {
-      // The server's PUT /chat/messages/:id returns only { ok: true } — it does
-      // NOT echo the edited content. Relying on `data.content` therefore blanked
-      // the message body (leaving just the "edited" label) until the chat was
-      // reopened. Apply the edit OPTIMISTICALLY from the text we just sent and
-      // stamp `edited_at` so the "edited" label + new content show immediately
-      // (Signal applies edits locally, never waiting for a content echo).
-      await editMessage(editingId, content);
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === editingId
-            ? { ...m, content, edited_at: new Date().toISOString() }
-            : m,
-        ),
-      );
-    } catch {
-      /* ignore */
-    } finally {
-      setEditingId(null);
-      setText("");
-    }
-  }
-
-  function doDelete(message: ChatMessage) {
-    // Open the delete chooser for this single message (WhatsApp/Telegram/Signal
-    // model). The chooser offers "Delete for everyone" (own messages only) and
-    // "Delete for me" (local hide). Replaces the old immediate delete-for-
-    // everyone confirm.
-    requestDelete([message]);
-  }
-
-  function doPin(message: ChatMessage) {
-    setActionTarget(null);
-    pinMessage(message.id)
-      .then(({ data }) => {
-        const pinned = !!(data as { pinned?: boolean })?.pinned;
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === message.id
-              ? { ...m, pinned_at: pinned ? new Date().toISOString() : null }
-              : m,
-          ),
-        );
-        loadPinned();
-        alert(
-          pinned ? "Pinned" : "Unpinned",
-          pinned ? "Message pinned to this chat." : "Message unpinned.",
-        );
-      })
-      .catch(() => alert("Error", "Could not pin message."));
-  }
-
-  function doStar(message: ChatMessage) {
-    setActionTarget(null);
-    starMessage(message.id)
-      .then(({ data }) => {
-        const starred = !!(data as { starred?: boolean })?.starred;
-        setStarredIds((prev) => {
-          const next = new Set(prev);
-          if (starred) next.add(message.id);
-          else next.delete(message.id);
-          return next;
-        });
-        alert(
-          starred ? "Saved" : "Removed",
-          starred ? "Message added to saved." : "Removed from saved.",
-        );
-      })
-      .catch(() => alert("Error", "Could not save message."));
-  }
-
-  function unpinFromBanner(messageId: number) {
-    pinMessage(messageId)
-      .then(() => {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === messageId ? { ...m, pinned_at: null } : m)),
-        );
-        loadPinned();
-      })
-      .catch(() => {});
-  }
-
-  function jumpToMessage(messageId: number) {
-    const idx = messages.findIndex((m) => m.id === messageId);
-    if (idx < 0) return;
-    initialReconcileTailAllowedRef.current = false;
-    try {
-      void listRef.current?.scrollToIndex({
-        index: idx,
-        animated: true,
-        viewPosition: 0.3,
-      });
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // Signal-style "tap a quoted reply → jump to the original": scroll the list
-  // to the replied-to message and briefly flash its highlight (reuses the
-  // search-match highlight). The original lives at `reply_to_id`; if it isn't
-  // in the currently-loaded window we no-op gracefully (a best-effort jump,
-  // same as the search/pinned cross-screen jumps).
-  function jumpToReply(message: ChatMessage) {
-    const targetId = message.reply_to_id;
-    if (!targetId) return;
-    const exists = messages.some((m) => m.id === targetId);
-    if (!exists) return;
-    jumpToMessage(targetId);
-    // Flash the highlight: clear first so a transition null → id re-fires the
-    // bubble's highlight effect even if it was the same id last time.
-    setHighlightedId(null);
-    setTimeout(() => setHighlightedId(targetId), 60);
-    // Auto-clear the highlight after the flash so it doesn't stay tinted.
-    setTimeout(() => setHighlightedId(null), 1400);
-  }
-
-  // ── Signal-style in-conversation search ───────────────────────────────────
-  // Open the in-place search bar (called from the overflow menu). Dismisses the
-  // keyboard-stealing emoji panel and clears any previous query/results.
-  function openSearch() {
-    setMenuOpen(false);
-    setSearchQuery("");
-    setSearchMatchIds([]);
-    setSearchActiveIdx(0);
-    setHighlightedId(null);
-    setSearchMode(true);
-  }
-
-  // Close search and clear all of its transient state.
-  function closeSearch() {
-    setSearchMode(false);
-    setSearchQuery("");
-    setSearchMatchIds([]);
-    setSearchActiveIdx(0);
-    setHighlightedId(null);
-    if (searchDebounce.current) clearTimeout(searchDebounce.current);
-  }
-
-  const goBackToChatList = useCallback(() => {
-    // Prefer a real stack pop so the already-painted chat list remains behind
-    // the thread during Android/iOS back gestures. If this thread was launched
-    // as a root route (cold notification/deep link), fall back to the chat tab.
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
-    router.replace("/(tabs)/chat" as never);
-  }, [router]);
-
-  const handleThreadBack = useCallback(() => {
-    if (selectionMode) {
-      clearSelection();
-      return true;
-    }
-    if (searchMode) {
-      closeSearch();
-      return true;
-    }
-    goBackToChatList();
-    return true;
-  }, [goBackToChatList, searchMode, selectionMode]);
-
-  useFocusEffect(
-    useCallback(() => {
-      const sub = BackHandler.addEventListener(
-        "hardwareBackPress",
-        handleThreadBack,
-      );
-      return () => sub.remove();
-    }, [handleThreadBack]),
-  );
-
-  // Scroll the list to a matched message and flash its highlight.
-  // Re-applies highlightedId even for the same id by briefly clearing it so the
-  // bubble's highlight effect re-fires when stepping onto the same match twice.
-  function focusMatch(messageId: number) {
-    jumpToMessage(messageId);
-    setHighlightedId(null);
-    // Next tick so the bubble sees a transition from null → id and re-flashes.
-    setTimeout(() => setHighlightedId(messageId), 30);
-  }
-
-  // Debounced query → server search scoped to this conversation. Results are
-  // mapped to the message ids that are present in the loaded thread (so we can
-  // scroll to them) and ordered oldest-first to match `messages`.
-  function onSearchQueryChange(v: string) {
-    setSearchQuery(v);
-    if (searchDebounce.current) clearTimeout(searchDebounce.current);
-    const q = v.trim();
-    if (q.length < 2) {
-      setSearchMatchIds([]);
-      setSearchActiveIdx(0);
-      setHighlightedId(null);
-      return;
-    }
-    searchDebounce.current = setTimeout(() => {
-      searchMessages(q, convId)
-        .then((r) => {
-          const ids = (r.data || []).map((m) => m.id);
-          // Keep only ids currently loaded in the thread and order them to
-          // match the message list (oldest → newest).
-          const present = messages
-            .filter((m) => ids.includes(m.id))
-            .map((m) => m.id);
-          setSearchMatchIds(present);
-          if (present.length > 0) {
-            // Signal lands on the NEWEST match first.
-            const startIdx = present.length - 1;
-            setSearchActiveIdx(startIdx);
-            focusMatch(present[startIdx]);
-          } else {
-            setSearchActiveIdx(0);
-            setHighlightedId(null);
-          }
-        })
-        .catch(() => {
-          setSearchMatchIds([]);
-          setSearchActiveIdx(0);
-          setHighlightedId(null);
-        });
-    }, 300);
-  }
-
-  // Step to the PREVIOUS (older) match — up arrow in Signal's search nav bar.
-  function searchPrev() {
-    if (searchMatchIds.length === 0) return;
-    const next = Math.max(0, searchActiveIdx - 1);
-    setSearchActiveIdx(next);
-    focusMatch(searchMatchIds[next]);
-  }
-
-  // Step to the NEXT (newer) match — down arrow.
-  function searchNext() {
-    if (searchMatchIds.length === 0) return;
-    const next = Math.min(searchMatchIds.length - 1, searchActiveIdx + 1);
-    setSearchActiveIdx(next);
-    focusMatch(searchMatchIds[next]);
-  }
-
-  // ── Header 3-dot menu (mirrors the web ChatHeader overflow menu) ──
-
-  function openHeaderPanel(panel: HeaderSheet) {
-    if (panel === "search") {
-      setSheetSearchQ("");
-      setSheetSearchResults([]);
-    } else if (panel === "pinned") {
-      loadPinned();
-    } else if (panel === "files") {
-      setSheetLoading(true);
-      getSharedFiles(convId)
-        .then((r) => setSharedFiles(r.data || []))
-        .catch(() => setSharedFiles([]))
-        .finally(() => setSheetLoading(false));
-    } else if (panel === "saved") {
-      setSheetLoading(true);
-      getStarredMessages()
-        .then((r) => setSavedMsgs(r.data || []))
-        .catch(() => setSavedMsgs([]))
-        .finally(() => setSheetLoading(false));
-    }
-    setHeaderSheet(panel);
-  }
-
-  // ── Signal-style navigation: header → profile, overflow → sub-screens ──
-  const baseParams = {
-    id: String(convId),
+  const {
+    goBackToChatList,
+    openInfo,
+    openSearchScreen,
+    openSharedMedia,
+    openPinnedScreen,
+    openSavedScreen,
+    startCall,
+  } = useChatThreadNavigation({
+    convId,
     name: name || "",
-    avatar: headerAvatar || "",
-    peerId: peerUserId ? String(peerUserId) : "",
-    isGroup: isGroupConv ? "1" : "0",
-    groupMemberAvatars: JSON.stringify(groupMemberAvatars),
+    headerAvatar: headerAvatar || "",
+    peerUserId,
+    isGroupConv,
+    groupMemberAvatars,
     peerStatus: peerStatus || "",
     peerWorkMode: peerWorkMode || "",
-    memberCount: String(participantCount),
-    myRole: myGroupRole,
-    description: groupDescription,
-  };
+    participantCount,
+    myGroupRole,
+    groupDescription,
+    selectionMode,
+    clearSelection,
+    searchMode,
+    closeSearch,
+    alert,
+  });
 
-  function openInfo() {
-    router.push({ pathname: "/chat/info", params: baseParams });
-  }
-
-  function openSearchScreen() {
-    router.push({
-      pathname: "/chat/search",
-      params: { id: String(convId), name: name || "" },
-    });
-  }
-
-  function openSharedMedia(
-    tab: "images" | "videos" | "media" | "files" | "links" = "images",
-  ) {
-    router.push({
-      pathname: "/chat/shared",
-      params: { id: String(convId), name: name || "", tab },
-    });
-  }
-
-  function openPinnedScreen() {
-    router.push({
-      pathname: "/chat/saved",
-      params: { id: String(convId), name: name || "", mode: "pinned" },
-    });
-  }
-
-  function openSavedScreen() {
-    router.push({
-      pathname: "/chat/saved",
-      params: { id: String(convId), name: name || "", mode: "saved" },
-    });
-  }
-
-  function onSheetSearchChange(v: string) {
-    setSheetSearchQ(v);
-    if (searchDebounce.current) clearTimeout(searchDebounce.current);
-    const q = v.trim();
-    if (q.length < 2) {
-      setSheetSearchResults([]);
-      return;
-    }
-    searchDebounce.current = setTimeout(() => {
-      setSheetLoading(true);
-      searchMessages(q, convId)
-        .then((r) => setSheetSearchResults(r.data || []))
-        .catch(() => setSheetSearchResults([]))
-        .finally(() => setSheetLoading(false));
-    }, 300);
-  }
-
-  // Close the sheet first, then jump — scrollToIndex while a modal is
-  // dismissing gets swallowed on Android.
-  function jumpFromSheet(messageId: number) {
-    setHeaderSheet(null);
-    setTimeout(() => jumpToMessage(messageId), 350);
-  }
-
-  // Clear chat — Signal-style, LOCAL/device-only. This never touches the other
-  // participant's copy (the old behaviour wrongly called the server, which
-  // wiped the conversation for everyone). We record a per-conversation "cleared
-  // at" cutoff so every message up to now is hidden on THIS device — including
-  // messages not yet loaded via pagination — while NEW messages that arrive
-  // afterwards still appear. The cutoff is persisted so the clear survives
-  // reloads/app restarts.
-  // Block / unblock the 1:1 peer (Signal parity — the peer is never notified).
-  function doToggleBlock() {
-    if (!peerUserId) return;
-    if (isBlocked) {
-      unblockUser(peerUserId)
-        .then(() => setIsBlocked(false))
-        .catch(() => {});
-      return;
-    }
-    confirm({
-      title: `Block ${name || "this user"}?`,
-      message:
-        "Blocked people can't send you messages or call you. They won't be notified.",
-      confirmText: "Block",
-      isDanger: true,
-      onConfirm: () => {
-        blockUser(peerUserId)
-          .then(() => setIsBlocked(true))
-          .catch(() => {});
-      },
-    });
-  }
-
-  function doClearChat() {
-    setHeaderSheet(null);
-    // Defer so the confirm dialog never collides with the dismissing modal.
-    setTimeout(() => {
-      confirm({
-        title: "Clear chat",
-        message:
-          "Clear this chat on your device? The other person will still have their copy.",
-        confirmText: "Clear",
-        isDanger: true,
-        onConfirm: () => {
-          messageGenerationRef.current += 1;
-          latestLoadRequestRef.current += 1;
-          olderRequestCursorRef.current = null;
-          pendingTailScrollRef.current = null;
-          setClearedAt(convId);
-          setMessages([]);
-          setPinnedMsgs([]);
-          setHasMore(false);
-          setLoadingOlder(false);
-          setLoadOlderError(null);
-          clearCachedMessages(convId);
-        },
-      });
-    }, 300);
-  }
-
-  function unstarFromSheet(messageId: number) {
-    starMessage(messageId)
-      .then(() => {
-        setSavedMsgs((prev) => prev.filter((m) => m.id !== messageId));
-        setStarredIds((prev) => {
-          const next = new Set(prev);
-          next.delete(messageId);
-          return next;
-        });
-      })
-      .catch(() => {});
-  }
-
-  function startReply(message: ChatMessage) {
-    setActionTarget(null);
-    setReactTarget(null);
-    setReactAnchor(null);
-    setReplyTo(message);
-    // Signal opens the keyboard with the cursor in the composer the moment you
-    // swipe-to-reply (or tap Reply). Focus after the reply strip + any
-    // dismissing overlay have settled so the keyboard reliably raises on
-    // Android (focusing while a modal is up, or before the reply strip mounts,
-    // is dropped).
-    setTimeout(() => inputRef.current?.focus(), 120);
-  }
-
-  // Copy a message's text to the clipboard (overlay "Copy" action).
-  function copyMessage(message: ChatMessage) {
-    setReactTarget(null);
-    setReactAnchor(null);
-    if (message.content) {
-      Clipboard.setStringAsync(message.content).catch(() => {});
-    }
-  }
-
-  // Open the Forward picker for a message reached from the reaction overlay.
-  // The overlay's target lives in `reactTarget`; we promote it to
-  // `actionTarget` (which drives the forward picker modal + doForward) and
-  // switch into forward mode.
-  function openForwardFor(message: ChatMessage) {
-    setReactTarget(null);
-    setReactAnchor(null);
-    setActionTarget(message);
-    getConversations()
-      .then((r) => setConversations(r.data || []))
-      .catch(() => setConversations([]));
-    setForwardMode(true);
-  }
-
-  function openForward() {
-    // Switch the already-open action-sheet modal into "forward" mode. We do
-    // NOT dismiss this modal and present another — that cross-modal race on
-    // Android is what made Forward silently fail before.
-    setReactTarget(null);
-    // Preload conversations so the picker isn't empty when it appears.
-    getConversations()
-      .then((r) => setConversations(r.data || []))
-      .catch(() => setConversations([]));
-    setForwardMode(true);
-  }
-
-  function closeActionSheet() {
-    setActionTarget(null);
-    setForwardMode(false);
-    setForwardSelection([]);
-  }
-
-  function doForward(targetConvId: number) {
-    // Multi-select forward: if a selection was promoted to `forwardSelection`,
-    // fan the forward out across every selected message id. Otherwise fall back
-    // to the single `actionTarget` (reaction-overlay / action-sheet path).
-    const targets =
-      forwardSelection.length > 0
-        ? forwardSelection
-        : actionTarget
-          ? [actionTarget]
-          : [];
-    if (targets.length === 0) return;
-    closeActionSheet();
-    clearSelection();
-    Promise.all(targets.map((m) => forwardMessage(m.id, [targetConvId])))
-      .then(() => {
-        // Small defer so the result dialog never collides with the
-        // dismissing modal.
-        setTimeout(
-          () =>
-            alert(
-              "Forwarded",
-              targets.length > 1
-                ? `${targets.length} messages forwarded.`
-                : "Message forwarded.",
-            ),
-          300,
-        );
-      })
-      .catch((e: any) => {
-        setTimeout(
-          () =>
-            alert(
-              "Error",
-              e?.response?.data?.error || "Could not forward message.",
-            ),
-          300,
-        );
-      });
-  }
-
-  // Short subtle tone played when a reaction is ADDED (Signal-style audible
-  // feedback). Uses the same synthesized data-URI mechanism as the realtime
-  // notification sounds so no audio asset is needed.
-  function playReactionSound() {
-    try {
-      const uri = getNotificationPreviewDataUri("reaction", "subtle");
-      if (!uri) return;
-      setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => {});
-      // Create the native player on first use (kept off the chat-open path).
-      let player = reactionSoundPlayerRef.current;
-      if (!player) {
-        player = createAudioPlayer();
-        reactionSoundPlayerRef.current = player;
-      }
-      player.replace({ uri });
-      player.play();
-    } catch {
-      /* no-op */
-    }
-  }
-
-  async function react(message: ChatMessage, emoji: string) {
-    if (message.deleted_at) return;
-    setReactTarget(null);
-    // Determine whether this toggle ADDS a reaction (vs removes it) so the
-    // haptic + sound feedback only fires on add (Signal only buzzes/plays when
-    // you place a reaction, not when you clear one).
-    const willAdd = !(message.reactions || []).some(
-      (r) => r.userId === user?.id && r.emoji === emoji,
-    );
-    // Optimistic toggle FIRST (mirrors web handleReact): the chip appears /
-    // disappears instantly. Doing the API call before the state update caused
-    // two bugs: (a) the reaction only showed after the network round-trip and
-    // (b) a remove raced the server's WS "removed" fan-out — the WS handler
-    // removed the chip, then the late local toggle re-ADDED it, making
-    // "remove reaction" appear broken.
-    const applyToggle = (prev: ChatMessage[]) =>
-      prev.map((m) => {
-        if (m.id !== message.id) return m;
-        if (m.deleted_at) return { ...m, reactions: [] };
-        const existing = m.reactions || [];
-        const mineIdx = existing.findIndex(
-          (r) => r.userId === user?.id && r.emoji === emoji,
-        );
-        if (mineIdx >= 0) {
-          return { ...m, reactions: existing.filter((_, i) => i !== mineIdx) };
-        }
-        return {
-          ...m,
-          reactions: [
-            ...existing,
-            { emoji, userId: user?.id ?? 0, fullName: user?.full_name ?? "" },
-          ],
-        };
-      });
-    setMessages(applyToggle);
-    // Haptic + subtle sound on ADD (Signal parity).
-    if (willAdd) {
-      try {
-        Vibration.vibrate(12);
-      } catch {
-        /* no-op */
-      }
-      playReactionSound();
-    }
-    try {
-      await toggleReaction(message.id, emoji);
-    } catch {
-      // API failed — revert the optimistic toggle so UI matches the server.
-      setMessages(applyToggle);
-    }
-  }
-
-  function pickEmoji(emoji: string) {
-    if (emojiMode === "compose") {
-      setText((t) => t + emoji);
-    } else if (reactTarget) {
-      // Apply the chosen reaction to the long-pressed message. `react()` clears
-      // reactTarget itself, but clear the anchor too so the reaction overlay
-      // doesn't briefly re-appear behind the closing picker.
-      react(reactTarget, emoji);
-      setReactAnchor(null);
-    }
-    setShowAllEmoji(false);
-  }
-
-  // Close the full emoji picker WITHOUT picking. In "react" mode this must also
-  // drop the long-pressed target/anchor, otherwise the reaction overlay (which
-  // is hidden only while the picker is open) would pop straight back up.
-  function closeEmojiPicker() {
-    setShowAllEmoji(false);
-    if (emojiMode === "react") {
-      setReactTarget(null);
-      setReactAnchor(null);
-    }
-  }
-
-  // ── Inline emoji keyboard (Signal-style composer toggle) ──────────────────
-  // Toggle between the system keyboard and the docked in-app emoji keyboard.
-  function toggleEmojiKeyboard() {
-    if (emojiKeyboardFocusTimer.current) {
-      clearTimeout(emojiKeyboardFocusTimer.current);
-      emojiKeyboardFocusTimer.current = null;
-    }
-    if (emojiKeyboardOpen) {
-      // Emoji → system keyboard. This transition fights TWO Android quirks at
-      // once, so it needs BOTH a blur AND a long-enough delayed focus:
-      //
-      //  1. No-op focus: the native EditText KEEPS its focus after a
-      //     `Keyboard.dismiss()` (which is how the emoji panel was opened). On
-      //     Android, calling `.focus()` on an already-focused field does NOT
-      //     re-raise the soft keyboard — it's a no-op. So we must `blur()`
-      //     first to force a real focus *change* on the later focus() call.
-      //     (No keyboard is visible here — the emoji panel is — so the blur
-      //     can't "collapse" anything.)
-      //
-      //  2. Prop-commit race: closing the panel flips the TextInput's
-      //     `showSoftInputOnFocus` false → true, and Android can still see the
-      //     stale native prop for a frame or two. If focus() fires too early the
-      //     keyboard is suppressed and the transition feels "stuck". Keeping the
-      //     emoji panel mounted removes the heavy unmount cost, so a short delay
-      //     is now enough — and we cancel it on rapid re-taps so old focus
-      //     requests cannot fight a newer emoji transition.
-      //
-      // Mirrors Signal-Android's InputAwareLayout, which requests the soft
-      // input on its edit text only after the emoji page has been torn down,
-      // treating keyboard↔emoji as an explicit transition.
-      emojiSearchFocused.current = false;
-      setEmojiKeyboardOpen(false);
-      inputRef.current?.blur();
-      emojiKeyboardFocusTimer.current = setTimeout(() => {
-        emojiKeyboardFocusTimer.current = null;
-        if (!emojiKeyboardOpenRef.current) inputRef.current?.focus();
-      }, 90);
-    } else {
-      // System → emoji: dismiss the OS keyboard, then dock the emoji keyboard.
-      // Arm the guard FIRST so the safety effect ignores the system keyboard's
-      // still-animating (stale) height — otherwise the emoji panel we open on
-      // the next line would be instantly closed again (the dismiss is async).
-      ignoreKbForEmoji.current = true;
-      emojiSearchFocused.current = false;
-      // BLUR the field before dismissing. With the input still focused, RN
-      // re-evaluates showSoftInputOnFocus and on Android re-shows the system
-      // keyboard mid-transition — collapsing the docked panel and forcing the
-      // user to tap the toggle/field again. Blurring first commits the keyboard
-      // dismissal so the emoji panel mounts cleanly (Signal blurs before its
-      // InputAwareLayout swaps to the emoji page).
-      inputRef.current?.blur();
-      Keyboard.dismiss();
-      setEmojiKeyboardOpen(true);
-    }
-  }
-
-  // Called from the docked emoji keyboard — insert at the end of the draft.
-  function insertEmoji(native: string) {
-    setText((t) => t + native);
-  }
-
-  // Backspace key on the docked emoji keyboard (mobile keyboard mode).
-  function emojiBackspace() {
-    setText((t) => Array.from(t).slice(0, -1).join(""));
-  }
-
-  // When the field gains focus via a tap, ensure the emoji keyboard is closed.
-  function onComposerInputFocus() {
-    if (emojiKeyboardOpen) setEmojiKeyboardOpen(false);
-  }
-
-  function onEmojiSearchFocus() {
-    emojiSearchFocused.current = true;
-  }
-
-  function onEmojiSearchBlur() {
-    emojiSearchFocused.current = false;
-  }
-
-  function startCall(type: "voice" | "video") {
-    if (isGroupConv) {
-      void startGroupCall(type);
-      return;
-    }
-    router.push({
-      pathname: "/call/[conversationId]",
-      params: {
-        conversationId: String(convId),
-        mode: "outgoing",
-        callType: type,
-        peerName: name || "Call",
-        peerAvatar: headerAvatar || "",
-        isGroup: isGroupConv ? "1" : "0",
-      },
-    });
-  }
-
-  // Start an instant GROUP CALL (huddle). The group stays a pure chat group:
-  // the server creates a hidden huddle (no "Meeting:" rename / no meeting card /
-  // no calendar artifact) bound to THIS conversation and RINGS every member with
-  // `call_incoming` (Signal-style group call). The initiator joins the n-way
-  // mesh by navigating to the meeting room with the returned code.
-  async function startGroupCall(type: "voice" | "video") {
-    try {
-      const { data } = await createMeeting({
-        title: name || "Group call",
-        conversation_id: convId,
-        huddle: true,
-        settings: { allowScreenShare: true, callType: type },
-      });
-      const code = data?.meeting_code;
-      if (code) {
-        // Huddle auto-join (no meeting lobby) + audio-only for a voice call.
-        router.push(
-          `/meeting/${code}?huddle=1&callType=${type}` as never,
-        );
-      } else {
-        alert("Call failed", "Could not start the group call. Please try again.");
-      }
-    } catch {
-      alert("Call failed", "Could not start the group call. Please try again.");
-    }
-  }
-
-  // ── Multi-select (Signal-style) ───────────────────────────────────────────
-  // Pin / unpin every selected message (header pin icon). Pin toggles per
-  // message; we simply call the pin endpoint for each and refresh the banner.
-  function pinSelected() {
-    const targets = [...selectedMessages];
-    clearSelection();
-    Promise.all(
-      targets.map((m) =>
-        pinMessage(m.id)
-          .then(({ data }) => {
-            const pinned = !!(data as { pinned?: boolean })?.pinned;
-            setMessages((prev) =>
-              prev.map((x) =>
-                x.id === m.id
-                  ? {
-                      ...x,
-                      pinned_at: pinned ? new Date().toISOString() : null,
-                    }
-                  : x,
-              ),
-            );
-          })
-          .catch(() => {}),
-      ),
-    ).finally(() => loadPinned());
-  }
-
-  // Save (star) every selected message (header save icon).
-  function saveSelected() {
-    const targets = [...selectedMessages];
-    clearSelection();
-    Promise.all(
-      targets.map((m) =>
-        starMessage(m.id)
-          .then(({ data }) => {
-            const starred = !!(data as { starred?: boolean })?.starred;
-            setStarredIds((prev) => {
-              const next = new Set(prev);
-              if (starred) next.add(m.id);
-              else next.delete(m.id);
-              return next;
-            });
-          })
-          .catch(() => {}),
-      ),
-    ).then(() => {
-      setTimeout(() => alert("Saved", "Messages added to saved."), 200);
-    });
-  }
-
-  // Copy the text of every selected message to the clipboard, joined by
-  // newlines (header copy icon).
-  function copySelected() {
-    const text = selectedMessages
-      .map((m) => m.content || "")
-      .filter((s) => s.trim().length > 0)
-      .join("\n");
-    clearSelection();
-    if (text) Clipboard.setStringAsync(text).catch(() => {});
-  }
-
-  // Forward every selected message (header forward icon). Promotes the
-  // selection to `forwardSelection` and opens the forward picker; the actual
-  // fan-out happens in doForward (which loops the API per selected id).
-  const [forwardSelection, setForwardSelection] = useState<ChatMessage[]>([]);
-  function forwardSelected() {
-    const targets = [...selectedMessages];
-    if (targets.length === 0) return;
-    setForwardSelection(targets);
-    setActionTarget(targets[0]);
-    getConversations()
-      .then((r) => setConversations(r.data || []))
-      .catch(() => setConversations([]));
-    setForwardMode(true);
-  }
-
-  // ── Delete (WhatsApp/Telegram/Signal model) ───────────────────────────────
-  // A single chooser drives BOTH single-message deletes (long-press menu) and
-  // multi-select deletes (header trash). `deleteTargets` holds the messages the
-  // open chooser operates on; the chooser offers "Delete for everyone" (own
-  // messages only — the server rejects deleting others') and "Delete for me"
-  // (a local-only hide, persisted per device).
-  const [deleteTargets, setDeleteTargets] = useState<ChatMessage[] | null>(
-    null,
-  );
-  const deleteCanForEveryone = useMemo(
-    () =>
-      !!deleteTargets &&
-      deleteTargets.length > 0 &&
-      deleteTargets.every((m) => Number(m.sender_id) === Number(user?.id)),
-    [deleteTargets, user?.id],
-  );
-
-  // Open the delete chooser. Dismisses the long-press surfaces first, then opens
-  // the sheet on a short delay so the dismissing Modal never collides with it
-  // (same pattern the old confirm flow used).
-  function requestDelete(targets: (ChatMessage | null | undefined)[]) {
-    setReactTarget(null);
-    setReactAnchor(null);
-    setActionTarget(null);
-    const list = targets.filter(Boolean) as ChatMessage[];
-    if (list.length === 0) return;
-    setTimeout(() => setDeleteTargets(list), 250);
-  }
-
-  function closeDeleteSheet() {
-    setDeleteTargets(null);
-  }
-
-  // "Delete for everyone" — calls the server for each OWN target and marks it
-  // deleted locally (the peer gets a chat_delete socket event).
-  function deleteForEveryone() {
-    const targets = (deleteTargets || []).filter(
-      (m) => Number(m.sender_id) === Number(user?.id),
-    );
-    setDeleteTargets(null);
-    if (targets.length === 0) return;
-    Promise.all(
-      targets.map((m) =>
-        deleteMessage(m.id)
-          .then(() =>
-            setMessages((prev) =>
-              prev.map((x) =>
-                x.id === m.id
-                  ? {
-                      ...x,
-                      deleted_at: new Date().toISOString(),
-                      content: "",
-                      file_url: null,
-                      file_name: null,
-                      file_type: null,
-                      file_size: null,
-                      reactions: [],
-                    }
-                  : x,
-              ),
-            ),
-          )
-          .catch(() => {}),
-      ),
-    ).catch(() => alert("Error", "Could not delete message(s)."));
-  }
-
-  // "Delete for me" — hides the target message(s) on this device only and
-  // persists the hidden ids so they stay hidden across reloads.
-  function deleteForMe() {
-    const targets = deleteTargets || [];
-    setDeleteTargets(null);
-    if (targets.length === 0) return;
-    const ids = targets.map((m) => Number(m.id));
-    setLocallyDeleted((prev) => {
-      const next = new Set(prev);
-      ids.forEach((id) => next.add(id));
-      return next;
-    });
-    addLocalDeletedIds(convId, ids);
-  }
-
-  // Delete every selected message (header delete icon). Opens the chooser for
-  // the whole selection — "Delete for everyone" applies to the own messages in
-  // it, "Delete for me" hides them all locally (so a mixed mine/theirs
-  // selection still has a working delete, which it previously lacked).
-  function deleteSelected() {
-    const targets = [...selectedMessages];
-    clearSelection();
-    requestDelete(targets);
-  }
-
-  // Enter multi-select mode seeded with one message (the long-press context
-  // menu's "Select" action). Closes the context menu first so the header can
-  // cleanly swap to the selection action bar.
-  function enterSelectionWith(message: ChatMessage) {
-    setReactTarget(null);
-    setReactAnchor(null);
-    selectOnly(message);
-  }
-
-  // Anchor the reaction/context menu to the long-pressed bubble (mirrors the
-  // web MessageBubble). Measures the bubble's host node directly for
-  // reliability.
-  //
-  // IMPORTANT (UX fix): long-press NO LONGER enters multi-select mode. Doing
-  // both at once tangled "react to this message" with "select messages" — the
-  // reaction pill AND the header selection action bar appeared together, which
-  // felt broken. Now long-press opens ONE cohesive context menu (reaction pill
-  // + per-message actions). Multi-select is an explicit "Select" action inside
-  // that menu (Signal / WhatsApp / Telegram model).
-  function openReactionBar(item: ChatMessage, mine: boolean) {
-    // Already selecting? Long-press just toggles this row in the selection
-    // (Signal/WhatsApp): the context menu is a single-message surface, so it
-    // shouldn't reappear on top of an active multi-select.
-    if (selectedIds.size > 0) {
-      toggleSelect(item);
-      return;
-    }
-    // Crisp haptic the instant the menu opens (Signal-Android fires a
-    // performHapticFeedback(LONG_PRESS) on long-press before the overlay
-    // animates in). LONG_PRESS is a single short, firm tick — a ~20ms pulse
-    // reads closer to it than the previous 12ms blip.
-    try {
-      Vibration.vibrate(20);
-    } catch {
-      /* no-op */
-    }
-    const node = bubbleRefs.current.get(item.id) as unknown as {
-      measureInWindow?: (
-        cb: (x: number, y: number, width: number, height: number) => void,
-      ) => void;
-    } | null;
-    // IMPORTANT: call measureInWindow ON the node (not via a detached
-    // reference). It is a method bound to the native view instance — invoking
-    // it without its receiver loses `this` and crashes the app natively.
-    if (node && typeof node.measureInWindow === "function") {
-      try {
-        node.measureInWindow((x, y, width, height) => {
-          setReactAnchor({ x, y, width, height, mine });
-          setReactTarget(item);
-        });
-      } catch {
-        setReactAnchor(null);
-        setReactTarget(item);
-      }
-    } else {
-      setReactAnchor(null);
-      setReactTarget(item);
-    }
-  }
-
-  // Position the reaction bar right next to the long-pressed bubble (mirrors
-  // the web MessageBubble behavior). Falls back to centered if no anchor.
-  function computeBarPosition() {
-    if (!reactAnchor) {
-      return {
-        position: "absolute" as const,
-        top: winHeight / 2 - barSize.height / 2,
-        left: winWidth / 2 - barSize.width / 2,
-      };
-    }
-    const margin = 8;
-    const gap = 6;
-    const barW = barSize.width || 300;
-    const barH = barSize.height || 44;
-
-    // Horizontal: align with the bubble edge, clamped to the screen.
-    let left = reactAnchor.mine
-      ? reactAnchor.x + reactAnchor.width - barW
-      : reactAnchor.x;
-    left = Math.max(margin, Math.min(left, winWidth - barW - margin));
-
-    // Vertical: prefer above the bubble; if it doesn't fit, place below.
-    let top = reactAnchor.y - barH - gap;
-    if (top < insets.top + margin) {
-      top = reactAnchor.y + reactAnchor.height + gap;
-    }
-    top = Math.max(
-      insets.top + margin,
-      Math.min(top, winHeight - barH - margin),
-    );
-
-    return { position: "absolute" as const, top, left };
-  }
-
-  // Reaction-bar size measurement (keeps the anchor positioning accurate).
-  function onReactionBarLayout(width: number, height: number) {
-    if (
-      Math.abs(width - barSize.width) > 1 ||
-      Math.abs(height - barSize.height) > 1
-    ) {
-      setBarSize({ width, height });
-    }
-  }
-
-  // Oldest-first visible page for FlashList. Keeping server order avoids the
-  // transform-heavy inverted-list path and lets FlashList recycle native cells.
-  const visibleMessages = useMemo(() => {
-    // PERF: resolve the "clear chat" cutoff ONCE per recompute instead of
-    // calling isBeforeClearedAt() per message. isBeforeClearedAt() does a
-    // synchronous MMKV read + a Date parse of the cutoff EVERY call, so on a
-    // long thread (hundreds of messages after paging) the old per-message call
-    // fired hundreds of native storage reads on the JS thread on every
-    // recompute — the visible freeze when opening a conversation with lots of
-    // history. We read the cutoff string once, parse it once, then compare each
-    // message's timestamp inline. Reactivity is unchanged: this memo already
-    // only recomputes when [messages, locallyDeleted, convId] change (the exact
-    // same inputs the per-message call depended on).
-    const cutoffIso = getClearedAt(convId);
-    const cutoffMs = cutoffIso ? new Date(cutoffIso).getTime() : NaN;
-    const hasCutoff = !Number.isNaN(cutoffMs);
-    const out: ChatMessage[] = [];
-    for (let i = 0; i < messages.length; i++) {
-      const m = messages[i];
-      // "Delete for me" — hidden message ids on this device.
-      if (locallyDeleted.has(Number(m.id))) continue;
-      // "Clear chat for me" — everything up to the local cutoff is hidden on
-      // this device while newer messages still show (Signal model).
-      if (hasCutoff && m.created_at) {
-        const c = new Date(m.created_at).getTime();
-        if (!Number.isNaN(c) && c <= cutoffMs) continue;
-      }
-      out.push(m);
-    }
-    return out;
-  }, [messages, locallyDeleted, convId]);
-
-  // Signal-Android-style precomputed row bind metadata. Signal's
-  // ConversationAdapter resolves per-row presentation (grouping, day dividers)
-  // ONCE when a page is built, not on every RecyclerView bind. Here the FlatList
-  // `renderItem` previously recomputed consecutive-grouping + day-divider for
-  // EVERY visible row on EVERY render — each row parsing two `new Date(...)`
-  // timestamps. On a busy thread that is hundreds of Date parses per render pass
-  // (scroll, typing pulse, receipt update…), all on the JS thread. We compute it
-  // ONCE per `visibleMessages` change and let `renderItem` do an O(1) lookup,
-  // keyed by the same stable id the list keys by (clientMsgId ?? id). Because
-  // the memoized MessageBubble's inputs are unchanged, this also stops rows from
-  // re-binding when unrelated state changes.
-  const rowMeta = useMemo(() => {
-    const GROUP_WINDOW_MS = 300000; // 5 min — same-sender consecutive grouping
-    const within = (a?: ChatMessage, b?: ChatMessage) => {
-      if (!a || !b) return false;
-      if (a.sender_id !== b.sender_id) return false;
-      const ta = new Date(a.created_at).getTime();
-      const tb = new Date(b.created_at).getTime();
-      return Math.abs(tb - ta) <= GROUP_WINDOW_MS;
-    };
-    const map = new Map<
-      string,
-      { firstInGroup: boolean; lastInGroup: boolean; showDaySeparator: boolean }
-    >();
-    for (let index = 0; index < visibleMessages.length; index++) {
-      const item = visibleMessages[index];
-      const prev = visibleMessages[index - 1]; // older, above
-      const next = visibleMessages[index + 1]; // newer, below
-      const key = item.clientMsgId ?? String(item.id);
-      map.set(key, {
-        firstInGroup: !within(prev, item),
-        lastInGroup: !within(item, next),
-        showDaySeparator: !prev || !isSameDay(prev.created_at, item.created_at),
-      });
-    }
-    return map;
-  }, [visibleMessages]);
-
-  const latestPin = pinnedMsgs[0];
-
-  // Pre-parse read receipt timestamps ONCE per receipt-map change. Previously
-  // every own visible MsgTicks row did `Object.entries(readReceipts)` plus
-  // `new Date(readAt)` parsing during render. On text-only threads with many
-  // own messages, that became repeated O(visibleRows × participants) JS work on
-  // every open/reconcile. Signal computes delivery state from a cached receipt
-  // model; this gives each row a tiny numeric array instead of reparsing dates.
-  const readReceiptTimes = useMemo(
-    () =>
-      Object.entries(readReceipts)
-        .map(([uid, readAt]) => [Number(uid), new Date(readAt).getTime()] as const)
-        .filter(([, ts]) => Number.isFinite(ts)),
-    [readReceipts],
-  );
-
-  // Signal's adapter binds a compact delivery payload, not the complete receipt
-  // model, to every row. Build the same primitive phase once per receipt/message
-  // update. Reader timestamps are sorted once and binary-searched, avoiding the
-  // old Array.filter() in every mounted MsgTicks render.
-  const deliveryPhaseByKey = useMemo(() => {
-    const otherReadTimes = readReceiptTimes
-      .filter(([uid]) => uid !== user?.id)
-      .map(([, timestamp]) => timestamp)
-      .sort((a, b) => a - b);
-    const others = (participantCount || 2) - 1;
-    const phases = new Map<string, MessageDeliveryPhase>();
-
-    const readersAtOrAfter = (timestamp: number) => {
-      let low = 0;
-      let high = otherReadTimes.length;
-      while (low < high) {
-        const mid = (low + high) >>> 1;
-        if (otherReadTimes[mid] < timestamp) low = mid + 1;
-        else high = mid;
-      }
-      return otherReadTimes.length - low;
-    };
-
-    for (const message of visibleMessages) {
-      const key = message.clientMsgId ?? String(message.id);
-      let phase: MessageDeliveryPhase;
-      if (message._pending || message.id < 0) {
-        phase = "sending";
-      } else if (others <= 0) {
-        phase = "hidden";
-      } else {
-        const deliveredCount = message.delivered_to?.length ?? 0;
-        const messageTime = new Date(message.created_at).getTime();
-        const readerCount = Number.isFinite(messageTime)
-          ? readersAtOrAfter(messageTime)
-          : 0;
-        if (
-          readerCount >= others ||
-          (readerCount > 0 && deliveredCount >= others)
-        ) {
-          phase = "read";
-        } else if (deliveredCount > 0) {
-          phase = "delivered";
-        } else {
-          phase = "sent";
-        }
-      }
-      phases.set(key, phase);
-    }
-    return phases;
-  }, [visibleMessages, participantCount, readReceiptTimes, user?.id]);
-
-  // FlatList extraData. Keep this Signal-style targeted and O(1): message
-  // content/reaction/pin/delete changes already arrive through immutable
-  // `messages` updates (the FlatList `data` prop). extraData is only for
-  // row-affecting state that lives outside the message object. The old
-  // implementation built a giant string by scanning every message/reaction on
-  // every recompute; opening a long chat could freeze the JS thread.
-  const listExtraData = useMemo(
-    () => ({
+  const { rowMeta, readReceiptTimes, deliveryPhaseByKey, listExtraData } =
+    useChatListPresentation({
+      visibleMessages,
+      readReceipts,
+      participantCount,
+      user,
       starredIds,
       selectedIds,
       highlightedId,
-      deliveryPhaseByKey,
       selectionMode,
-      userId: user?.id,
-    }),
-    [
-      starredIds,
-      selectedIds,
-      highlightedId,
-      deliveryPhaseByKey,
-      selectionMode,
-      user?.id,
-    ],
-  );
-
-  // Status line under the chat name (mirrors the web ChatHeader meta line):
-  // member count for groups, live effective status for 1:1 chats.
-  const headerSubtitle = isGroupConv
-    ? participantCount
-      ? `${participantCount} members`
-      : ""
-    : peerStatus
-      ? STATUS_LABEL[peerStatus] || peerStatus
-      : "";
+    });
 
   // Composer bottom inset (keyboard-aware).
   const composerBottomInset = Math.max(insets.bottom, kbInset) + 8;
@@ -3710,7 +635,7 @@ export function useChatThread() {
     // inline emoji keyboard (Signal-style)
     inputRef,
     emojiKeyboardOpen,
-    emojiKeyboardHeight: lastKbHeight.current,
+    emojiKeyboardHeight,
     kbInset,
     toggleEmojiKeyboard,
     insertEmoji,
