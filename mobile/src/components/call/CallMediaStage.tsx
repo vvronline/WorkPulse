@@ -5,17 +5,14 @@ import {
   FullScreenSelfView,
   RemoteVideo,
 } from "./CallVideoPrimitives";
-
-type CallStatus =
-  | "ringing"
-  | "connecting"
-  | "connected"
-  | "reconnecting"
-  | "ended"
-  | "rejected";
+import type {
+  CallInsets,
+  CallStatus,
+  CallStyles,
+} from "../../calls/shared/callUiTypes";
 
 type Props = {
-  styles: any;
+  styles: CallStyles;
   isInPip: boolean;
   showRemoteVideo: boolean;
   remoteURL: string | null;
@@ -25,7 +22,7 @@ type Props = {
   peerAvatarUrl: string | null;
   peerName: string;
   showPipSelfPreview: boolean;
-  insets: { top: number; bottom: number };
+  insets: CallInsets;
   status: CallStatus;
   statusLabel: string;
 };

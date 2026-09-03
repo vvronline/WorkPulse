@@ -1,50 +1,35 @@
 /**
- * ADAPTIVE VIDEO QUALITY CONTROLLER (1:1 calls)
- * =============================================
+ * ADAPTIVE VIDEO QUALITY CONTROLLER (1:1 calls) — mobile mirror.
  *
- * This module replaces the previous 3-state (good/fair/poor) classifier that
- * jumped the encoder between 1.2 Mbps ↔ 500 kbps ↔ 200 kbps (and flipped
- * `scaleResolutionDownBy` 1 ↔ 2) every 3 seconds. That design was the direct
- * cause of the "lag / freeze / jitter here and there" reports:
+ * Parity twin of `client/src/components/chat/call/callQuality.ts`. The repo has
+ * no shared web/native package, so parity is maintained by duplication (same
+ * convention as `callSignalDeduplicator.ts` / `peerConnectionMachine.ts`).
+ * KEEP THE TWO FILES IN SYNC — the grading thresholds and the ladder must match
+ * or the two ends of a call will disagree about what "good" means.
  *
- *   1. CUMULATIVE LOSS — loss was computed as
- *      `packetsLost / (packetsLost + packetsReceived)` over the counters
- *      SINCE CALL START. `packetsLost` is monotonic, so a single 2-second
- *      burst at second 10 poisoned the average for the rest of the call and
- *      pinned the encoder at a low tier long after the network recovered.
- *      → Fixed here by differencing consecutive samples (interval loss).
+ * WHY THIS REPLACES THE INLINE CONTROLLER IN app/call/[conversationId].tsx:
  *
- *   2. ABSOLUTE RTT THRESHOLDS — `rtt < 0.15 → good` is wrong the moment the
- *      call is TURN-relayed (Cloudflare Calls), where a perfectly healthy
- *      path sits at 60-150 ms. The classifier then oscillated across the
- *      boundary every sample, and each oscillation re-configured the encoder.
- *      → Fixed here by learning the path's RTT BASELINE (p25 over the first
- *      ~10 s) and grading on the EXCESS above it.
+ *   1. CUMULATIVE LOSS — the old loop computed
+ *      `packetsLost / (packetsLost + packetsReceived)` from the counters SINCE
+ *      CALL START. `packetsLost` is monotonic, so one early loss burst pinned
+ *      the encoder low for the remainder of the call.
+ *      → Interval deltas here.
  *
- *   3. NO HYSTERESIS ON THE WAY DOWN + RESOLUTION FLAPPING — every
- *      `scaleResolutionDownBy` change forces the encoder to reinitialise and
- *      emit a keyframe, i.e. a visible freeze pulse.
- *      → Fixed by a 5-rung ladder walked ONE rung at a time, with asymmetric
- *      hysteresis (fast down, slow up) and extra damping on rungs that change
- *      resolution.
+ *   2. ABSOLUTE RTT THRESHOLDS — `rtt < 0.15 → good` is wrong on a
+ *      TURN-relayed path (Cloudflare Calls), where a healthy call sits at
+ *      60-150 ms. The old classifier oscillated across that boundary every 3 s
+ *      sample, and mobile had NO hysteresis at all, so every oscillation wrote
+ *      a new bitrate AND flipped `scaleResolutionDownBy` — each flip forcing an
+ *      encoder reinit + keyframe, i.e. a visible freeze.
+ *      → Graded on RTT EXCESS over a learned per-path baseline here.
  *
- *   4. RACING setParameters() — `getParameters()` hands back a snapshot
- *      stamped with a `transactionId`; if another `setParameters()` lands in
- *      between, the first throws InvalidStateError. Three writers used to race
- *      on the same sender during the first 3 s of a call (bitrate ramp timers,
- *      the keyframe hack, and the stats loop) and every failure was swallowed
- *      by an empty catch — so ramp steps were silently dropped and the encoder
- *      could stay pinned at the 300-400 kbps start cap for the whole call.
- *      → Fixed by serialising every write through a per-PeerConnection queue
- *      that always re-reads parameters immediately before mutating.
+ *   3. RACING setParameters() — three writers (ramp timers, the stats loop,
+ *      camera swaps) mutated the same sender concurrently with every failure
+ *      swallowed, so ramp steps were silently dropped.
+ *      → Serialised through a per-PeerConnection queue.
  *
- *   5. FREEZE / JITTER SIGNALS IGNORED — `freezeCount`, `jitterBufferDelay`
- *      and `qualityLimitationReason` were collected and only painted in a
- *      debug panel. They are the metrics that actually predict a freeze.
- *      → They now force a downshift regardless of RTT.
- *
- * The mobile client mirrors this file at `mobile/src/calls/shared/callQuality.ts`
- * (the repo has no shared web/native package; parity is by duplication).
+ * The types are structural on purpose: this module must not import
+ * `react-native-webrtc` (it is also exercised by node-based jest tests).
  */
 
 export type ConnectionQuality = "good" | "fair" | "poor" | "unknown";
@@ -92,17 +77,44 @@ export function buildTiers(isMobile: boolean): VideoEncodingTier[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Structural WebRTC types (avoids importing react-native-webrtc here)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface EncodingParamsLike {
+  maxBitrate?: number;
+  maxFramerate?: number;
+  scaleResolutionDownBy?: number;
+  active?: boolean;
+}
+
+export interface SendParamsLike {
+  encodings?: EncodingParamsLike[];
+  degradationPreference?: string;
+  [key: string]: unknown;
+}
+
+export interface SenderLike {
+  track?: { kind?: string } | null;
+  getParameters?: () => SendParamsLike;
+  setParameters?: (params: SendParamsLike) => Promise<void> | void;
+}
+
+export interface PeerConnectionLike {
+  getSenders?: () => SenderLike[];
+  getReceivers?: () => Record<string, unknown>[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sampling
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * A raw reading pulled from `RTCPeerConnection.getStats()`. All the counter
- * fields are CUMULATIVE as reported by the browser; the controller differences
- * them internally. Callers must not pre-process them.
+ * A raw reading pulled from `getStats()`. The counter fields are CUMULATIVE as
+ * reported by the platform; the controller differences them internally.
  */
 export interface RawStatsSample {
   timestampMs: number;
-  /** Smoothed-by-the-browser RTT of the nominated candidate pair, seconds. */
+  /** RTT of the nominated candidate pair, seconds. */
   rttSeconds: number | null;
   /** Cumulative `inbound-rtp.packetsLost` summed over audio + video. */
   packetsLost: number;
@@ -124,22 +136,16 @@ export interface QualityDecision {
   tier: VideoEncodingTier;
   /** True when `tierIndex` moved on this sample (i.e. the encoder needs a write). */
   changed: boolean;
-  /** EWMA-smoothed RTT, seconds. */
   smoothedRttSeconds: number | null;
-  /** Learned floor for this path (host ≈ 20 ms, TURN-relayed ≈ 90 ms). */
   baselineRttSeconds: number | null;
   /** EWMA-smoothed INTERVAL loss (0..1) — not the since-call-start average. */
   smoothedLossRate: number;
-  /** Freezes observed since the previous sample. */
   freezeDelta: number;
-  /** Mean jitter-buffer delay over the last interval, seconds. */
   jitterBufferSeconds: number;
-  /** Short human-readable explanation, for logs. */
   reason: string;
 }
 
-// Grading thresholds. `EXCESS` values are RTT ABOVE the learned baseline, so
-// they hold equally for a 20 ms LAN path and a 120 ms Cloudflare-relayed one.
+// Grading thresholds — MUST match the web twin.
 const LOSS_BAD = 0.05;
 const LOSS_WARN = 0.02;
 const RTT_EXCESS_BAD = 0.2;
@@ -147,34 +153,19 @@ const RTT_EXCESS_WARN = 0.08;
 const JITTER_BUFFER_BAD = 0.5;
 const JITTER_BUFFER_WARN = 0.25;
 
-/** EWMA weight for the newest sample. Low enough that one spike can't move the ladder. */
 const EWMA_ALPHA = 0.4;
-
-/** Consecutive clean samples required before stepping UP one rung. */
 const UPSHIFT_SAMPLES = 4;
-/** Extra clean samples required when the upshift also changes RESOLUTION (costs a keyframe). */
 const UPSHIFT_RESOLUTION_PENALTY = 2;
-
-/** How long we keep collecting RTT readings to learn the path baseline. */
 const BASELINE_WINDOW_MS = 10_000;
 const BASELINE_MIN_SAMPLES = 3;
 
 type Grade = "good" | "warn" | "bad";
 
 export interface QualityController {
-  /** Feed one `getStats()` reading; returns the decision for this sample. */
   observe(sample: RawStatsSample): QualityDecision;
-  /** Current ladder position (0 = best). */
   getTierIndex(): number;
-  /** Current ladder rung. */
   getTier(): VideoEncodingTier;
-  /**
-   * Force a ladder position (used by the connect-time ramp so the ramp and
-   * the controller can never disagree about what the encoder is doing —
-   * a desync that previously left calls stuck at the 400 kbps start cap).
-   */
   setTierIndex(index: number): void;
-  /** Clear all learned state (new peer connection / ICE restart). */
   reset(): void;
 }
 
@@ -190,7 +181,7 @@ function percentile(sorted: number[], p: number): number {
 export function createQualityController(
   options: { isMobile?: boolean } = {},
 ): QualityController {
-  const tiers = buildTiers(!!options.isMobile);
+  const tiers = buildTiers(options.isMobile !== false);
 
   let tierIndex = RAMP_START_TIER_INDEX;
   let prev: RawStatsSample | null = null;
@@ -226,9 +217,9 @@ export function createQualityController(
       }
       return;
     }
-    // Window closed. Keep adapting DOWNWARD only: if the path genuinely got
-    // shorter (ICE switched from relay to a direct pair) the floor follows,
-    // but a congestion-induced rise must never be absorbed into "normal".
+    // Window closed. Adapt DOWNWARD only: if ICE switched from a relay to a
+    // direct pair the floor follows, but congestion must never be absorbed
+    // into "normal".
     if (baselineRtt === null || rtt < baselineRtt) baselineRtt = rtt;
   }
 
@@ -236,7 +227,6 @@ export function createQualityController(
     const previous = prev;
     prev = sample;
 
-    // ── RTT: smooth, then learn/compare against the path baseline ────────
     if (sample.rttSeconds !== null && Number.isFinite(sample.rttSeconds)) {
       rttEwma =
         rttEwma === null
@@ -245,7 +235,6 @@ export function createQualityController(
       updateBaseline(rttEwma, sample.timestampMs);
     }
 
-    // ── Loss: INTERVAL rate, from deltas (never the cumulative average) ──
     let intervalLoss = 0;
     if (previous) {
       const dLost = Math.max(0, sample.packetsLost - previous.packetsLost);
@@ -260,7 +249,6 @@ export function createQualityController(
       ? EWMA_ALPHA * intervalLoss + (1 - EWMA_ALPHA) * lossEwma
       : intervalLoss;
 
-    // ── Freezes + jitter buffer growth since the previous sample ─────────
     const freezeDelta = previous
       ? Math.max(0, sample.freezeCount - previous.freezeCount)
       : 0;
@@ -277,11 +265,9 @@ export function createQualityController(
         ? Math.max(0, rttEwma - baselineRtt)
         : 0;
 
-    // ── Grade ────────────────────────────────────────────────────────────
     let grade: Grade = "good";
     let reason = "stable";
     if (rttEwma === null) {
-      // No RTT yet (call just connected) — hold position, don't guess.
       return {
         quality: "unknown",
         tierIndex,
@@ -321,7 +307,6 @@ export function createQualityController(
       reason = "degrading";
     }
 
-    // ── Move the ladder AT MOST one rung ─────────────────────────────────
     const before = tierIndex;
     if (grade === "bad") {
       goodStreak = 0;
@@ -377,24 +362,113 @@ export function createQualityController(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Stats collection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A single `getStats()` entry. Typed loosely on purpose: the exact field set
+ * differs per report type AND per platform (react-native-webrtc omits several
+ * standard fields), so every read below is individually guarded.
+ */
+interface StatsReportLike {
+  type?: string;
+  kind?: string;
+  state?: string;
+  nominated?: boolean;
+  currentRoundTripTime?: number;
+  roundTripTime?: number;
+  packetsLost?: number;
+  packetsReceived?: number;
+  freezeCount?: number;
+  jitterBufferDelay?: number;
+  jitterBufferEmittedCount?: number;
+  qualityLimitationReason?: string;
+}
+
+/**
+ * Fold a `getStats()` report map into a `RawStatsSample`. Accepts anything
+ * iterable with `forEach` (the RTCStatsReport shape on both platforms).
+ */
+export function collectStatsSample(
+  stats: { forEach: (cb: (report: StatsReportLike) => void) => void },
+  now: number = Date.now(),
+): RawStatsSample {
+  let rttSeconds: number | null = null;
+  let packetsLost = 0;
+  let packetsReceived = 0;
+  let freezeCount = 0;
+  let jitterBufferDelay = 0;
+  let jitterBufferEmittedCount = 0;
+  let qualityLimitationReason: string | null = null;
+
+  stats.forEach((report: StatsReportLike) => {
+    if (
+      report?.type === "candidate-pair" &&
+      (report.nominated || report.state === "succeeded")
+    ) {
+      if (typeof report.currentRoundTripTime === "number") {
+        rttSeconds = report.currentRoundTripTime;
+      }
+    }
+    if (
+      report?.type === "inbound-rtp" &&
+      (report.kind === "audio" || report.kind === "video")
+    ) {
+      packetsLost += report.packetsLost || 0;
+      packetsReceived += report.packetsReceived || 0;
+      jitterBufferDelay += report.jitterBufferDelay || 0;
+      jitterBufferEmittedCount += report.jitterBufferEmittedCount || 0;
+      if (report.kind === "video") freezeCount += report.freezeCount || 0;
+    }
+    if (report?.type === "outbound-rtp" && report.kind === "video") {
+      if (report.qualityLimitationReason) {
+        qualityLimitationReason = report.qualityLimitationReason;
+      }
+    }
+    // Fallback RTT: `remote-inbound-rtp` carries one when the candidate pair
+    // report omits it (common on older react-native-webrtc builds).
+    if (
+      report?.type === "remote-inbound-rtp" &&
+      rttSeconds === null &&
+      typeof report.roundTripTime === "number"
+    ) {
+      rttSeconds = report.roundTripTime;
+    }
+  });
+
+  return {
+    timestampMs: now,
+    rttSeconds,
+    packetsLost,
+    packetsReceived,
+    freezeCount,
+    jitterBufferDelay,
+    jitterBufferEmittedCount,
+    qualityLimitationReason,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Serialised encoder writes
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * One promise chain per RTCPeerConnection. `getParameters()` returns a snapshot
- * carrying a `transactionId`; if a second `setParameters()` is applied before
- * the first resolves, the first REJECTS with InvalidStateError. Every writer
- * (connect ramp, adaptive controller, screen-share swap) must go through here
- * so parameters are always re-read immediately before being mutated.
+ * One promise chain per peer connection. `getParameters()` returns a snapshot
+ * carrying a `transactionId`; a second `setParameters()` applied before the
+ * first resolves makes the first REJECT. Every writer must go through here so
+ * parameters are re-read immediately before being mutated.
  */
-const applyQueues = new WeakMap<RTCPeerConnection, Promise<unknown>>();
+const applyQueues = new WeakMap<object, Promise<unknown>>();
 
-function enqueue<T>(pc: RTCPeerConnection, task: () => Promise<T>): Promise<T> {
-  const tail = applyQueues.get(pc) ?? Promise.resolve();
+function enqueue<T>(
+  pc: PeerConnectionLike,
+  task: () => Promise<T>,
+): Promise<T> {
+  const key = pc as unknown as object;
+  const tail = applyQueues.get(key) ?? Promise.resolve();
   const next = tail.then(task, task);
-  // Keep a swallowed copy as the queue tail so one failure can't poison the chain.
   applyQueues.set(
-    pc,
+    key,
     next.then(
       () => undefined,
       () => undefined,
@@ -403,67 +477,66 @@ function enqueue<T>(pc: RTCPeerConnection, task: () => Promise<T>): Promise<T> {
   return next;
 }
 
-async function writeVideoTier(
-  pc: RTCPeerConnection,
-  tier: VideoEncodingTier,
-): Promise<boolean> {
-  let applied = false;
-  for (const sender of pc.getSenders()) {
-    if (sender.track?.kind !== "video") continue;
-    try {
-      // Re-read INSIDE the queued task: any earlier write has already
-      // resolved, so this snapshot's transactionId is current.
-      const params = sender.getParameters();
-      if (!params.encodings || params.encodings.length === 0)
-        params.encodings = [{}];
-      params.encodings[0].maxBitrate = tier.maxBitrate;
-      params.encodings[0].maxFramerate = tier.maxFramerate;
-      params.encodings[0].scaleResolutionDownBy = tier.scaleResolutionDownBy;
-      // "balanced" lets the encoder trade BOTH resolution and framerate as
-      // the link degrades, softening gracefully instead of freezing.
-      params.degradationPreference = "balanced";
-      await sender.setParameters(params);
-      applied = true;
-    } catch (err: any) {
-      // Never silent: a swallowed InvalidStateError here is exactly how the
-      // encoder used to get stuck at the connect-time start cap.
-      console.warn(
-        "[call-quality] setParameters(video) failed:",
-        err?.message || err,
-      );
-    }
-  }
-  return applied;
-}
-
 /** Apply a ladder rung to every video sender. Serialised per peer connection. */
 export function applyVideoEncodingTier(
-  pc: RTCPeerConnection,
+  pc: PeerConnectionLike,
   tier: VideoEncodingTier,
 ): Promise<boolean> {
-  return enqueue(pc, () => writeVideoTier(pc, tier));
+  return enqueue(pc, async () => {
+    let applied = false;
+    const senders = typeof pc.getSenders === "function" ? pc.getSenders() : [];
+    for (const sender of senders) {
+      if (sender?.track?.kind !== "video") continue;
+      try {
+        const params = sender.getParameters?.();
+        if (!params) continue;
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}];
+        }
+        params.encodings[0].maxBitrate = tier.maxBitrate;
+        params.encodings[0].maxFramerate = tier.maxFramerate;
+        params.encodings[0].scaleResolutionDownBy = tier.scaleResolutionDownBy;
+        // "balanced" lets the encoder trade BOTH resolution and framerate as
+        // the link degrades, softening gracefully instead of freezing.
+        params.degradationPreference = "balanced";
+        await sender.setParameters?.(params);
+        applied = true;
+      } catch (err) {
+        // Never silent: a swallowed InvalidStateError is exactly how the
+        // encoder used to get stuck at the connect-time start cap.
+        console.warn(
+          "[call-quality] setParameters(video) failed:",
+          (err as Error)?.message || err,
+        );
+      }
+    }
+    return applied;
+  });
 }
 
 /** Cap the Opus sender so video adaptation can never starve audio. */
 export function applyAudioEncodingCap(
-  pc: RTCPeerConnection,
+  pc: PeerConnectionLike,
   maxBitrate: number = AUDIO_MAX_BITRATE,
 ): Promise<boolean> {
   return enqueue(pc, async () => {
     let applied = false;
-    for (const sender of pc.getSenders()) {
-      if (sender.track?.kind !== "audio") continue;
+    const senders = typeof pc.getSenders === "function" ? pc.getSenders() : [];
+    for (const sender of senders) {
+      if (sender?.track?.kind !== "audio") continue;
       try {
-        const params = sender.getParameters();
-        if (!params.encodings || params.encodings.length === 0)
+        const params = sender.getParameters?.();
+        if (!params) continue;
+        if (!params.encodings || params.encodings.length === 0) {
           params.encodings = [{}];
+        }
         params.encodings[0].maxBitrate = maxBitrate;
-        await sender.setParameters(params);
+        await sender.setParameters?.(params);
         applied = true;
-      } catch (err: any) {
+      } catch (err) {
         console.warn(
           "[call-quality] setParameters(audio) failed:",
-          err?.message || err,
+          (err as Error)?.message || err,
         );
       }
     }
@@ -476,17 +549,16 @@ export function applyAudioEncodingCap(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Walk the ladder from `RAMP_START_TIER_INDEX` up to the top rung over a few
- * seconds so the connection establishes on a modest bitrate and only then
- * opens up. Unlike the previous implementation this shares its position with
- * the adaptive controller (`controller.setTierIndex`), so the two can never
- * disagree — and it ABORTS as soon as the controller has moved DOWN, which
- * means a genuinely bad link is no longer fought by the ramp.
+ * Walk the ladder from `RAMP_START_TIER_INDEX` up to the top rung so the
+ * connection establishes on a modest bitrate and only then opens up. Shares
+ * its position with the adaptive controller so the two can never disagree,
+ * and ABORTS the moment the controller has moved DOWN (a genuinely bad link
+ * must not be fought back up by the ramp).
  *
  * Returns a cancel function.
  */
 export function startBitrateRampUp(
-  pc: RTCPeerConnection,
+  pc: PeerConnectionLike,
   controller: QualityController,
   options: { stepMs?: number } = {},
 ): () => void {
@@ -501,9 +573,6 @@ export function startBitrateRampUp(
     const target = RAMP_START_TIER_INDEX - step;
     timers.push(
       setTimeout(() => {
-        // Only ever move UP from where the controller currently is. If the
-        // adaptive loop already dropped us because the link is bad, the
-        // ramp must not fight it back up.
         if (controller.getTierIndex() !== target + 1) return;
         controller.setTierIndex(target);
         void applyVideoEncodingTier(pc, controller.getTier());
@@ -521,16 +590,12 @@ export function startBitrateRampUp(
 /**
  * Enable Opus in-band FEC (and disable DTX) on the LOCAL description before it
  * is signalled. Without `useinbandfec=1` every lost audio packet is an audible
- * gap — the most-noticed form of "jitter" on a call. FEC lets the decoder
- * reconstruct a lost packet from redundancy carried in the next one, at the
- * cost of a few kbps.
+ * gap — the most-noticed form of "jitter" on a call.
  *
- * Safe to call on any SDP: if there is no Opus fmtp line the input is returned
- * unchanged.
+ * Safe on any SDP: with no Opus fmtp line the input is returned unchanged.
  */
 export function preferOpusFec(sdp: string): string {
   if (!sdp) return sdp;
-  // Find the Opus payload type(s) from the rtpmap lines.
   const payloadTypes = new Set<string>();
   const rtpmap = /^a=rtpmap:(\d+)\s+opus\/48000/gim;
   let match: RegExpExecArray | null;
@@ -563,23 +628,4 @@ export function preferOpusFec(sdp: string): string {
       return `a=fmtp:${fmtp[1]} ${rebuilt}`;
     })
     .join("\r\n");
-}
-
-/**
- * Ask the receiver for the smallest playout buffer it can manage. Chrome
- * honours `playoutDelayHint` (seconds); other browsers ignore the property.
- * A large default buffer is what makes a call feel laggy even when the
- * network is fine.
- */
-export function applyLowLatencyPlayout(
-  pc: RTCPeerConnection,
-  seconds = 0.05,
-): void {
-  for (const receiver of pc.getReceivers()) {
-    try {
-      (receiver as any).playoutDelayHint = seconds;
-    } catch {
-      /* not supported — ignore */
-    }
-  }
 }

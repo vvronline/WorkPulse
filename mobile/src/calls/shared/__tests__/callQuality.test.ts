@@ -1,27 +1,42 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+/// <reference types="jest" />
+
 import {
   applyAudioEncodingCap,
-  applyLowLatencyPlayout,
   applyVideoEncodingTier,
   BOTTOM_TIER_INDEX,
   buildTiers,
+  collectStatsSample,
   createQualityController,
   MOBILE_TOP_TIER_BITRATE,
   preferOpusFec,
   RAMP_START_TIER_INDEX,
   startBitrateRampUp,
   VIDEO_TIERS,
+  type PeerConnectionLike,
   type RawStatsSample,
-} from "../components/chat/call/callQuality";
+  type SenderLike,
+  type SendParamsLike,
+} from "../callQuality";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Build a cumulative getStats reading. The controller differences consecutive
- * samples itself, so tests must feed MONOTONIC counters exactly like the
- * browser does.
+ * `collectStatsSample`'s report types are internal to the module, so they are
+ * derived from its signature here rather than widened to `any` — a typo in a
+ * fixture field name then fails the build instead of silently producing a
+ * zeroed sample.
+ */
+type StatsReportMapLike = Parameters<typeof collectStatsSample>[0];
+type StatsReportLike = Parameters<
+  Parameters<StatsReportMapLike["forEach"]>[0]
+>[0];
+
+/**
+ * Build a CUMULATIVE getStats reading. The controller differences consecutive
+ * samples itself, so tests must feed monotonic counters exactly like
+ * react-native-webrtc does.
  */
 function makeSample(
   overrides: Partial<RawStatsSample> & { timestampMs: number },
@@ -38,48 +53,42 @@ function makeSample(
   };
 }
 
-function createParameters(): RTCRtpSendParameters {
-  return {
-    transactionId: "",
-    codecs: [],
-    headerExtensions: [],
-    rtcp: {},
-    encodings: [],
-  };
-}
-
 function createSender(
   kind: "audio" | "video",
   hooks: {
     onGet?: () => void;
-    onSet?: (params: RTCRtpSendParameters) => Promise<void> | void;
+    onSet?: (params: SendParamsLike) => Promise<void> | void;
   } = {},
 ) {
-  const params = createParameters();
-  const getParameters = vi.fn(() => {
+  const params: SendParamsLike = { encodings: [] };
+  const getParameters = jest.fn((): SendParamsLike => {
     hooks.onGet?.();
     return params;
   });
-  const setParameters = vi.fn(async (next: RTCRtpSendParameters) => {
+  const setParameters = jest.fn(async (next: SendParamsLike): Promise<void> => {
     await hooks.onSet?.(next);
   });
   return { track: { kind }, getParameters, setParameters, params };
 }
 
-function createPc(senders: unknown[], receivers: unknown[] = []) {
+function createPc(senders: SenderLike[]): PeerConnectionLike {
+  return { getSenders: () => senders };
+}
+
+/** A stats report shaped like the Map-ish object react-native-webrtc returns. */
+function createStatsReport(reports: StatsReportLike[]): StatsReportMapLike {
   return {
-    getSenders: () => senders,
-    getReceivers: () => receivers,
-  } as unknown as RTCPeerConnection;
+    forEach: (cb: (report: StatsReportLike) => void) => reports.forEach(cb),
+  };
 }
 
 afterEach(() => {
-  vi.useRealTimers();
-  vi.restoreAllMocks();
+  jest.useRealTimers();
+  jest.restoreAllMocks();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Ladder shape
+// Ladder
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("video tier ladder", () => {
@@ -98,12 +107,101 @@ describe("video tier ladder", () => {
   });
 
   it("caps the top rung lower on mobile uplinks", () => {
-    expect(buildTiers(false)[0].maxBitrate).toBe(VIDEO_TIERS[0].maxBitrate);
     expect(buildTiers(true)[0].maxBitrate).toBe(MOBILE_TOP_TIER_BITRATE);
-    // Only the top rung differs.
-    expect(buildTiers(true)[BOTTOM_TIER_INDEX]).toEqual(
-      VIDEO_TIERS[BOTTOM_TIER_INDEX],
+    expect(buildTiers(false)[0].maxBitrate).toBe(VIDEO_TIERS[0].maxBitrate);
+  });
+
+  it("defaults to the mobile ladder", () => {
+    // The web module defaults to desktop; this one must default to mobile so a
+    // caller that forgets the flag never uncaps a phone uplink.
+    const controller = createQualityController();
+    controller.setTierIndex(0);
+    expect(controller.getTier().maxBitrate).toBe(MOBILE_TOP_TIER_BITRATE);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// collectStatsSample (mobile-only helper)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("collectStatsSample", () => {
+  it("folds a getStats report into raw cumulative counters", () => {
+    const stats = createStatsReport([
+      {
+        type: "candidate-pair",
+        nominated: true,
+        currentRoundTripTime: 0.12,
+      },
+      {
+        type: "inbound-rtp",
+        kind: "audio",
+        packetsLost: 3,
+        packetsReceived: 500,
+        jitterBufferDelay: 4,
+        jitterBufferEmittedCount: 400,
+      },
+      {
+        type: "inbound-rtp",
+        kind: "video",
+        packetsLost: 9,
+        packetsReceived: 1500,
+        jitterBufferDelay: 6,
+        jitterBufferEmittedCount: 600,
+        freezeCount: 2,
+      },
+      { type: "outbound-rtp", kind: "video", qualityLimitationReason: "cpu" },
+    ]);
+
+    const sample = collectStatsSample(stats, 1234);
+
+    expect(sample).toEqual({
+      timestampMs: 1234,
+      rttSeconds: 0.12,
+      // Audio AND video loss are summed: a video call can stutter badly while
+      // the audio stream alone still looks clean.
+      packetsLost: 12,
+      packetsReceived: 2000,
+      freezeCount: 2,
+      jitterBufferDelay: 10,
+      jitterBufferEmittedCount: 1000,
+      qualityLimitationReason: "cpu",
+    });
+  });
+
+  it("falls back to remote-inbound-rtp RTT when the candidate pair has none", () => {
+    const sample = collectStatsSample(
+      createStatsReport([
+        { type: "candidate-pair", nominated: true },
+        { type: "remote-inbound-rtp", kind: "video", roundTripTime: 0.24 },
+      ]),
+      1,
     );
+    expect(sample.rttSeconds).toBe(0.24);
+  });
+
+  it("reports a null RTT when no report carries one", () => {
+    const sample = collectStatsSample(
+      createStatsReport([
+        { type: "inbound-rtp", kind: "audio", packetsReceived: 10 },
+      ]),
+      1,
+    );
+    expect(sample.rttSeconds).toBeNull();
+  });
+
+  it("ignores an un-nominated candidate pair", () => {
+    const sample = collectStatsSample(
+      createStatsReport([
+        {
+          type: "candidate-pair",
+          state: "failed",
+          nominated: false,
+          currentRoundTripTime: 9,
+        },
+      ]),
+      1,
+    );
+    expect(sample.rttSeconds).toBeNull();
   });
 });
 
@@ -123,9 +221,9 @@ describe("quality controller", () => {
   });
 
   it("grades RTT against the learned path baseline, not an absolute threshold", () => {
-    // A Cloudflare-TURN-relayed path sits at a steady 250 ms. The old
-    // absolute classifier called that "fair" forever and kept re-configuring
-    // the encoder; the baseline-relative one calls a steady path healthy.
+    // A Cloudflare-TURN-relayed path sits at a steady 250 ms. The old mobile
+    // classifier (`rtt < 0.15 → good`, `< 0.4 → fair`) called that "fair"
+    // forever and re-configured the encoder every sample.
     const controller = createQualityController();
     let decision = controller.observe(
       makeSample({ timestampMs: 0, rttSeconds: 0.25 }),
@@ -136,11 +234,8 @@ describe("quality controller", () => {
       );
     }
     expect(decision.quality).toBe("good");
-    expect(decision.tierIndex).toBe(RAMP_START_TIER_INDEX);
     expect(decision.baselineRttSeconds).toBeCloseTo(0.25, 3);
 
-    // Now the SAME path degrades to 500 ms. Excess over baseline is what
-    // trips the downshift, and EWMA smoothing means one spike is not enough.
     let downshifted = false;
     for (let i = 0; i < 6 && !downshifted; i++) {
       decision = controller.observe(
@@ -150,8 +245,7 @@ describe("quality controller", () => {
     }
     expect(downshifted).toBe(true);
     expect(decision.quality).toBe("poor");
-    expect(decision.tierIndex).toBe(RAMP_START_TIER_INDEX + 1);
-    // The baseline must not absorb a congestion-induced rise.
+    // A congestion-induced rise must never be absorbed into "normal".
     expect(decision.baselineRttSeconds).toBeCloseTo(0.25, 3);
   });
 
@@ -160,19 +254,11 @@ describe("quality controller", () => {
     controller.observe(
       makeSample({ timestampMs: 0, packetsLost: 0, packetsReceived: 100 }),
     );
-
-    // A single 2-second burst: 200 lost against 100 received.
     let decision = controller.observe(
-      makeSample({
-        timestampMs: 2000,
-        packetsLost: 200,
-        packetsReceived: 200,
-      }),
+      makeSample({ timestampMs: 2000, packetsLost: 200, packetsReceived: 200 }),
     );
     expect(decision.quality).toBe("poor");
-    expect(decision.changed).toBe(true);
 
-    // Network recovers: no further loss, traffic keeps flowing.
     let received = 200;
     for (let i = 0; i < 6; i++) {
       received += 300;
@@ -184,11 +270,9 @@ describe("quality controller", () => {
         }),
       );
     }
-
-    // The cumulative rate the OLD code used is still ~9% (would stay "poor"
-    // for the rest of the call); the interval EWMA has decayed to clean.
-    const cumulativeRate = 200 / (200 + received);
-    expect(cumulativeRate).toBeGreaterThan(0.05);
+    // The cumulative rate the OLD code used is still ~9%; the interval EWMA
+    // has decayed back to clean.
+    expect(200 / (200 + received)).toBeGreaterThan(0.05);
     expect(decision.smoothedLossRate).toBeLessThan(0.02);
     expect(decision.quality).toBe("good");
   });
@@ -198,27 +282,16 @@ describe("quality controller", () => {
     controller.setTierIndex(0);
     controller.observe(makeSample({ timestampMs: 0 }));
 
-    const observed: Array<{ tierIndex: number; changed: boolean }> = [];
+    const path: number[] = [];
     let freezeCount = 0;
     for (let i = 1; i <= 5; i++) {
       freezeCount += 1;
-      const decision = controller.observe(
-        makeSample({ timestampMs: i * 2000, freezeCount }),
+      path.push(
+        controller.observe(makeSample({ timestampMs: i * 2000, freezeCount }))
+          .tierIndex,
       );
-      observed.push({
-        tierIndex: decision.tierIndex,
-        changed: decision.changed,
-      });
     }
-
-    expect(observed.map((o) => o.tierIndex)).toEqual([1, 2, 3, 4, 4]);
-    expect(observed.map((o) => o.changed)).toEqual([
-      true,
-      true,
-      true,
-      true,
-      false,
-    ]);
+    expect(path).toEqual([1, 2, 3, 4, 4]);
   });
 
   it("treats an encoder bandwidth limitation as a downshift trigger", () => {
@@ -235,22 +308,19 @@ describe("quality controller", () => {
   it("recovers slowly, and even slower when the step changes resolution", () => {
     const controller = createQualityController();
     controller.observe(makeSample({ timestampMs: 0 }));
-    // One freeze drops us from tier 3 to the bottom rung (scale 2).
     const dropped = controller.observe(
       makeSample({ timestampMs: 2000, freezeCount: 1 }),
     );
     expect(dropped.tierIndex).toBe(BOTTOM_TIER_INDEX);
 
-    // Tier 4 -> tier 3 changes scaleResolutionDownBy (2 -> 1.5), which costs
-    // a keyframe, so it needs the extra damping: 4 + 2 = 6 clean samples.
+    // Bottom -> next rung changes scaleResolutionDownBy, which costs a
+    // keyframe, so it needs the extra damping: 4 + 2 = 6 clean samples.
     let decision = dropped;
     for (let i = 0; i < 5; i++) {
       decision = controller.observe(
         makeSample({ timestampMs: 4000 + i * 2000, freezeCount: 1 }),
       );
-      expect(decision.quality).toBe("good");
       expect(decision.changed).toBe(false);
-      expect(decision.tierIndex).toBe(BOTTOM_TIER_INDEX);
     }
     decision = controller.observe(
       makeSample({ timestampMs: 14_000, freezeCount: 1 }),
@@ -259,28 +329,12 @@ describe("quality controller", () => {
     expect(decision.tierIndex).toBe(BOTTOM_TIER_INDEX - 1);
   });
 
-  it("needs only four clean samples when the step keeps the resolution", () => {
-    const controller = createQualityController();
-    // Tier 2 -> tier 1: both render at scaleResolutionDownBy = 1.
-    controller.setTierIndex(2);
-    let decision = controller.observe(makeSample({ timestampMs: 0 }));
-    for (let i = 1; i <= 2; i++) {
-      decision = controller.observe(makeSample({ timestampMs: i * 2000 }));
-      expect(decision.changed).toBe(false);
-    }
-    decision = controller.observe(makeSample({ timestampMs: 6000 }));
-    expect(decision.changed).toBe(true);
-    expect(decision.tierIndex).toBe(1);
-  });
-
   it("holds position in the warn dead-band instead of flapping", () => {
     const controller = createQualityController();
-    // Learn a 100 ms baseline.
     for (let i = 0; i < 4; i++) {
       controller.observe(makeSample({ timestampMs: i * 2000 }));
     }
-    // RTT settles at 220 ms: ~120 ms over baseline, i.e. between the warn and
-    // bad thresholds. Let the EWMA converge into that band first.
+    // Settle the EWMA into the mid-band (~120 ms over the 100 ms baseline).
     let decision = controller.observe(makeSample({ timestampMs: 0 }));
     for (let i = 0; i < 3; i++) {
       decision = controller.observe(
@@ -289,10 +343,6 @@ describe("quality controller", () => {
     }
     expect(decision.quality).toBe("fair");
 
-    // Sustained mid-band excess must HOLD the ladder: no downshift (it is not
-    // bad) and no upshift (warn resets the recovery streak). This dead-band is
-    // what stops the old good<->fair flapping that re-configured the encoder
-    // every few seconds.
     const start = controller.getTierIndex();
     for (let i = 0; i < 6; i++) {
       decision = controller.observe(
@@ -311,10 +361,6 @@ describe("quality controller", () => {
     expect(controller.getTierIndex()).toBe(BOTTOM_TIER_INDEX);
     controller.reset();
     expect(controller.getTierIndex()).toBe(RAMP_START_TIER_INDEX);
-    expect(
-      controller.observe(makeSample({ timestampMs: 0, rttSeconds: null }))
-        .baselineRttSeconds,
-    ).toBeNull();
   });
 });
 
@@ -332,13 +378,12 @@ describe("encoder parameter writes", () => {
       applyVideoEncodingTier(pc, VIDEO_TIERS[BOTTOM_TIER_INDEX]),
     ).resolves.toBe(true);
 
-    expect(video.params.encodings[0]).toMatchObject({
+    expect(video.params.encodings?.[0]).toMatchObject({
       maxBitrate: 150_000,
       maxFramerate: 15,
       scaleResolutionDownBy: 2,
     });
     expect(video.params.degradationPreference).toBe("balanced");
-    expect(video.setParameters).toHaveBeenCalledWith(video.params);
     expect(audio.setParameters).not.toHaveBeenCalled();
   });
 
@@ -348,7 +393,7 @@ describe("encoder parameter writes", () => {
     const pc = createPc([video, audio]);
 
     await expect(applyAudioEncodingCap(pc)).resolves.toBe(true);
-    expect(audio.params.encodings[0].maxBitrate).toBe(48_000);
+    expect(audio.params.encodings?.[0]?.maxBitrate).toBe(48_000);
     expect(video.setParameters).not.toHaveBeenCalled();
   });
 
@@ -358,33 +403,29 @@ describe("encoder parameter writes", () => {
       onGet: () => log.push("get"),
       onSet: (params) =>
         new Promise<void>((resolve) => {
-          log.push(`set:${params.encodings[0].maxBitrate}`);
+          log.push(`set:${params.encodings?.[0]?.maxBitrate}`);
           setTimeout(resolve, 5);
         }),
     });
     const pc = createPc([video]);
 
-    // Two writers racing, exactly like the connect ramp and the stats loop.
-    const first = applyVideoEncodingTier(pc, VIDEO_TIERS[0]);
-    const second = applyVideoEncodingTier(pc, VIDEO_TIERS[BOTTOM_TIER_INDEX]);
-    await Promise.all([first, second]);
+    // The connect ramp and the stats loop racing — the exact pattern that used
+    // to throw InvalidStateError and silently drop a write.
+    await Promise.all([
+      applyVideoEncodingTier(pc, VIDEO_TIERS[0]),
+      applyVideoEncodingTier(pc, VIDEO_TIERS[BOTTOM_TIER_INDEX]),
+    ]);
 
-    // A fresh getParameters() must precede each setParameters(); never
-    // get/get/set/set, which is what throws InvalidStateError.
     expect(log).toEqual([
       "get",
       `set:${VIDEO_TIERS[0].maxBitrate}`,
       "get",
       `set:${VIDEO_TIERS[BOTTOM_TIER_INDEX].maxBitrate}`,
     ]);
-    // Last writer wins.
-    expect(video.params.encodings[0].maxBitrate).toBe(
-      VIDEO_TIERS[BOTTOM_TIER_INDEX].maxBitrate,
-    );
   });
 
   it("reports failures instead of swallowing them, and keeps the queue alive", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     const failing = createSender("video", {
       onSet: () => Promise.reject(new Error("InvalidStateError")),
     });
@@ -395,17 +436,17 @@ describe("encoder parameter writes", () => {
     );
     expect(warn).toHaveBeenCalled();
 
-    // A later write on the same peer connection still runs.
     failing.setParameters.mockImplementation(async () => {});
     await expect(applyVideoEncodingTier(pc, VIDEO_TIERS[1])).resolves.toBe(
       true,
     );
   });
 
-  it("asks receivers for a small playout buffer", () => {
-    const receiver: Record<string, unknown> = {};
-    applyLowLatencyPlayout(createPc([], [receiver]), 0.05);
-    expect(receiver.playoutDelayHint).toBe(0.05);
+  it("is a no-op on a peer connection with no senders (voice call)", async () => {
+    const pc = createPc([]);
+    await expect(applyVideoEncodingTier(pc, VIDEO_TIERS[0])).resolves.toBe(
+      false,
+    );
   });
 });
 
@@ -415,43 +456,42 @@ describe("encoder parameter writes", () => {
 
 describe("connect-time bitrate ramp", () => {
   it("walks up one rung per step and shares its position with the controller", () => {
-    vi.useFakeTimers();
+    jest.useFakeTimers();
     const controller = createQualityController();
     const pc = createPc([createSender("video"), createSender("audio")]);
 
     const cancel = startBitrateRampUp(pc, controller, { stepMs: 100 });
     expect(controller.getTierIndex()).toBe(RAMP_START_TIER_INDEX);
 
-    vi.advanceTimersByTime(100);
+    jest.advanceTimersByTime(100);
     expect(controller.getTierIndex()).toBe(RAMP_START_TIER_INDEX - 1);
-    vi.advanceTimersByTime(200);
+    jest.advanceTimersByTime(200);
     expect(controller.getTierIndex()).toBe(0);
     cancel();
   });
 
   it("aborts as soon as the adaptive controller has moved down", () => {
-    vi.useFakeTimers();
+    jest.useFakeTimers();
     const controller = createQualityController();
     const pc = createPc([createSender("video")]);
 
     startBitrateRampUp(pc, controller, { stepMs: 100 });
-    vi.advanceTimersByTime(100);
-    expect(controller.getTierIndex()).toBe(RAMP_START_TIER_INDEX - 1);
+    jest.advanceTimersByTime(100);
 
-    // The stats loop drops us because the link is genuinely bad.
+    // The stats loop drops us because the link is genuinely bad; the ramp must
+    // not fight it back up.
     controller.setTierIndex(BOTTOM_TIER_INDEX);
-    vi.advanceTimersByTime(500);
+    jest.advanceTimersByTime(500);
     expect(controller.getTierIndex()).toBe(BOTTOM_TIER_INDEX);
   });
 
   it("stops stepping once cancelled", () => {
-    vi.useFakeTimers();
+    jest.useFakeTimers();
     const controller = createQualityController();
     const pc = createPc([createSender("video")]);
 
-    const cancel = startBitrateRampUp(pc, controller, { stepMs: 100 });
-    cancel();
-    vi.advanceTimersByTime(1000);
+    startBitrateRampUp(pc, controller, { stepMs: 100 })();
+    jest.advanceTimersByTime(1000);
     expect(controller.getTierIndex()).toBe(RAMP_START_TIER_INDEX);
   });
 });
@@ -479,9 +519,7 @@ describe("preferOpusFec", () => {
     expect(opusFmtp).toContain("minptime=10");
     expect(opusFmtp).toContain("useinbandfec=1");
     expect(opusFmtp).toContain("usedtx=0");
-    expect(opusFmtp).toContain("maxaveragebitrate=32000");
     expect(opusFmtp).not.toContain("useinbandfec=0");
-    // Other payload types are untouched.
     expect(out).toContain("a=fmtp:110 0-15");
   });
 

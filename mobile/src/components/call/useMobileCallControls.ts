@@ -1,4 +1,15 @@
 import type { MutableRefObject } from "react";
+import type {
+  CallMediaStreamLike,
+  FloatingReaction,
+} from "../../calls/shared/callUiTypes";
+
+/**
+ * The payload of a realtime frame emitted by these controls. Every send site
+ * below builds an object literal, so a permissive record keeps the socket
+ * layer's signature without reintroducing `any`.
+ */
+type SocketPayload = Record<string, unknown>;
 
 type ControlDeps = {
   conversationId: number;
@@ -8,20 +19,23 @@ type ControlDeps = {
   muted: boolean;
   videoOff: boolean;
   onHold: boolean;
-  localStreamRef: MutableRefObject<any>;
+  localStreamRef: MutableRefObject<CallMediaStreamLike | null>;
   peerIdRef: MutableRefObject<number | null>;
   callIdRef: MutableRefObject<number | null>;
   holdSnapshotRef: MutableRefObject<{
     muted: boolean;
     videoOff: boolean;
   } | null>;
-  sendSocket: (event: string, payload: any) => void;
+  sendSocket: (event: string, payload: SocketPayload) => void;
   // Reliable, retrying sender used for state signals that MUST reach the peer
   // (video-state / audio-state / reaction). A dropped fire-and-forget frame is
   // the root cause of a "stuck last frame" on the peer after camera-off and of
   // reactions never appearing on the other screen. Falls back to sendSocket
   // when not provided.
-  sendSocketReliable?: (event: string, payload: any) => void | Promise<unknown>;
+  sendSocketReliable?: (
+    event: string,
+    payload: SocketPayload,
+  ) => void | Promise<unknown>;
   setOnHold: (value: boolean) => void;
   setMuted: (value: boolean) => void;
   setVideoOff: (value: boolean) => void;
@@ -30,13 +44,7 @@ type ControlDeps = {
   setRecording: (updater: (prev: boolean) => boolean) => void;
   setSpeakerOn: (updater: (prev: boolean) => boolean) => void;
   setFloatingReactions: (
-    updater: (
-      prev: Array<{ id: number; emoji: string; fromSelf: boolean }>,
-    ) => Array<{
-      id: number;
-      emoji: string;
-      fromSelf: boolean;
-    }>,
+    updater: (prev: FloatingReaction[]) => FloatingReaction[],
   ) => void;
   setShowReactionPicker: (value: boolean) => void;
   setShowMore: (value: boolean) => void;
@@ -53,7 +61,7 @@ export function useMobileCallControls(deps: ControlDeps) {
     const stream = deps.localStreamRef.current;
     if (!stream) return;
     const next = !deps.muted;
-    stream.getAudioTracks().forEach((t: any) => {
+    stream.getAudioTracks().forEach((t) => {
       t.enabled = !next;
     });
     deps.setMuted(next);
@@ -74,7 +82,7 @@ export function useMobileCallControls(deps: ControlDeps) {
     const stream = deps.localStreamRef.current;
     if (!stream) return;
     const next = !deps.videoOff;
-    stream.getVideoTracks().forEach((t: any) => {
+    stream.getVideoTracks().forEach((t) => {
       t.enabled = !next;
     });
     deps.setVideoOff(next);
@@ -91,8 +99,8 @@ export function useMobileCallControls(deps: ControlDeps) {
 
   function switchCamera() {
     const stream = deps.localStreamRef.current;
-    stream?.getVideoTracks().forEach((t: any) => {
-      (t as any)._switchCamera?.();
+    stream?.getVideoTracks().forEach((t) => {
+      t._switchCamera?.();
     });
     deps.setUsingFrontCamera((v) => !v);
   }
@@ -106,10 +114,10 @@ export function useMobileCallControls(deps: ControlDeps) {
         muted: deps.muted,
         videoOff: deps.videoOff,
       };
-      stream.getAudioTracks().forEach((t: any) => {
+      stream.getAudioTracks().forEach((t) => {
         t.enabled = false;
       });
-      stream.getVideoTracks().forEach((t: any) => {
+      stream.getVideoTracks().forEach((t) => {
         t.enabled = false;
       });
       deps.setMuted(true);
@@ -119,10 +127,10 @@ export function useMobileCallControls(deps: ControlDeps) {
         muted: false,
         videoOff: true,
       };
-      stream.getAudioTracks().forEach((t: any) => {
+      stream.getAudioTracks().forEach((t) => {
         t.enabled = !snap.muted;
       });
-      stream.getVideoTracks().forEach((t: any) => {
+      stream.getVideoTracks().forEach((t) => {
         t.enabled = !snap.videoOff;
       });
       deps.setMuted(snap.muted);
@@ -150,13 +158,13 @@ export function useMobileCallControls(deps: ControlDeps) {
     const next = !deps.noiseSuppressionEnabled;
     const stream = deps.localStreamRef.current;
     if (stream) {
-      stream.getAudioTracks().forEach((track: any) => {
-        track
+      stream.getAudioTracks().forEach((track) => {
+        void track
           .applyConstraints?.({
             echoCancellation: true,
             autoGainControl: true,
             noiseSuppression: next,
-          } as any)
+          })
           .catch(() => {});
       });
     }

@@ -8,6 +8,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { RTCView } from "react-native-webrtc";
 import { RoundedSelfView } from "./RTCTextureView";
+import type { CallStyle } from "../../calls/shared/callUiTypes";
 
 const PIP_W = 110;
 const PIP_H = 160;
@@ -48,7 +49,7 @@ const pipStyles = StyleSheet.create({
 
 export const RemoteVideo = memo(function RemoteVideo(props: {
   url: string;
-  style: any;
+  style: CallStyle;
 }) {
   return (
     <RTCView
@@ -64,7 +65,7 @@ export const RemoteVideo = memo(function RemoteVideo(props: {
 export const FullScreenSelfView = memo(function FullScreenSelfView(props: {
   url: string;
   mirror: boolean;
-  style: any;
+  style: CallStyle;
 }) {
   return (
     <RTCView
@@ -80,7 +81,7 @@ export const FullScreenSelfView = memo(function FullScreenSelfView(props: {
 const PipSelfView = memo(function PipSelfView(props: {
   url: string;
   mirror: boolean;
-  style: any;
+  style: CallStyle;
 }) {
   // RoundedSelfView renders through a native TextureView on Android (so the
   // parent's rounded clip actually applies to the video) and the regular
@@ -155,7 +156,7 @@ export const DraggablePipSelfView = memo(function DraggablePipSelfView(props: {
 
 export const CallDuration = memo(function CallDuration(props: {
   active: boolean;
-  style: any;
+  style: CallStyle;
 }) {
   const [duration, setDuration] = useState(0);
   useEffect(() => {

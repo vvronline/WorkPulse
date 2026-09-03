@@ -34,6 +34,7 @@ import {
   RTCSessionDescription,
   RTCIceCandidate,
   MediaStream,
+  type MediaStreamTrack,
 } from "react-native-webrtc";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { socket } from "../../src/realtime/socket";
@@ -93,6 +94,95 @@ import {
   forgetInboundSignal,
   rememberInboundSignal,
 } from "../../src/calls/p2p/callSignalDeduplicator";
+import {
+  applyAudioEncodingCap,
+  applyVideoEncodingTier,
+  collectStatsSample,
+  createQualityController,
+  preferOpusFec,
+  RAMP_START_TIER_INDEX,
+  startBitrateRampUp,
+  type PeerConnectionLike,
+  type QualityController,
+} from "../../src/calls/shared/callQuality";
+import {
+  errorMessage,
+  type CallMessage,
+  type CallQuality,
+  type CallSignal,
+  type FloatingReaction,
+  type IceCandidateLike,
+  type SessionDescriptionLike,
+} from "../../src/calls/shared/callUiTypes";
+import type { IceServer } from "../../src/calls/shared/callIceConfig";
+
+/**
+ * `getUserMedia` constraint profile. react-native-webrtc's own `Constraints`
+ * type is not exported from the package root, and it accepts a wider shape
+ * than the DOM's (`audio` may be a plain boolean OR a processing-flags object),
+ * so the profiles below are described locally and cast once at the call site.
+ */
+type MediaConstraintProfile = {
+  audio: boolean | Record<string, boolean>;
+  video:
+    | boolean
+    | {
+        facingMode?: string;
+        width?: { ideal?: number; max?: number };
+        height?: { ideal?: number; max?: number };
+        frameRate?: { ideal?: number; max?: number };
+      };
+};
+
+/**
+ * The `on*` event-handler properties of an `RTCPeerConnection`.
+ *
+ * react-native-webrtc installs these at runtime via event-target-shim's
+ * `defineEventAttribute` (see its RTCPeerConnection.js), but its bundled
+ * `.d.ts` declares neither the attributes nor `addEventListener` on the class,
+ * so TypeScript can't see either. Assigning through this narrow view keeps the
+ * handler parameters typed instead of falling back to `any` per handler.
+ */
+interface PeerConnectionHandlers {
+  onicecandidate:
+    | ((event: { candidate: RTCIceCandidate | null }) => void)
+    | null;
+  ontrack:
+    | ((event: {
+        streams?: MediaStream[];
+        track?: MediaStreamTrack | null;
+      }) => void)
+    | null;
+  oniceconnectionstatechange: (() => void) | null;
+  onconnectionstatechange: (() => void) | null;
+}
+
+/** Attach the `on*` handlers to a peer connection without widening to `any`. */
+function pcHandlers(pc: RTCPeerConnection): PeerConnectionHandlers {
+  return pc as unknown as PeerConnectionHandlers;
+}
+
+/**
+ * Apply the local description with Opus in-band FEC enabled, and return the
+ * MUNGED descriptor so the caller signals exactly the SDP the peer connection
+ * is using.
+ *
+ * Without `useinbandfec=1` every lost audio packet is an audible gap — the
+ * most-noticed form of "jitter" on a call, and the one users describe as the
+ * audio "cutting out". FEC lets the decoder reconstruct a lost packet from
+ * redundancy carried in the next one for a few kbps. `usedtx=0` additionally
+ * stops the encoder from going silent during pauses, which some decoders
+ * render as a click/dropout when speech resumes.
+ */
+async function setLocalDescriptionWithFec(
+  pc: RTCPeerConnection,
+  desc: SessionDescriptionLike,
+): Promise<SessionDescriptionLike> {
+  const munged: SessionDescriptionLike =
+    desc && desc.sdp ? { type: desc.type, sdp: preferOpusFec(desc.sdp) } : desc;
+  await pc.setLocalDescription(munged as RTCSessionDescription);
+  return munged;
+}
 
 /**
  * Native audio/video call screen (react-native-webrtc). Mirrors the web call
@@ -188,15 +278,12 @@ export default function CallScreen() {
   // per-second tick never re-renders this screen (and the video surfaces).
   // Connection quality derived from getStats() — good | fair | poor | unknown.
   // Mirrors the web CallOverlay NetworkStats badge.
-  const [connectionQuality, setConnectionQuality] = useState<
-    "good" | "fair" | "poor" | "unknown"
-  >("unknown");
+  const [connectionQuality, setConnectionQuality] =
+    useState<CallQuality>("unknown");
   // The PEER's self-reported connection quality (received via the `quality-state`
   // signal). Drives a Teams-style "<name>'s connection is unstable" banner so
   // the user knows a freeze/stutter is the OTHER side's network, not theirs.
-  const [peerQuality, setPeerQuality] = useState<
-    "good" | "fair" | "poor" | "unknown"
-  >("unknown");
+  const [peerQuality, setPeerQuality] = useState<CallQuality>("unknown");
   // Last quality value we SENT to the peer — used to only emit `quality-state`
   // on a real change (not every 3s sample) so we don't spam the relay.
   const lastSentQualityRef = useRef<string | null>(null);
@@ -214,15 +301,7 @@ export default function CallScreen() {
   const [showChat, setShowChat] = useState(false);
   const [chatText, setChatText] = useState("");
   const [chatUnread, setChatUnread] = useState(0);
-  const [callMessages, setCallMessages] = useState<
-    Array<{
-      id: string | number;
-      senderId?: number;
-      senderName?: string;
-      content?: string;
-      createdAt?: string;
-    }>
-  >([]);
+  const [callMessages, setCallMessages] = useState<CallMessage[]>([]);
   // Seed the in-call chat panel with the conversation's existing history so
   // opening chat mid-call shows prior messages — web parity: the web
   // CallOverlay is handed the live conversation `messages`, whereas here the
@@ -254,13 +333,10 @@ export default function CallScreen() {
           return [...seeded.filter((m) => !seen.has(String(m.id))), ...prev];
         });
       })
-      .catch((err) => {
+      .catch((err: unknown) => {
         // Allow a later retry (e.g. reconnect) if the initial hydrate failed.
         chatHistoryLoadedRef.current = false;
-        console.warn(
-          "[call] chat history load failed:",
-          err?.message || err,
-        );
+        console.warn("[call] chat history load failed:", errorMessage(err));
       });
     return () => {
       cancelled = true;
@@ -268,18 +344,18 @@ export default function CallScreen() {
   }, [conversationId]);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   const [floatingReactions, setFloatingReactions] = useState<
-    Array<{ id: number; emoji: string; fromSelf: boolean }>
+    FloatingReaction[]
   >([]);
   const [showAddParticipant, setShowAddParticipant] = useState(false);
   const [addParticipantQuery, setAddParticipantQuery] = useState("");
   const [addParticipantSearching, setAddParticipantSearching] = useState(false);
   const [addParticipantResults, setAddParticipantResults] = useState<
-    Array<{
+    {
       id: number;
       full_name?: string;
       username?: string;
       avatar?: string | null;
-    }>
+    }[]
   >([]);
   const addParticipantTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -333,7 +409,7 @@ export default function CallScreen() {
   const peerIdRef = useRef<number | null>(
     params.peerId ? Number(params.peerId) : null,
   );
-  const iceServersRef = useRef<any[]>(FALLBACK_ICE);
+  const iceServersRef = useRef<IceServer[]>(FALLBACK_ICE);
   const iceConfigLoadedRef = useRef(false);
   // P1.8 — whether the CURRENTLY-loaded ICE config carries real, provisioned
   // TURN (Cloudflare/coturn/static) rather than the public Open Relay / STUN
@@ -352,7 +428,7 @@ export default function CallScreen() {
   // ICE-restart / renegotiation must proceed promptly with whatever creds we
   // have); only the FIRST connection is gated on genuine TURN.
   const firstNegotiationStartedRef = useRef(false);
-  const pendingIce = useRef<any[]>([]);
+  const pendingIce = useRef<IceCandidateLike[]>([]);
   const startedAt = useRef<number>(0);
   // Recovery state — mirrors the proven web client. relayOnly forces TURN-only
   // after a UDP/STUN ICE failure; the timers/flags coordinate ICE-restart and
@@ -429,7 +505,7 @@ export default function CallScreen() {
   // re-flushes itself on a short timer until the socket is back, so no
   // candidate is lost across a transient WS outage. Cleared on unmount.
   const iceOutQueueRef = useRef<
-    Array<{ targetUserId: number; candidate: any }>
+    { targetUserId: number; candidate: IceCandidateLike }[]
   >([]);
   const iceFlushingRef = useRef(false);
   const iceFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -458,9 +534,11 @@ export default function CallScreen() {
   const signalChainRef = useRef<Promise<void>>(Promise.resolve());
   const seenSignalIdsRef = useRef(new Set<string>());
   const runSerialized = useCallback((task: () => Promise<void>) => {
-    signalChainRef.current = signalChainRef.current.then(task).catch((err) => {
-      console.warn("[call] signaling task failed:", err?.message || err);
-    });
+    signalChainRef.current = signalChainRef.current
+      .then(task)
+      .catch((err: unknown) => {
+        console.warn("[call] signaling task failed:", errorMessage(err));
+      });
     return signalChainRef.current;
   }, []);
 
@@ -510,11 +588,11 @@ export default function CallScreen() {
           // transition; the idempotent endpoint makes the end authoritative.
           try {
             await endCallHttp(endCallId, conversationId);
-          } catch (err: any) {
+          } catch (err: unknown) {
             if (!wsOk) {
               console.warn(
                 "[call] HTTP end fallback failed:",
-                err?.message || err,
+                errorMessage(err),
               );
             }
           }
@@ -632,12 +710,12 @@ export default function CallScreen() {
       // defaults, then audio-only as a last resort for video calls. On many
       // low-end Android cameras the exact 1280×720@30 profile is rejected
       // outright — previously that single failure aborted the whole call.
-      const audio: any = {
+      const audio = {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
       };
-      const profiles: any[] =
+      const profiles: MediaConstraintProfile[] =
         callType === "video"
           ? [
               {
@@ -668,7 +746,9 @@ export default function CallScreen() {
 
       for (const constraints of profiles) {
         try {
-          const stream = await mediaDevices.getUserMedia(constraints);
+          const stream = await mediaDevices.getUserMedia(
+            constraints as Parameters<typeof mediaDevices.getUserMedia>[0],
+          );
           // Some devices can return a stream without an audio track for
           // video constraints. Ensure we always publish a microphone track.
           if (stream.getAudioTracks().length === 0) {
@@ -683,9 +763,26 @@ export default function CallScreen() {
               /* fall through; existing permission error is handled below */
             }
           }
-          localStreamRef.current = stream as MediaStream;
-          setLocalStream(stream as MediaStream);
-          return stream as MediaStream;
+          // Tell the encoder this is MOTION content (a talking head with a
+          // moving background), not a static screen share. With the default
+          // hint the encoder biases toward preserving detail and drops frames
+          // when the uplink tightens — which is exactly the stutter/freeze the
+          // user sees. "motion" makes it preserve the frame rate and soften
+          // detail instead.
+          for (const track of stream.getVideoTracks()) {
+            try {
+              // `contentHint` is a standard MediaStreamTrack property that
+              // react-native-webrtc does not declare in its .d.ts — write it
+              // through a narrow structural view rather than widening to any.
+              (track as unknown as { contentHint?: string }).contentHint =
+                "motion";
+            } catch {
+              /* not supported on this platform build — ignore */
+            }
+          }
+          localStreamRef.current = stream;
+          setLocalStream(stream);
+          return stream;
         } catch {
           /* try the next, more relaxed profile */
         }
@@ -877,90 +974,68 @@ export default function CallScreen() {
     };
   }, [shouldVibrateRinging]);
 
-  // Bitrate ramp-up (ported from the web useWebRTC applyBitrateRampUp):
-  // start LOW (~300 kbps) so the connection establishes fast on a mobile
-  // uplink, then ramp to the target (~800 kbps) over 3s once connected.
-  // A static high cap caused stalls/freezes at connect time on congested
-  // networks — part of why calls to desktop/web felt slow and unstable.
-  const bitrateRampTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  // Tracks the bitrate we last asked the encoder for, so the adaptive
-  // controller (in the getStats loop) can ramp DOWN on a degrading link and
-  // back UP on recovery without re-applying the same value every 3s sample.
-  const currentVideoBitrateRef = useRef<number>(300_000);
-  const setVideoBitrate = useCallback(
-    (
-      pc: RTCPeerConnection,
-      bitrate: number,
-      // Optional resolution downscale (1 = full, 2 = half each dimension, …).
-      // On a POOR link, halving resolution is what stops the freezes: a smaller
-      // frame fits the available bandwidth, so the encoder keeps a steady frame
-      // flowing instead of stalling trying to push full-res frames it can't.
-      scaleResolutionDownBy = 1,
-    ) => {
-      try {
-        const senders =
-          typeof (pc as any).getSenders === "function"
-            ? (pc as any).getSenders()
-            : [];
-        for (const sender of senders) {
-          if (sender?.track?.kind !== "video") continue;
-          const params = sender.getParameters?.();
-          if (!params) continue;
-          if (!params.encodings || params.encodings.length === 0) {
-            params.encodings = [{}];
-          }
-          params.encodings[0].maxBitrate = bitrate;
-          params.encodings[0].maxFramerate = 30;
-          params.encodings[0].scaleResolutionDownBy = scaleResolutionDownBy;
-          // "balanced" lets the encoder trade BOTH resolution and framerate as
-          // the link degrades, softening gracefully instead of freezing. The
-          // old "maintain-framerate" forced full FPS on a weak uplink, which
-          // starved quality and produced the stutter/freeze the user reported.
-          (params as any).degradationPreference = "balanced";
-          sender.setParameters?.(params).catch?.(() => {});
-        }
-        currentVideoBitrateRef.current = bitrate;
-      } catch {
-        /* setParameters not critical — ignore */
-      }
-    },
-    [],
-  );
+  // ── ADAPTIVE VIDEO QUALITY ────────────────────────────────────────────────
+  // All encoder control now lives in `src/calls/shared/callQuality.ts`, which
+  // is the byte-for-byte twin of the web client's controller (the repo has no
+  // shared web/native package; parity is by duplication). That module fixes the
+  // four things that made 1:1 video calls stutter and freeze on this screen:
+  //
+  //   1. The old classifier computed loss from the SINCE-CALL-START counters,
+  //      so one early burst pinned the encoder low for the rest of the call.
+  //   2. It graded RTT against ABSOLUTE thresholds (`rtt < 0.15 → good`), which
+  //      is meaningless on a Cloudflare-TURN-relayed path where a healthy call
+  //      sits at 60-150 ms — so it oscillated across the boundary every sample.
+  //   3. Each oscillation flipped `scaleResolutionDownBy` between 1 and 2, and
+  //      every resolution change reinitialises the encoder and forces a
+  //      keyframe: a visible freeze pulse, every few seconds.
+  //   4. Ramp timers and the stats loop both called `setParameters()` on the
+  //      same sender concurrently. `getParameters()` hands back a snapshot with
+  //      a `transactionId`; the loser of that race throws InvalidStateError,
+  //      and the old `.catch?.(() => {})` swallowed it — so ramp steps were
+  //      silently dropped and the encoder could stay stuck at the 300 kbps
+  //      connect cap for the whole call.
+  const qualityControllerRef = useRef<QualityController | null>(null);
+  const cancelBitrateRampRef = useRef<(() => void) | null>(null);
+
+  const getQualityController = useCallback(() => {
+    if (!qualityControllerRef.current) {
+      qualityControllerRef.current = createQualityController({
+        isMobile: true,
+      });
+    }
+    return qualityControllerRef.current;
+  }, []);
 
   const applySenderEncodingLimits = useCallback(
     (pc: RTCPeerConnection) => {
-      // Initial conservative cap for fast, stable connect.
-      setVideoBitrate(pc, 300_000);
+      // Conservative cap for a fast, stable connect. The connect-time ramp
+      // (below) opens it up once the link is actually established.
+      const controller = getQualityController();
+      controller.setTierIndex(RAMP_START_TIER_INDEX);
+      void applyVideoEncodingTier(
+        pc as unknown as PeerConnectionLike,
+        controller.getTier(),
+      );
+      // Cap Opus separately so video adaptation can never starve audio.
+      void applyAudioEncodingCap(pc as unknown as PeerConnectionLike);
     },
-    [setVideoBitrate],
+    [getQualityController],
   );
 
   const applyBitrateRampUp = useCallback(
     (pc: RTCPeerConnection) => {
-      // Start LOW for a fast, stable connect, then ramp to the target over 3s.
-      // The ceiling was raised from 800 kbps → 1.2 Mbps to close the quality gap
-      // with the web/desktop client (1.5 Mbps). 1.2 Mbps keeps headroom for a
-      // mobile UPLINK (typically the bottleneck) while delivering noticeably
-      // sharper video to desktop peers. The ramp still protects connect time.
-      const INITIAL = 300_000;
-      const TARGET = 1_200_000;
-      const STEPS = 3;
-      const STEP_MS = 1000;
-      bitrateRampTimersRef.current.forEach((t) => clearTimeout(t));
-      bitrateRampTimersRef.current = [];
-      setVideoBitrate(pc, INITIAL);
-      for (let step = 1; step <= STEPS; step++) {
-        const timer = setTimeout(() => {
-          if ((pc as any).connectionState !== "connected") return;
-          const bitrate = Math.round(
-            INITIAL + ((TARGET - INITIAL) * step) / STEPS,
-          );
-          setVideoBitrate(pc, bitrate);
-        }, STEP_MS * step);
-        bitrateRampTimersRef.current.push(timer);
-      }
+      cancelBitrateRampRef.current?.();
+      // Walks the SAME ladder the adaptive controller uses and shares its
+      // position with it, so the ramp and the controller can never disagree
+      // about what the encoder is doing — and the ramp aborts the moment the
+      // controller has stepped DOWN, instead of fighting a genuinely bad link
+      // back up (which is what produced the connect-time freeze pulses).
+      cancelBitrateRampRef.current = startBitrateRampUp(
+        pc as unknown as PeerConnectionLike,
+        getQualityController(),
+      );
     },
-    [setVideoBitrate],
+    [getQualityController],
   );
 
   // Briefly wait for the real ICE config (TURN creds) so the connection is
@@ -1069,21 +1144,19 @@ export default function CallScreen() {
     const pc = pcRef.current;
     if (!pc || !stream) return;
     const transceivers =
-      typeof (pc as any).getTransceivers === "function"
-        ? (pc as any).getTransceivers()
-        : [];
-    const used = new Set<any>();
+      typeof pc.getTransceivers === "function" ? pc.getTransceivers() : [];
+    const used = new Set<(typeof transceivers)[number]>();
 
     for (const track of stream.getTracks()) {
       // Skip if this exact track is already on some sender.
       const alreadyAttached = transceivers.some(
-        (t: any) => t.sender?.track && t.sender.track.id === track.id,
+        (t) => t.sender?.track && t.sender.track.id === track.id,
       );
       if (alreadyAttached) continue;
 
       // Find an unused transceiver of MATCHING kind created by the remote
       // offer (its receiver track kind reflects what was offered).
-      const matchingTr = transceivers.find((t: any) => {
+      const matchingTr = transceivers.find((t) => {
         if (used.has(t)) return false;
         if (t.sender?.track) return false; // already in use
         const trKind = t.receiver?.track?.kind;
@@ -1126,7 +1199,7 @@ export default function CallScreen() {
       // TURN-only so even networks that block UDP entirely can complete the
       // call by relaying every byte over TCP/TLS. This is the key recovery
       // path for restrictive mobile carriers / corporate Wi-Fi.
-      const pcConfig: any = {
+      const pcConfig: ConstructorParameters<typeof RTCPeerConnection>[0] = {
         // P1.9 — strip the public Open Relay TURN entries when the server
         // forbids the public fallback (DISABLE_PUBLIC_TURN=true). STUN is kept.
         iceServers: applyPublicTurnPolicy(
@@ -1138,10 +1211,10 @@ export default function CallScreen() {
         iceCandidatePoolSize: 10,
         bundlePolicy: "max-bundle",
         rtcpMuxPolicy: "require",
+        ...(relayOnlyRef.current
+          ? { iceTransportPolicy: "relay" as const }
+          : null),
       };
-      if (relayOnlyRef.current) {
-        pcConfig.iceTransportPolicy = "relay";
-      }
       const pc = new RTCPeerConnection(pcConfig);
       pcRef.current = pc;
 
@@ -1174,7 +1247,7 @@ export default function CallScreen() {
       }
       connectionTimeoutRef.current = setTimeout(() => {
         if (pcRef.current !== pc) return;
-        if ((pc as any).connectionState !== "connected") {
+        if (pc.connectionState !== "connected") {
           endAndLeave(true);
         }
       }, 30000);
@@ -1193,7 +1266,7 @@ export default function CallScreen() {
         relayFastRetryRef.current = setTimeout(() => {
           relayFastRetryRef.current = null;
           if (pcRef.current !== pc) return;
-          if ((pc as any).connectionState === "connected") return;
+          if (pc.connectionState === "connected") return;
           if (relayOnlyRef.current || relayFastRetryUsedRef.current) return;
           relayFastRetryUsedRef.current = true;
           relayOnlyRef.current = true;
@@ -1219,12 +1292,12 @@ export default function CallScreen() {
                   offerToReceiveAudio: true,
                   offerToReceiveVideo: callType === "video",
                 });
-                await newPc.setLocalDescription(offer);
+                const local = await setLocalDescriptionWithFec(newPc, offer);
                 socket.send("call_signal", {
                   conversationId,
                   callId: callIdRef.current,
                   targetUserId,
-                  signal: { type: "offer", sdp: offer.sdp },
+                  signal: { type: "offer", sdp: local.sdp },
                 });
               } catch {
                 /* the 30s connect timeout still owns the hard deadline */
@@ -1253,7 +1326,9 @@ export default function CallScreen() {
         }, 5000);
       }
 
-      (pc as any).onicecandidate = (e: any) => {
+      const handlers = pcHandlers(pc);
+
+      handlers.onicecandidate = (e) => {
         if (e.candidate) {
           // P0.7 — enqueue for reliable, ordered delivery (retries over a
           // transient WS blip) instead of a bare fire-and-forget socket.send
@@ -1262,43 +1337,44 @@ export default function CallScreen() {
         }
       };
 
-      (pc as any).ontrack = (e: any) => {
+      handlers.ontrack = (e) => {
         // Defensively build the remote stream: react-native-webrtc may fire
         // ontrack once per kind (audio, then video) and `e.streams` can be
         // empty. Add each track to the SAME stream so we never drop one.
-        let stream: MediaStream | null = remoteStreamRef.current;
+        let remote: MediaStream | null = remoteStreamRef.current;
         if (e.streams && e.streams[0]) {
-          stream = e.streams[0];
-        } else if (!stream) {
-          stream = new MediaStream();
+          remote = e.streams[0];
+        } else if (!remote) {
+          remote = new MediaStream();
         }
+        const incoming = e.track;
         if (
-          e.track &&
-          stream &&
-          !stream.getTracks().some((t) => t.id === e.track.id)
+          incoming &&
+          remote &&
+          !remote.getTracks().some((t) => t.id === incoming.id)
         ) {
           try {
-            stream.addTrack(e.track);
+            remote.addTrack(incoming);
           } catch {
             /* ignore */
           }
         }
-        remoteStreamRef.current = stream;
-        setRemoteStream(stream);
-        if (e.track?.kind === "video") setRemoteVideoOff(false);
+        remoteStreamRef.current = remote;
+        setRemoteStream(remote);
+        if (incoming?.kind === "video") setRemoteVideoOff(false);
       };
 
       // Fast proactive ICE restart on a brief mobile/VPN network blip — try to
       // re-establish before connectionState escalates to "failed".
-      (pc as any).oniceconnectionstatechange = () => {
-        const ice = (pc as any).iceConnectionState;
+      handlers.oniceconnectionstatechange = () => {
+        const ice = pc.iceConnectionState;
         if (
           ice === "disconnected" &&
           negotiationDoneRef.current &&
           !iceRestartAttemptedRef.current
         ) {
           setTimeout(() => {
-            const cur = (pc as any).iceConnectionState;
+            const cur = pc.iceConnectionState;
             if (
               (cur === "disconnected" || cur === "failed") &&
               pcRef.current === pc
@@ -1311,14 +1387,14 @@ export default function CallScreen() {
                     offerToReceiveAudio: true,
                     offerToReceiveVideo: callType === "video",
                   });
-                  await pc.setLocalDescription(offer);
+                  await setLocalDescriptionWithFec(pc, offer);
                   socket.send("call_signal", {
                     conversationId,
                     callId: callIdRef.current,
                     targetUserId,
                     signal: {
                       type: "offer",
-                      sdp: (pc as any).localDescription?.sdp,
+                      sdp: pc.localDescription?.sdp,
                     },
                   });
                 } catch {
@@ -1330,8 +1406,8 @@ export default function CallScreen() {
         }
       };
 
-      (pc as any).onconnectionstatechange = () => {
-        const st = (pc as any).connectionState;
+      handlers.onconnectionstatechange = () => {
+        const st = pc.connectionState;
         if (st === "connected") {
           startedAt.current = Date.now();
           negotiationDoneRef.current = true;
@@ -1377,9 +1453,7 @@ export default function CallScreen() {
               const remote = remoteStreamRef.current;
               const liveRemoteVideo =
                 !!remote &&
-                remote
-                  .getVideoTracks()
-                  .some((t) => (t as any).readyState !== "ended");
+                remote.getVideoTracks().some((t) => t.readyState !== "ended");
               if (liveRemoteVideo) return;
               videoStateRequestedRef.current = true;
               const tgt = peerIdRef.current;
@@ -1399,10 +1473,7 @@ export default function CallScreen() {
             clearTimeout(disconnectTimerRef.current);
           }
           disconnectTimerRef.current = setTimeout(() => {
-            if (
-              pcRef.current === pc &&
-              (pc as any).connectionState !== "connected"
-            ) {
+            if (pcRef.current === pc && pc.connectionState !== "connected") {
               // Failure teardown must be authoritative: tell the server the
               // call ended (idempotent) or the `answered` row lingers and the
               // stale "Return to call" banner re-appears after the drop.
@@ -1424,14 +1495,14 @@ export default function CallScreen() {
                   offerToReceiveAudio: true,
                   offerToReceiveVideo: callType === "video",
                 });
-                await pc.setLocalDescription(offer);
+                await setLocalDescriptionWithFec(pc, offer);
                 socket.send("call_signal", {
                   conversationId,
                   callId: callIdRef.current,
                   targetUserId,
                   signal: {
                     type: "offer",
-                    sdp: (pc as any).localDescription?.sdp,
+                    sdp: pc.localDescription?.sdp,
                   },
                 });
               } catch {
@@ -1472,12 +1543,12 @@ export default function CallScreen() {
                   offerToReceiveAudio: true,
                   offerToReceiveVideo: callType === "video",
                 });
-                await newPc.setLocalDescription(offer);
+                const local = await setLocalDescriptionWithFec(newPc, offer);
                 socket.send("call_signal", {
                   conversationId,
                   callId: callIdRef.current,
                   targetUserId,
-                  signal: { type: "offer", sdp: offer.sdp },
+                  signal: { type: "offer", sdp: local.sdp },
                 });
               } catch {
                 endAndLeave(true);
@@ -1498,6 +1569,13 @@ export default function CallScreen() {
 
       return pc;
     },
+    // The remaining referenced values are refs (stable) or values captured from
+    // the route params, which never change for the lifetime of this screen:
+    // `mode`, `isReconnect` and `callType` are derived from `useLocalSearchParams`
+    // once, and `applySenderEncodingLimits` / `applyBitrateRampUp` /
+    // `enqueueLocalIce` are `useCallback`s whose own deps are stable. Adding
+    // them would recreate `createPC` mid-call and orphan the live PeerConnection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [conversationId, endAndLeave],
   );
 
@@ -1507,7 +1585,7 @@ export default function CallScreen() {
 
   const flushIce = useCallback(async () => {
     const pc = pcRef.current;
-    if (!pc || !(pc as any).remoteDescription) return;
+    if (!pc || !pc.remoteDescription) return;
     const list = pendingIce.current.splice(0);
     for (const c of list) {
       try {
@@ -1569,7 +1647,7 @@ export default function CallScreen() {
   // socket). Kicks the flusher immediately; the flusher's retry timer covers a
   // down socket.
   const enqueueLocalIce = useCallback(
-    (targetUserId: number, candidate: any) => {
+    (targetUserId: number, candidate: IceCandidateLike) => {
       iceOutQueueRef.current.push({ targetUserId, candidate });
       void flushIceOutQueue();
     },
@@ -1590,6 +1668,12 @@ export default function CallScreen() {
   // Clear all recovery timers when the screen unmounts so a late-firing
   // timeout can't tear down a fresh call or call endAndLeave after navigation.
   useEffect(() => {
+    // Capture the dedupe Set NOW. The lint rule's general concern (a ref read
+    // in a cleanup closure sees whatever it points at at unmount) doesn't
+    // apply here: `seenSignalIdsRef` is initialised once via
+    // `useRef(new Set())` and never reassigned, so this IS the live Set —
+    // and clearing it is exactly the intent.
+    const seenSignalIds = seenSignalIdsRef.current;
     return () => {
       if (connectionTimeoutRef.current) {
         clearTimeout(connectionTimeoutRef.current);
@@ -1624,8 +1708,9 @@ export default function CallScreen() {
         iceFlushTimerRef.current = null;
       }
       iceOutQueueRef.current = [];
-      bitrateRampTimersRef.current.forEach((t) => clearTimeout(t));
-      bitrateRampTimersRef.current = [];
+      cancelBitrateRampRef.current?.();
+      cancelBitrateRampRef.current = null;
+      qualityControllerRef.current?.reset();
       // MEDIA / PEER-CONNECTION teardown safety net. endAndLeave() normally
       // stops the tracks and closes the PC, but this screen can unmount via
       // paths that BYPASS it (navigation replace/reset, a surviving duplicate
@@ -1645,7 +1730,7 @@ export default function CallScreen() {
       pcRef.current = null;
       localStreamRef.current = null;
       remoteStreamRef.current = null;
-      seenSignalIdsRef.current.clear();
+      seenSignalIds.clear();
       // The active-call foreground service + PiP flags have their own unmount
       // effects; the lock-screen flag likewise. Nothing further to stop here.
       // Safety net: always release the navigation guard on unmount, even if the
@@ -1895,7 +1980,7 @@ export default function CallScreen() {
     if (!stream) return false;
     const liveVideo = stream
       .getVideoTracks()
-      .some((t) => (t as any).readyState !== "ended" && t.enabled !== false);
+      .some((t) => t.readyState !== "ended" && t.enabled !== false);
     if (liveVideo) return false; // already have a usable camera track
 
     try {
@@ -1915,7 +2000,7 @@ export default function CallScreen() {
       // one so the local self-view (RTCView) repaints LIVE video immediately.
       stream.getVideoTracks().forEach((t) => {
         try {
-          if ((t as any).readyState === "ended") stream.removeTrack(t);
+          if (t.readyState === "ended") stream.removeTrack(t);
         } catch {
           /* ignore */
         }
@@ -1931,14 +2016,12 @@ export default function CallScreen() {
       const target = peerIdRef.current;
       if (pc) {
         const senders =
-          typeof (pc as any).getSenders === "function"
-            ? (pc as any).getSenders()
-            : [];
-        const videoSender = senders.find((s: any) => s.track?.kind === "video");
+          typeof pc.getSenders === "function" ? pc.getSenders() : [];
+        const videoSender = senders.find((s) => s.track?.kind === "video");
         if (videoSender && typeof videoSender.replaceTrack === "function") {
           // Swap the dead track for the live one — no renegotiation needed.
           await videoSender.replaceTrack(newTrack);
-        } else if ((pc as any).signalingState === "stable") {
+        } else if (pc.signalingState === "stable") {
           // No video sender yet — add the track + renegotiate so the peer
           // starts receiving our camera.
           try {
@@ -1953,14 +2036,14 @@ export default function CallScreen() {
                   offerToReceiveAudio: true,
                   offerToReceiveVideo: true,
                 });
-                await pc.setLocalDescription(offer);
+                const local = await setLocalDescriptionWithFec(pc, offer);
                 await socket.sendWithBackoff(
                   "call_signal",
                   {
                     conversationId,
                     callId: callIdRef.current,
                     targetUserId: target,
-                    signal: { type: "offer", sdp: offer.sdp },
+                    signal: { type: "offer", sdp: local.sdp },
                   },
                   {
                     timeoutMs: 4000,
@@ -1969,10 +2052,10 @@ export default function CallScreen() {
                     maxBackoffMs: 800,
                   },
                 );
-              } catch (err: any) {
+              } catch (err: unknown) {
                 console.warn(
                   "[call] dead-video recovery renegotiation failed:",
-                  err?.message || err,
+                  errorMessage(err),
                 );
               }
             });
@@ -1989,10 +2072,10 @@ export default function CallScreen() {
         }
       }
       return true;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.warn(
         "[call] failed to recover dead video track:",
-        err?.message || err,
+        errorMessage(err),
       );
       return false;
     }
@@ -2017,7 +2100,11 @@ export default function CallScreen() {
       // the self-view + peer stay black. recoverDeadVideoTrack no-ops for voice
       // calls / when video is intentionally off / when a live track exists.
       if (localStreamRef.current) {
-        void recoverDeadVideoTrack();
+        // Invoke through the ref, not the closure: the recovery callback is
+        // recreated whenever `videoOff` / the camera facing changes, and going
+        // via the ref always runs the LATEST version without forcing this
+        // AppState subscription to tear down and re-register on every toggle.
+        void recoverDeadVideoTrackRef.current?.();
         return;
       }
       (async () => {
@@ -2042,22 +2129,20 @@ export default function CallScreen() {
             // RENEGOTIATION — without a fresh offer our audio/video never flows
             // and the peer keeps seeing a black frame (the "caller sees black"
             // bug on lock-screen / background answer).
-            const sendersBefore =
-              typeof (pc as any).getSenders === "function"
-                ? (pc as any).getSenders().filter((s: any) => s.track).length
+            const countAttachedSenders = () =>
+              typeof pc.getSenders === "function"
+                ? pc.getSenders().filter((s) => s.track).length
                 : 0;
+            const sendersBefore = countAttachedSenders();
             await attachLocalTracks(stream);
-            const sendersAfter =
-              typeof (pc as any).getSenders === "function"
-                ? (pc as any).getSenders().filter((s: any) => s.track).length
-                : 0;
+            const sendersAfter = countAttachedSenders();
             const target = peerIdRef.current;
 
             const needsRenegotiation = sendersAfter > sendersBefore;
             if (
               needsRenegotiation &&
               target &&
-              (pc as any).signalingState === "stable"
+              pc.signalingState === "stable"
             ) {
               // Create + send a fresh offer so the newly-added media m-line is
               // negotiated and the peer starts receiving our tracks.
@@ -2067,14 +2152,14 @@ export default function CallScreen() {
                     offerToReceiveAudio: true,
                     offerToReceiveVideo: callType === "video",
                   });
-                  await pc.setLocalDescription(offer);
+                  const local = await setLocalDescriptionWithFec(pc, offer);
                   await socket.sendWithBackoff(
                     "call_signal",
                     {
                       conversationId,
                       callId: callIdRef.current,
                       targetUserId: target,
-                      signal: { type: "offer", sdp: offer.sdp },
+                      signal: { type: "offer", sdp: local.sdp },
                     },
                     {
                       timeoutMs: 4000,
@@ -2083,10 +2168,10 @@ export default function CallScreen() {
                       maxBackoffMs: 800,
                     },
                   );
-                } catch (err: any) {
+                } catch (err: unknown) {
                   console.warn(
                     "[call] post-resume renegotiation failed:",
-                    err?.message || err,
+                    errorMessage(err),
                   );
                 }
               });
@@ -2102,10 +2187,10 @@ export default function CallScreen() {
                 signal: { type: "video-state", videoOff },
               });
             }
-          } catch (err: any) {
+          } catch (err: unknown) {
             console.warn(
               "[call] failed to attach tracks after resume:",
-              err?.message || err,
+              errorMessage(err),
             );
           }
         }
@@ -2237,7 +2322,7 @@ export default function CallScreen() {
                   offerToReceiveAudio: true,
                   offerToReceiveVideo: callType === "video",
                 });
-                await pc.setLocalDescription(offer);
+                offer = await setLocalDescriptionWithFec(pc, offer);
               } finally {
                 makingOfferRef.current = false;
               }
@@ -2277,12 +2362,9 @@ export default function CallScreen() {
                   maxBackoffMs: 450,
                 },
               );
-            } catch (err: any) {
+            } catch (err: unknown) {
               // Fatal negotiation error — end cleanly instead of hanging.
-              console.warn(
-                "[call] offer creation failed:",
-                err?.message || err,
-              );
+              console.warn("[call] offer creation failed:", errorMessage(err));
               endAndLeave(false);
             }
           });
@@ -2290,15 +2372,18 @@ export default function CallScreen() {
         }
         case "call_signal": {
           if (Number(d.conversationId) !== conversationId) return;
-          const signal = d.signal;
-          const from = d.fromUserId;
+          const signal = d.signal as CallSignal;
+          const from = d.fromUserId as number | undefined;
           if (from != null) peerIdRef.current = from;
           // Serialized: signals are processed strictly in arrival order so an
           // ICE candidate / answer can never race a half-finished offer
           // handler (which awaits getUserMedia + ICE config for seconds).
           runSerialized(async () => {
             if (!rememberInboundSignal(signal, seenSignalIdsRef.current)) {
-              console.debug("[call] ignored replayed signal:", signal.type);
+              // A replayed signal is expected (the server re-delivers buffered
+              // frames whenever we re-subscribe); log at `warn` so it stays
+              // visible without tripping the production-noise console rule.
+              console.warn("[call] ignored replayed signal:", signal.type);
               return;
             }
             let pc = pcRef.current;
@@ -2308,8 +2393,8 @@ export default function CallScreen() {
                 // to a relay-only rebuild), tear ours down and rebuild in relay
                 // mode too so both sides negotiate over TURN.
                 if (pc) {
-                  const cs = (pc as any).connectionState;
-                  const ics = (pc as any).iceConnectionState;
+                  const cs = pc.connectionState;
+                  const ics = pc.iceConnectionState;
                   if (
                     cs === "failed" ||
                     cs === "closed" ||
@@ -2338,7 +2423,15 @@ export default function CallScreen() {
                 const stream = localStreamRef.current || (await getMedia());
                 if (!stream) return endAndLeave(false);
                 await waitForIceConfig();
-                pc = pcRef.current || createPC(stream, from, false);
+                // The relay always stamps `fromUserId`; fall back to the peer
+                // we already know so a malformed frame can't build a PC with an
+                // undefined signaling target (which would silently never send).
+                const offerFrom = from ?? peerIdRef.current;
+                if (offerFrom == null) {
+                  console.warn("[call] offer without a sender id — ignoring");
+                  return;
+                }
+                pc = pcRef.current || createPC(stream, offerFrom, false);
                 // Perfect Negotiation glare guard: an offer arriving while we
                 // have our own offer in flight (or are mid-creation) is a
                 // collision. The IMPOLITE peer (caller) ignores it and keeps
@@ -2347,8 +2440,7 @@ export default function CallScreen() {
                 // "wrong state" and the call hung when both sides offered at
                 // once (ICE-restart / post-resume renegotiation races).
                 const offerCollision =
-                  makingOfferRef.current ||
-                  (pc as any).signalingState !== "stable";
+                  makingOfferRef.current || pc.signalingState !== "stable";
                 if (offerCollision) {
                   if (!politeRef.current) {
                     console.warn(
@@ -2357,15 +2449,22 @@ export default function CallScreen() {
                     return;
                   }
                   try {
+                    // "rollback" is a valid setLocalDescription type per the
+                    // WebRTC spec but is absent from react-native-webrtc's
+                    // RTCSessionDescriptionInit, whose `sdp` is non-optional.
                     await pc.setLocalDescription({
                       type: "rollback",
-                    } as any);
+                      sdp: "",
+                    });
                   } catch {
                     /* some impls auto-rollback on setRemoteDescription(offer) */
                   }
                 }
                 await pc.setRemoteDescription(
-                  new RTCSessionDescription(signal),
+                  new RTCSessionDescription({
+                    type: signal.type,
+                    sdp: signal.sdp ?? "",
+                  }),
                 );
                 // Must await: tracks have to be bound to the offer's
                 // transceivers BEFORE createAnswer so the answer SDP advertises
@@ -2375,12 +2474,15 @@ export default function CallScreen() {
                 applySenderEncodingLimits(pc);
                 await flushIce();
                 const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
+                const localAnswer = await setLocalDescriptionWithFec(
+                  pc,
+                  answer,
+                );
                 socket.send("call_signal", {
                   conversationId,
                   callId: callIdRef.current,
                   targetUserId: from,
-                  signal: { type: "answer", sdp: answer.sdp },
+                  signal: { type: "answer", sdp: localAnswer.sdp },
                 });
                 // Tell the peer our current camera state immediately so they
                 // render avatar vs. video correctly from the start.
@@ -2390,14 +2492,14 @@ export default function CallScreen() {
                   targetUserId: from,
                   signal: { type: "video-state", videoOff },
                 });
-              } catch (err: any) {
+              } catch (err: unknown) {
                 forgetInboundSignal(signal, seenSignalIdsRef.current);
                 // A fatal error while answering (bad SDP / wrong state) used
                 // to be an unhandled rejection that left the call hanging on
                 // "Connecting…" forever. End cleanly instead.
                 console.warn(
                   "[call] offer handling failed:",
-                  err?.message || err,
+                  errorMessage(err),
                 );
                 endAndLeave(false);
               }
@@ -2406,37 +2508,39 @@ export default function CallScreen() {
               // Ignore stray answers when we are not expecting one — avoids
               // "Failed to set remote answer sdp: Called in wrong state"
               // killing the negotiation (mirrors the web client's guard).
-              if ((pc as any).signalingState !== "have-local-offer") {
+              if (pc.signalingState !== "have-local-offer") {
                 console.warn(
                   "[call] ignoring answer in state:",
-                  (pc as any).signalingState,
+                  pc.signalingState,
                 );
                 return;
               }
               try {
                 await pc.setRemoteDescription(
-                  new RTCSessionDescription(signal),
+                  new RTCSessionDescription({
+                    type: signal.type,
+                    sdp: signal.sdp ?? "",
+                  }),
                 );
                 await flushIce();
-              } catch (err: any) {
+              } catch (err: unknown) {
                 forgetInboundSignal(signal, seenSignalIdsRef.current);
                 console.warn(
                   "[call] answer handling failed:",
-                  err?.message || err,
+                  errorMessage(err),
                 );
               }
             } else if (signal.type === "ice-candidate") {
-              if (signal.candidate == null) return;
-              if (pc && (pc as any).remoteDescription) {
+              const raw = signal.candidate;
+              if (raw == null || typeof raw === "string") return;
+              if (pc && pc.remoteDescription) {
                 try {
-                  await pc.addIceCandidate(
-                    new RTCIceCandidate(signal.candidate),
-                  );
+                  await pc.addIceCandidate(new RTCIceCandidate(raw));
                 } catch {
                   forgetInboundSignal(signal, seenSignalIdsRef.current);
                 }
               } else {
-                pendingIce.current.push(signal.candidate);
+                pendingIce.current.push(raw);
               }
             } else if (signal.type === "video-state") {
               // Peer toggled their camera. This explicit signal — not the
@@ -2459,9 +2563,7 @@ export default function CallScreen() {
                   localStr
                     .getVideoTracks()
                     .some(
-                      (t) =>
-                        (t as any).readyState !== "ended" &&
-                        t.enabled !== false,
+                      (t) => t.readyState !== "ended" && t.enabled !== false,
                     );
                 socket.send("call_signal", {
                   conversationId,
@@ -2528,7 +2630,7 @@ export default function CallScreen() {
                   offerToReceiveAudio: true,
                   offerToReceiveVideo: callType === "video",
                 });
-                await pc.setLocalDescription(offer);
+                offer = await setLocalDescriptionWithFec(pc, offer);
               } finally {
                 makingOfferRef.current = false;
               }
@@ -2555,10 +2657,10 @@ export default function CallScreen() {
                 targetUserId,
                 signal: { type: "video-state", videoOff },
               });
-            } catch (err: any) {
+            } catch (err: unknown) {
               console.warn(
                 "[call] reconnect re-offer failed:",
-                err?.message || err,
+                errorMessage(err),
               );
             }
           });
@@ -2586,14 +2688,14 @@ export default function CallScreen() {
           if (mode !== "outgoing") break;
           const pc = pcRef.current;
           const target = peerIdRef.current;
-          if (pc && target && (pc as any).localDescription?.type === "offer") {
+          if (pc && target && pc.localDescription?.type === "offer") {
             socket.send("call_signal", {
               conversationId,
               callId: callIdRef.current,
               targetUserId: target,
               signal: {
                 type: "offer",
-                sdp: (pc as any).localDescription.sdp,
+                sdp: pc.localDescription.sdp,
               },
             });
           }
@@ -2716,6 +2818,11 @@ export default function CallScreen() {
     videoOff,
     runSerialized,
     showChat,
+    // Route-derived constants for this screen's lifetime; listed so the
+    // handlers that read them (`createOffer`'s offerToReceiveVideo, the
+    // busy-call alert) can never close over a stale value.
+    callType,
+    peerName,
   ]);
 
   // ── Active-call foreground service (Signal ActiveCallManager model) ─────────
@@ -2738,6 +2845,10 @@ export default function CallScreen() {
     } else {
       stopActiveCall();
     }
+    // `callType` and `peerName` are derived once from the route params and are
+    // constant for this screen's lifetime, so they are listed here purely to
+    // satisfy the exhaustive-deps rule — they never actually retrigger the
+    // effect (which would restart the foreground service mid-call).
   }, [status, callType, peerName]);
 
   // Always release the active-call foreground service on unmount so a stale
@@ -2791,111 +2902,66 @@ export default function CallScreen() {
     };
   }, []);
 
-  // ── Connection-quality monitor via getStats() (mirrors web NetworkStats) ───
+  // ── Connection-quality monitor via getStats() ──────────────────────────────
+  // Samples every 2s (was 3s: a 3s loop reacts to a freeze about a second after
+  // the user has already seen it) and hands the RAW CUMULATIVE counters to the
+  // shared controller, which differences them, smooths them, grades RTT against
+  // the learned path baseline, and returns at most a ONE-RUNG ladder move. We
+  // only touch the encoder when `decision.changed` — the old loop re-derived a
+  // target on every tick and thrashed `setParameters` between three fixed
+  // bitrate/resolution pairs, which is what produced the periodic freeze pulses.
   useEffect(() => {
     if (status !== "connected") {
       setConnectionQuality("unknown");
       return;
     }
+    let lastQuality: CallQuality = "unknown";
     const interval = setInterval(async () => {
       const pc = pcRef.current;
-      if (!pc || typeof (pc as any).getStats !== "function") return;
+      if (!pc || typeof pc.getStats !== "function") return;
       try {
-        const stats = await pc.getStats();
-        let rtt: number | null = null;
-        // Aggregate packet loss across BOTH inbound audio AND video streams.
-        // Previously only audio was sampled, so a video call could be visibly
-        // stuttering (heavy video loss) while still reporting "Good" because the
-        // audio stream was clean. Summing both kinds reflects the real felt
-        // quality on a video call (mirrors how Teams/Meet grade the link).
-        let packetsLost = 0;
-        let packetsReceived = 0;
-        stats.forEach((report: any) => {
-          if (
-            report.type === "candidate-pair" &&
-            (report.state === "succeeded" || report.nominated)
-          ) {
-            if (typeof report.currentRoundTripTime === "number") {
-              rtt = report.currentRoundTripTime;
-            }
-          }
-          if (
-            report.type === "inbound-rtp" &&
-            (report.kind === "audio" || report.kind === "video")
-          ) {
-            packetsLost += report.packetsLost || 0;
-            packetsReceived += report.packetsReceived || 0;
-          }
-        });
-        const lossRate =
-          packetsReceived > 0
-            ? packetsLost / (packetsLost + packetsReceived)
-            : 0;
-        let q: "good" | "fair" | "poor" | "unknown" = "unknown";
-        if (rtt !== null && rtt < 0.15 && lossRate < 0.02) {
-          q = "good";
-        } else if (rtt !== null && rtt < 0.4 && lossRate < 0.05) {
-          q = "fair";
-        } else if (rtt !== null) {
-          q = "poor";
+        // `getStats()` is declared as `Promise<any>` by react-native-webrtc;
+        // `collectStatsSample` only needs the `forEach` iteration contract.
+        const stats: { forEach: (cb: (report: object) => void) => void } =
+          await pc.getStats();
+        const sample = collectStatsSample(stats);
+        const decision = getQualityController().observe(sample);
+
+        // Voice calls have no video sender, so the tier write is a no-op there.
+        if (callType === "video" && decision.changed) {
+          void applyVideoEncodingTier(
+            pc as unknown as PeerConnectionLike,
+            decision.tier,
+          );
         }
-        if (q !== "unknown") {
-          // ── ADAPTIVE BITRATE (Signal-style sender throttle) ──────────────
-          // Feed the measured quality back into the ENCODER so a degrading link
-          // is met by SENDING LESS, not by freezing. Previously the encoder only
-          // ever ramped UP to a fixed 1.2 Mbps ceiling and never backed off —
-          // overwhelming a weak mobile uplink, which is exactly what produced
-          // the stutter/lag/freeze + "Poor"/"unstable" badge the user saw.
-          //   • poor → 200 kbps + half-resolution (keeps a steady, smaller frame
-          //     flowing instead of stalling on full-res frames it can't push)
-          //   • fair → 500 kbps, full resolution
-          //   • good → restore toward the 1.2 Mbps ceiling, full resolution
-          // We only call setParameters when the TARGET actually changes (the
-          // currentVideoBitrateRef guard) so we never thrash the encoder on
-          // every 3s sample. Voice calls have no video sender → this no-ops.
-          if (callType === "video") {
-            let targetBitrate: number;
-            let scale: number;
-            if (q === "poor") {
-              targetBitrate = 200_000;
-              scale = 2;
-            } else if (q === "fair") {
-              targetBitrate = 500_000;
-              scale = 1;
-            } else {
-              targetBitrate = 1_200_000;
-              scale = 1;
-            }
-            if (currentVideoBitrateRef.current !== targetBitrate) {
-              setVideoBitrate(pc, targetBitrate, scale);
-            }
-          }
+
+        const q = decision.quality;
+        if (q !== lastQuality) {
+          lastQuality = q;
           setConnectionQuality(q);
-          // Tell the peer OUR measured quality so THEY can surface a
-          // "<name>'s connection is unstable" banner — exactly how Teams/Meet
-          // attribute a freeze to the right side. Only emit on a real change
-          // (not every 3s sample) to avoid spamming the relay. Reuses the
-          // existing call_signal channel; web ignores unknown signal types so
-          // this is forward-compatible.
-          if (lastSentQualityRef.current !== q) {
-            lastSentQualityRef.current = q;
-            const target = peerIdRef.current;
-            if (target) {
-              socket.send("call_signal", {
-                conversationId,
-                callId: callIdRef.current,
-                targetUserId: target,
-                signal: { type: "quality-state", quality: q },
-              });
-            }
+        }
+        // Tell the peer OUR measured quality so THEY can surface a
+        // "<name>'s connection is unstable" banner — exactly how Teams/Meet
+        // attribute a freeze to the right side. Only emit on a real change so
+        // we don't spam the relay.
+        if (q !== "unknown" && lastSentQualityRef.current !== q) {
+          lastSentQualityRef.current = q;
+          const target = peerIdRef.current;
+          if (target) {
+            socket.send("call_signal", {
+              conversationId,
+              callId: callIdRef.current,
+              targetUserId: target,
+              signal: { type: "quality-state", quality: q },
+            });
           }
         }
       } catch {
         /* stats unavailable this tick */
       }
-    }, 3000);
+    }, 2000);
     return () => clearInterval(interval);
-  }, [status, conversationId]);
+  }, [status, conversationId, callType, getQualityController]);
 
   // Incoming: accept handler. Send call_accept IMMEDIATELY (don't serialize
   // behind getUserMedia) — the caller starts building its offer right away
@@ -2926,10 +2992,10 @@ export default function CallScreen() {
         try {
           await acceptCallHttp(callIdRef.current, conversationId);
           httpOk = true;
-        } catch (err: any) {
+        } catch (err: unknown) {
           console.warn(
             "[call] HTTP accept fallback failed:",
-            err?.message || err,
+            errorMessage(err),
           );
         }
       }
@@ -3009,11 +3075,8 @@ export default function CallScreen() {
     if (!sent && callIdRef.current) {
       try {
         await rejectCallHttp(callIdRef.current, conversationId);
-      } catch (err: any) {
-        console.warn(
-          "[call] HTTP reject fallback failed:",
-          err?.message || err,
-        );
+      } catch (err: unknown) {
+        console.warn("[call] HTTP reject fallback failed:", errorMessage(err));
       }
     }
     endAndLeave(false);
@@ -3200,9 +3263,7 @@ export default function CallScreen() {
   // track makes the avatar the reliable fallback.
   const hasLiveRemoteVideo =
     !!remoteStream &&
-    remoteStream
-      .getVideoTracks()
-      .some((t) => (t as any).readyState !== "ended");
+    remoteStream.getVideoTracks().some((t) => t.readyState !== "ended");
   const showRemoteVideo = showVideo && hasLiveRemoteVideo && !remoteVideoOff;
 
   // WhatsApp-style video UX (BOTH outgoing AND incoming): before the call is
@@ -3225,7 +3286,7 @@ export default function CallScreen() {
     !!localStream &&
     localStream
       .getVideoTracks()
-      .some((t) => (t as any).readyState !== "ended" && t.enabled !== false);
+      .some((t) => t.readyState !== "ended" && t.enabled !== false);
   const showFullScreenSelfPreview =
     showVideo &&
     hasLiveLocalVideo &&
@@ -3250,13 +3311,10 @@ export default function CallScreen() {
   // their native surface (the flicker/freeze cause). Mirrors Signal binding a
   // track to a renderer once rather than recomputing a handle per frame.
   const remoteURL = useMemo(
-    () => (remoteStream ? (remoteStream as any).toURL() : null),
+    () => remoteStream?.toURL() ?? null,
     [remoteStream],
   );
-  const localURL = useMemo(
-    () => (localStream ? (localStream as any).toURL() : null),
-    [localStream],
-  );
+  const localURL = useMemo(() => localStream?.toURL() ?? null, [localStream]);
 
   const qualityColor =
     connectionQuality === "good"
@@ -3349,10 +3407,7 @@ export default function CallScreen() {
           show/hide the controls (WhatsApp/Signal style). Only active while the
           call is connected and not in PiP. */}
       {status === "connected" && !isInPip ? (
-        <Pressable
-          style={styles.tapToToggleLayer}
-          onPress={handleSurfaceTap}
-        />
+        <Pressable style={styles.tapToToggleLayer} onPress={handleSurfaceTap} />
       ) : null}
 
       <CallMediaStage
@@ -3491,7 +3546,9 @@ export default function CallScreen() {
                       const currentPeerId = Number(peerIdRef.current || 0);
                       const rows = (r.data || []).filter((u) => {
                         const uid = Number(u.id);
-                        return uid > 0 && uid !== selfId && uid !== currentPeerId;
+                        return (
+                          uid > 0 && uid !== selfId && uid !== currentPeerId
+                        );
                       });
                       setAddParticipantResults(rows);
                     } catch {

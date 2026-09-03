@@ -29,32 +29,24 @@ import {
   Volume1,
   Volume2,
 } from "../../icons";
+import type {
+  CallInsets,
+  CallMessage,
+  CallQuality,
+  CallStatus,
+  CallStyle,
+  CallStyles,
+  FloatingReaction,
+} from "../../calls/shared/callUiTypes";
 
 // Signal-style control glyph colours: white on the translucent (off) circle,
 // near-black on the solid white (toggled/on) circle.
 const CTRL_OFF = "#ffffff";
 const CTRL_ON = "#1b1b1b";
 
-type CallStatus =
-  | "ringing"
-  | "connecting"
-  | "connected"
-  | "reconnecting"
-  | "ended"
-  | "rejected";
-
-type CallMessage = {
-  id: string | number;
-  senderId?: number;
-  senderName?: string;
-  content?: string;
-};
-
-type FloatingReaction = { id: number; emoji: string; fromSelf: boolean };
-
 type Props = {
-  styles: any;
-  insets: { top: number; bottom: number };
+  styles: CallStyles;
+  insets: CallInsets;
   isInPip: boolean;
   // Auto-hide: when false (and the call is connected) the peer name, duration,
   // status/quality badges and the control bar fade out. During ringing/incoming
@@ -77,7 +69,7 @@ type Props = {
   noiseSuppressionEnabled: boolean;
   recording: boolean;
   peerMuted: boolean;
-  peerQuality: "good" | "fair" | "poor" | "unknown";
+  peerQuality: CallQuality;
   qualityColor: string;
   qualityLabel: string;
   floatingReactions: FloatingReaction[];
@@ -94,6 +86,13 @@ type Props = {
   onToggleHold: () => void;
   onOpenMore: () => void;
   onCloseMore: () => void;
+  /**
+   * Toggles the in-call chat panel. Currently the panel is opened from the
+   * "More options" sheet (`onOpenChat`) rather than a dedicated control in the
+   * bar, so this handler is threaded through but not yet bound to a button —
+   * kept in the prop contract because the call screen owns the behaviour and a
+   * chat control is planned to return to the bar.
+   */
   onToggleChat: () => void;
   onOpenChat: () => void;
   onCloseChat: () => void;
@@ -106,7 +105,7 @@ type Props = {
   onSendReaction: (emoji: string) => void;
   onSendChat: () => void;
   onEndCall: () => void;
-  CallDurationComponent: ComponentType<{ active: boolean; style: any }>;
+  CallDurationComponent: ComponentType<{ active: boolean; style: CallStyle }>;
 };
 
 export default function CallScreenOverlay({
@@ -148,7 +147,7 @@ export default function CallScreenOverlay({
   onToggleHold,
   onOpenMore,
   onCloseMore,
-  onToggleChat,
+  onToggleChat: _onToggleChat,
   onOpenChat,
   onCloseChat,
   onOpenReactionPicker,

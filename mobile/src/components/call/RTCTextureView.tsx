@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { Platform, UIManager, requireNativeComponent } from "react-native";
+import type { StyleProp, ViewStyle } from "react-native";
 import { RTCView } from "react-native-webrtc";
 
 /**
@@ -26,23 +27,17 @@ const hasNativeTextureView =
   typeof UIManager.getViewManagerConfig === "function" &&
   UIManager.getViewManagerConfig(NATIVE_NAME) != null;
 
-const NativeRTCTextureView = hasNativeTextureView
-  ? requireNativeComponent<{
-      streamURL: string;
-      mirror?: boolean;
-      objectFit?: "contain" | "cover";
-      zOrder?: number;
-      style?: any;
-    }>(NATIVE_NAME)
-  : null;
-
 export type RoundedSelfViewProps = {
   streamURL: string;
   mirror?: boolean;
   objectFit?: "contain" | "cover";
   zOrder?: number;
-  style?: any;
+  style?: StyleProp<ViewStyle>;
 };
+
+const NativeRTCTextureView = hasNativeTextureView
+  ? requireNativeComponent<RoundedSelfViewProps>(NATIVE_NAME)
+  : null;
 
 export const RoundedSelfView = memo(function RoundedSelfView({
   streamURL,
