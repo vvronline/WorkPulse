@@ -1,336 +1,379 @@
 /* ─── Chat body (messages + pinned panel) ─── */
 .chatBody {
-    flex: 1;
-    display: flex;
-    min-height: 0;
-    overflow: hidden;
-    /* Anchor the floating scroll-to-bottom button. */
-    position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  /* Anchor the floating scroll-to-bottom button. */
+  position: relative;
 }
 
 /* ─── Signal-style "scroll to latest" floating button ─── */
 .scrollToBottom {
-    position: absolute;
-    right: 18px;
-    bottom: 18px;
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--bg-elevated);
-    color: var(--text);
-    border: 1px solid var(--separator);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
-    cursor: pointer;
-    z-index: 6;
-    /* Hidden by default — fade + scale + lift in when scrolled up. */
-    opacity: 0;
-    transform: translateY(8px) scale(0.85);
-    pointer-events: none;
-    transition: opacity 0.2s cubic-bezier(0.2, 0.9, 0.3, 1),
-        transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1),
-        background var(--transition-fast);
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--separator);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+  z-index: 6;
+  /* Hidden by default — fade + scale + lift in when scrolled up. */
+  opacity: 0;
+  transform: translateY(8px) scale(0.85);
+  pointer-events: none;
+  transition:
+    opacity 0.2s cubic-bezier(0.2, 0.9, 0.3, 1),
+    transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1),
+    background var(--transition-fast);
 }
 .scrollToBottom:hover {
-    background: var(--surface-hover);
+  background: var(--surface-hover);
 }
 .scrollToBottomVisible {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    pointer-events: auto;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
 }
 @media (prefers-reduced-motion: reduce) {
-    .scrollToBottom {
-        transition: opacity 0.15s linear;
-        transform: none;
-    }
-    .scrollToBottomVisible {
-        transform: none;
-    }
+  .scrollToBottom {
+    transition: opacity 0.15s linear;
+    transform: none;
+  }
+  .scrollToBottomVisible {
+    transform: none;
+  }
 }
 
 /* ─── Messages ─── */
 .messagesContainer {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 0 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    position: relative;
-    /* The browser's automatic scroll anchoring fights our programmatic
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+  /* The browser's automatic scroll anchoring fights our programmatic
        "pin to newest message" during the skeleton→content swap on open,
        leaving the thread parked mid-history. We manage scroll position
        explicitly (see the open-pin effect in useChatState), so disable it. */
-    overflow-anchor: none;
+  overflow-anchor: none;
 }
 /* ─── Pinned banner (top of chat window) ─── */
 .pinnedBanner {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    margin-bottom: 6px;
-    background: var(--bg-secondary, rgba(20, 20, 24, 0.95));
-    border-bottom: 1px solid var(--glass-border);
-    backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  margin-bottom: 6px;
+  background: var(--bg-secondary, rgba(20, 20, 24, 0.95));
+  border-bottom: 1px solid var(--glass-border);
+  backdrop-filter: blur(8px);
 }
 .pinnedBannerMain {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    text-align: left;
-    color: var(--text-secondary);
-    padding: 0;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-secondary);
+  padding: 0;
 }
 .pinnedBannerIcon {
-    color: var(--primary);
-    flex-shrink: 0;
+  color: var(--primary);
+  flex-shrink: 0;
 }
 .pinnedBannerLabel {
-    font-size: 0.72rem;
-    font-weight: 700;
-    color: var(--primary);
-    flex-shrink: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--primary);
+  flex-shrink: 0;
 }
 .pinnedBannerText {
-    font-size: 0.82rem;
-    color: var(--text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .pinnedBannerUnpin {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
-    flex-shrink: 0;
-    transition: background var(--transition-fast), color var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 }
 .pinnedBannerUnpin:hover {
-    background: var(--surface-hover, rgba(255, 255, 255, 0.08));
-    color: var(--text);
+  background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+  color: var(--text);
 }
 .loadMore {
-    align-self: center;
-    background: transparent;
-    border: 1px solid var(--glass-border);
-    color: var(--text-muted);
-    padding: 0.3rem 1rem;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.72rem;
-    margin-bottom: 0.5rem;
-    transition: background var(--transition-fast), color var(--transition-fast);
+  align-self: center;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  padding: 0.3rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  margin-bottom: 0.5rem;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 }
 .loadMore:hover {
-    background: var(--surface-hover);
-    color: var(--text);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.loadMore:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+.loadMoreError {
+  border-color: color-mix(
+    in srgb,
+    var(--danger, #ef4444) 55%,
+    var(--glass-border)
+  );
+  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--danger, #ef4444) 8%, transparent);
 }
 .dateDivider {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 16px 16px 8px;
-    /* Soft fade-in so day separators don't pop while scrolling history in. */
-    animation: dividerFade 0.3s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 16px 8px;
+  /* Soft fade-in so day separators don't pop while scrolling history in. */
+  animation: dividerFade 0.3s cubic-bezier(0.2, 0.9, 0.3, 1) both;
 }
 @keyframes dividerFade {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .dateDivider span {
-    color: var(--text-muted);
-    font-size: 0.7rem;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    white-space: nowrap;
-    background: var(--bg-secondary);
-    border: 1px solid var(--separator);
-    padding: 4px 14px;
-    border-radius: var(--radius-full);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: var(--bg-secondary);
+  border: 1px solid var(--separator);
+  padding: 4px 14px;
+  border-radius: var(--radius-full);
 }
 
 .hint {
-    padding: 1rem;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    text-align: center;
+  padding: 1rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-align: center;
 }
 
 /* ─── Legacy message/bubble styles (kept for typing indicator) ─── */
 .message {
-    display: flex;
-    margin-bottom: 0.15rem;
+  display: flex;
+  margin-bottom: 0.15rem;
 }
 .message.mine {
-    justify-content: flex-end;
+  justify-content: flex-end;
 }
 .message.theirs {
-    justify-content: flex-start;
+  justify-content: flex-start;
 }
 .bubble {
-    max-width: 70%;
-    padding: 0.55rem 0.85rem;
-    border-radius: 16px;
-    font-size: 0.9rem;
-    line-height: 1.45;
-    word-break: break-word;
-    position: relative;
+  max-width: 70%;
+  padding: 0.55rem 0.85rem;
+  border-radius: 16px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  word-break: break-word;
+  position: relative;
 }
 .theirs .bubble {
-    background: var(--chat-bubble-theirs);
-    color: var(--text);
-    border-bottom-left-radius: 16px;
+  background: var(--chat-bubble-theirs);
+  color: var(--text);
+  border-bottom-left-radius: 16px;
 }
 
 /* ─── Typing indicator ─── */
 .typingRow {
-    display: flex;
-    align-items: flex-end;
-    gap: 8px;
-    padding: 2px 16px;
-    margin-bottom: 4px;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 2px 16px;
+  margin-bottom: 4px;
 }
 .typingAvatar {
-    flex-shrink: 0;
-    width: 28px;
-    height: 28px;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
 }
 .typingBubble {
-    padding: 0.65rem 1rem;
+  padding: 0.65rem 1rem;
 }
 .typingDots {
-    display: flex;
-    gap: 4px;
-    align-items: center;
+  display: flex;
+  gap: 4px;
+  align-items: center;
 }
 .typingDots i {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    animation: typingBounce 1.2s infinite;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: typingBounce 1.2s infinite;
 }
-.typingDots i:nth-child(2) { animation-delay: 0.2s; }
-.typingDots i:nth-child(3) { animation-delay: 0.4s; }
+.typingDots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typingDots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
 @keyframes typingBounce {
-    0%, 60%, 100% { transform: translateY(0); }
-    30% { transform: translateY(-4px); }
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-4px);
+  }
 }
 
 /* ─── Drag & drop ─── */
 .dragOver {
-    outline: 2px dashed var(--primary);
-    outline-offset: -4px;
+  outline: 2px dashed var(--primary);
+  outline-offset: -4px;
 }
 .dropOverlay {
-    position: absolute;
-    inset: 0;
-    background: rgba(14, 165, 233, .1);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.1rem;
-    color: var(--primary);
-    font-weight: 600;
-    z-index: 5;
-    pointer-events: none;
-    border-radius: 8px;
+  position: absolute;
+  inset: 0;
+  background: rgba(14, 165, 233, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  color: var(--primary);
+  font-weight: 600;
+  z-index: 5;
+  pointer-events: none;
+  border-radius: 8px;
 }
 
 /* ─── Message highlight (jump-to) ─── */
 .highlight {
-    animation: flashHighlight 2s ease-out;
+  animation: flashHighlight 2s ease-out;
 }
 @keyframes flashHighlight {
-    0% { background: rgba(14, 165, 233, .2); }
-    100% { background: transparent; }
+  0% {
+    background: rgba(14, 165, 233, 0.2);
+  }
+  100% {
+    background: transparent;
+  }
 }
 
 /* ─── Tablet ─── */
 @media (max-width: 1024px) {
-    .messagesContainer {
-        padding: 12px 0 12px;
-    }
-    .dateDivider {
-        padding: 12px 12px 6px;
-    }
+  .messagesContainer {
+    padding: 12px 0 12px;
+  }
+  .dateDivider {
+    padding: 12px 12px 6px;
+  }
 }
 
 /* ─── Mobile ─── */
 @media (max-width: 768px) {
-    .messagesContainer {
-        padding: 8px 0 8px;
-    }
-    .dateDivider {
-        padding: 10px 8px 6px;
-        gap: 8px;
-    }
-    .dateDivider span {
-        font-size: 0.68rem;
-    }
-    .typingRow {
-        padding: 2px 8px;
-    }
-    .bubble {
-        max-width: 90%;
-    }
-    .loadMore {
-        font-size: 0.7rem;
-        padding: 0.35rem 0.8rem;
-    }
+  .messagesContainer {
+    padding: 8px 0 8px;
+  }
+  .dateDivider {
+    padding: 10px 8px 6px;
+    gap: 8px;
+  }
+  .dateDivider span {
+    font-size: 0.68rem;
+  }
+  .typingRow {
+    padding: 2px 8px;
+  }
+  .bubble {
+    max-width: 90%;
+  }
+  .loadMore {
+    font-size: 0.7rem;
+    padding: 0.35rem 0.8rem;
+  }
 }
 
 /* ─── Message loading skeleton ─── */
 .skeletonMessages {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding: 1rem 16px;
-    flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 1rem 16px;
+  flex: 1;
 }
 .skeletonBubbleRow {
-    display: flex;
-    align-items: flex-end;
-    gap: 8px;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
 }
 .skeletonBubbleRow.skeletonMine {
-    justify-content: flex-end;
+  justify-content: flex-end;
 }
 .skeletonMsgAvatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    background: var(--glass-border, rgba(255,255,255,0.08));
-    flex-shrink: 0;
-    animation: msgShimmer 1.4s ease-in-out infinite;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--glass-border, rgba(255, 255, 255, 0.08));
+  flex-shrink: 0;
+  animation: msgShimmer 1.4s ease-in-out infinite;
 }
 .skeletonBubble {
-    height: 36px;
-    border-radius: 16px;
-    background: var(--glass-border, rgba(255,255,255,0.08));
-    animation: msgShimmer 1.4s ease-in-out infinite;
-    min-width: 60px;
+  height: 36px;
+  border-radius: 16px;
+  background: var(--glass-border, rgba(255, 255, 255, 0.08));
+  animation: msgShimmer 1.4s ease-in-out infinite;
+  min-width: 60px;
 }
 @keyframes msgShimmer {
-    0%, 100% { opacity: 0.3; }
-    50% { opacity: 0.65; }
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.65;
+  }
 }

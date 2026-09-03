@@ -72,6 +72,8 @@ export default function useChatState() {
   const [searchResults, setSearchResults] = useState<AnyRecord[]>([]);
   const [searching, setSearching] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
   const [hasMore, setHasMore] = useState(false);
   const [typingUsers, setTypingUsers] = useState<
     Record<string, number | string>
@@ -99,6 +101,9 @@ export default function useChatState() {
   const [convMembers, setConvMembers] = useState<AnyRecord[]>([]);
   const [deleteConfirm, setDeleteConfirm] = useState<AnyRecord | null>(null);
   const [convMenu, setConvMenu] = useState<AnyRecord | null>(null);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<
+    Set<number | string>
+  >(new Set());
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -644,6 +649,7 @@ export default function useChatState() {
       setShowSearch(false);
       setShowSharedFiles(false);
       setShowInfo(false);
+      setSelectedMessageIds(new Set());
     },
     [],
   );
@@ -674,6 +680,8 @@ export default function useChatState() {
     setMessages,
     setHasMore,
     setLoading: setLoadingMsgs,
+    setLoadingMore,
+    setLoadMoreError,
     setReadReceipts,
     setMembers: setConvMembers,
     onSelectConversation: selectConversation,
@@ -718,6 +726,8 @@ export default function useChatState() {
     searchResults,
     searching,
     loadingMsgs,
+    loadingMore,
+    loadMoreError,
     loadingConvs,
     hasMore,
     setHasMore,
@@ -761,6 +771,8 @@ export default function useChatState() {
     setDeleteConfirm,
     convMenu,
     setConvMenu,
+    selectedMessageIds,
+    setSelectedMessageIds,
     // Call state
     callState,
     setCallState,

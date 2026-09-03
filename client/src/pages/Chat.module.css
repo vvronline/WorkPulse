@@ -1,91 +1,165 @@
 /* ── Chat layout ── */
 .chatPage {
-    display: flex;
-    height: calc(100vh - 72px);
-    background: var(--bg);
-    overflow: hidden;
-    position: relative;
+  display: flex;
+  height: calc(100vh - 72px);
+  background: var(--bg);
+  overflow: hidden;
+  position: relative;
 }
 
 /* ─── Chat area ─── */
 .chatArea {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    position: relative;
-    transition: margin var(--transition-fast, 0.2s);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+  transition: margin var(--transition-fast, 0.2s);
 }
 .noChat {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-    gap: 0.5rem;
-    padding: 2rem;
-    text-align: center;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  gap: 0.5rem;
+  padding: 2rem;
+  text-align: center;
 }
 .noChatIcon {
-    font-size: 3rem;
-    opacity: 0.5;
+  font-size: 3rem;
+  opacity: 0.5;
 }
 .noChat h3 {
-    font-size: 1.1rem;
-    color: var(--text-secondary);
+  font-size: 1.1rem;
+  color: var(--text-secondary);
 }
 .noChat p {
-    font-size: 0.85rem;
+  font-size: 0.85rem;
+}
+
+/* ─── Message multi-select action bar ─── */
+.messageSelectionBar {
+  min-height: 60px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--separator);
+  background: color-mix(in srgb, var(--bg-secondary) 90%, var(--primary) 10%);
+  color: var(--text);
+  z-index: 20;
+}
+.messageSelectionBar > strong {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.95rem;
+}
+.selectionIconButton,
+.selectionActions button {
+  min-height: 34px;
+  border: 1px solid var(--glass-border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+.selectionIconButton {
+  width: 34px;
+  padding: 0;
+}
+.selectionActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.selectionActions button:hover {
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--glass-border));
+}
+.selectionActions .selectionDeleteForMe,
+.selectionActions .selectionDeleteEveryone {
+  color: var(--danger, #ef4444);
+}
+.selectionActions .selectionDeleteEveryone {
+  background: color-mix(in srgb, var(--surface) 88%, #ef4444 12%);
 }
 
 /* ─── Side Panel (Call History, etc.) ─── */
 .sidePanel {
-    width: 280px;
-    flex-shrink: 0;
-    border-left: 1px solid var(--border, rgba(255,255,255,0.08));
-    background: var(--bg-secondary);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    transition: width 0.2s ease, transform 0.2s ease;
+  width: 280px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition:
+    width 0.2s ease,
+    transform 0.2s ease;
 }
 
 /* ─── Tablet (768px – 1024px) ─── */
 @media (max-width: 1024px) {
-    .sidePanel {
-        position: absolute;
-        top: 0;
-        right: 0;
-        bottom: 0;
-        width: 300px;
-        z-index: 50;
-        box-shadow: -4px 0 24px rgba(0,0,0,.18);
-    }
+  .sidePanel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 300px;
+    z-index: 50;
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.18);
+  }
 }
 
 /* ─── Mobile (≤768px) ─── */
 @media (max-width: 768px) {
-    .chatPage {
-        height: calc(100dvh - 60px - 90px);
-    }
-    :global(body[data-chat-active]) .chatPage {
-        height: 100dvh;
-    }
-    .chatArea {
-        width: 100%;
-    }
-    .hideMobile {
-        display: none;
-    }
-    .sidePanel {
-        position: fixed;
-        top: 0;
-        right: 0;
-        bottom: 0;
-        width: 100%;
-        z-index: 200;
-        box-shadow: none;
-        border-left: none;
-    }
+  .chatPage {
+    height: calc(100dvh - 60px - 90px);
+  }
+  :global(body[data-chat-active]) .chatPage {
+    height: 100dvh;
+  }
+  .chatArea {
+    width: 100%;
+  }
+  .messageSelectionBar {
+    min-height: 56px;
+    padding: 7px 8px;
+    gap: 7px;
+  }
+  .selectionActions {
+    gap: 4px;
+  }
+  .selectionActions button {
+    width: 34px;
+    padding: 0;
+    font-size: 0;
+  }
+  .selectionActions button svg {
+    width: 17px;
+    height: 17px;
+  }
+  .hideMobile {
+    display: none;
+  }
+  .sidePanel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    z-index: 200;
+    box-shadow: none;
+    border-left: none;
+  }
 }

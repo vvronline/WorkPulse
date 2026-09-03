@@ -1,113 +1,155 @@
 /* ─── Signal "smooth" easing curve, reused across chat transitions ─── */
 :root {
-    --signal-ease: cubic-bezier(0.2, 0.9, 0.3, 1);
+  --signal-ease: cubic-bezier(0.2, 0.9, 0.3, 1);
 }
 
 /* ─── Row layout ─── */
 .row {
-    display: flex;
-    align-items: flex-start;
-    padding: 3px 16px 3px 16px;
-    margin-top: 0;
-    position: relative;
-    /* Signal-style message enter: each row fades in while sliding up a few px.
+  display: flex;
+  align-items: flex-start;
+  padding: 3px 16px 3px 16px;
+  margin-top: 0;
+  position: relative;
+  /* Signal-style message enter: each row fades in while sliding up a few px.
        Cheap (transform + opacity only) so long threads stay smooth. */
-    animation: messageEnter 0.26s var(--signal-ease, ease-out) both;
+  animation: messageEnter 0.26s var(--signal-ease, ease-out) both;
 }
 @keyframes messageEnter {
-    from {
-        opacity: 0;
-        transform: translateY(8px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 /* Respect users who prefer less motion — disable the enter slide/fade. */
 @media (prefers-reduced-motion: reduce) {
-    .row {
-        animation: none;
-    }
+  .row {
+    animation: none;
+  }
 }
 .row.grouped {
-    margin-top: 0;
+  margin-top: 0;
+}
+.selectionRow {
+  cursor: pointer;
+  user-select: none;
+}
+.selectedRow {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.selectedRow::before {
+  content: "✓";
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  z-index: 3;
+}
+.selectionRow .hoverActions {
+  display: none !important;
 }
 /* First message of a new sender block — add breathing room */
 .row.groupStart {
-    margin-top: 16px;
+  margin-top: 16px;
 }
 /* Mine on right, theirs on left */
-.mine { flex-direction: row-reverse; }
-.theirs { flex-direction: row; }
+.mine {
+  flex-direction: row-reverse;
+}
+.theirs {
+  flex-direction: row;
+}
 
 .avatarCol {
-    width: 36px;
-    flex-shrink: 0;
-    display: flex;
-    align-items: flex-start;
-    padding-top: 2px;
+  width: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  padding-top: 2px;
 }
-.mine .avatarCol { margin-left: 8px; margin-right: 0; }
-.theirs .avatarCol { margin-right: 8px; margin-left: 0; }
+.mine .avatarCol {
+  margin-left: 8px;
+  margin-right: 0;
+}
+.theirs .avatarCol {
+  margin-right: 8px;
+  margin-left: 0;
+}
 
 .bubbleWrap {
-    flex: 0 1 auto;
-    width: fit-content;
-    min-width: 0;
-    max-width: 68%;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    touch-action: pan-y;
-    will-change: transform;
+  flex: 0 1 auto;
+  width: fit-content;
+  min-width: 0;
+  max-width: 68%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  touch-action: pan-y;
+  will-change: transform;
 }
-.mine .bubbleWrap { align-items: flex-end; }
-.theirs .bubbleWrap { align-items: flex-start; }
+.mine .bubbleWrap {
+  align-items: flex-end;
+}
+.theirs .bubbleWrap {
+  align-items: flex-start;
+}
 
 /* ─── Sender name ─── */
 .senderName {
-    font-size: 0.78rem;
-    font-weight: 600;
-    color: var(--primary);
-    margin-bottom: 3px;
-    padding: 0;
-    line-height: 1.2;
-    opacity: 0.85;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--primary);
+  margin-bottom: 3px;
+  padding: 0;
+  line-height: 1.2;
+  opacity: 0.85;
 }
 .mineName {
-    color: var(--primary);
+  color: var(--primary);
 }
 
 /* ─── Bubble (WhatsApp-style) ─── */
 .bubble {
-    position: relative;
-    padding: 7px 12px 6px;
-    border-radius: 16px;
-    word-break: break-word;
-    line-height: 1.5;
-    font-size: 0.9375rem;
-    width: 100%;
-    max-width: 100%;
-    background: transparent;
-    color: var(--text);
+  position: relative;
+  padding: 7px 12px 6px;
+  border-radius: 16px;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: 0.9375rem;
+  width: 100%;
+  max-width: 100%;
+  background: transparent;
+  color: var(--text);
 }
 /* Mine – clean neutral fill (Signal-style, no brand color), squared top-right */
 .myBubble {
-    /* Very light org-accent wash so SENT bubbles read subtly branded against
+  /* Very light org-accent wash so SENT bubbles read subtly branded against
        received ones (which keep the neutral surface). color-mix keeps this
        tracking the tenant's --primary accent automatically. */
-    background: color-mix(in srgb, var(--primary) 14%, var(--surface-hover));
-    color: var(--text);
-    border-radius: 16px 4px 16px 16px;
-    border: 1px solid color-mix(in srgb, var(--primary) 16%, transparent);
+  background: color-mix(in srgb, var(--primary) 14%, var(--surface-hover));
+  color: var(--text);
+  border-radius: 16px 4px 16px 16px;
+  border: 1px solid color-mix(in srgb, var(--primary) 16%, transparent);
 }
 /* Theirs – clean neutral surface, squared top-left */
 .theirBubble {
-    background: var(--surface);
-    color: var(--text);
-    border-radius: 4px 16px 16px 16px;
-    border: none;
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 4px 16px 16px 16px;
+  border: none;
 }
 
 /* ─── Media-only bubble: edge-to-edge image/video, no frame (Signal) ─── */
@@ -116,37 +158,37 @@
    The inner .imgWrap / media wrappers clip their own corners, so we don't need
    to clip here. */
 .mediaOnly {
-    background: transparent !important;
-    border: none !important;
-    padding: 0 !important;
-    overflow: visible;
-    border-radius: 14px;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  overflow: visible;
+  border-radius: 14px;
 }
 .mediaOnly .meta {
-    position: absolute;
-    bottom: 6px;
-    right: 8px;
-    margin: 0;
-    padding: 2px 8px;
-    background: rgba(0, 0, 0, 0.55);
-    border-radius: 10px;
-    backdrop-filter: blur(2px);
-    /* The read tick is a filled disc with the check "punched out" using this
+  position: absolute;
+  bottom: 6px;
+  right: 8px;
+  margin: 0;
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 10px;
+  backdrop-filter: blur(2px);
+  /* The read tick is a filled disc with the check "punched out" using this
        variable as the punch-out color. Over the dark media pill we must NOT use
        white (the disc is also forced white below) — otherwise it's a white check
        on a white disc and the tick is invisible. Use the dark pill color so the
        check reads against the white disc. */
-    --read-check-bg: rgba(0, 0, 0, 0.55);
+  --read-check-bg: rgba(0, 0, 0, 0.55);
 }
 .mediaOnly .time,
 .mediaOnly .edited {
-    color: #fff;
-    opacity: 0.95;
+  color: #fff;
+  opacity: 0.95;
 }
 .mediaOnly .deliveryRead,
 .mediaOnly .deliverySent,
 .mediaOnly .deliveryPartial {
-    color: #fff;
+  color: #fff;
 }
 /* SVG ticks over media: force white for contrast against the photo backdrop.
    The read tick's filled disc + outer ring are `currentColor` (white here); its
@@ -157,536 +199,655 @@
 .mediaOnly .tickSent,
 .mediaOnly .tickDelivered,
 .mediaOnly .tickRead {
-    color: #fff;
+  color: #fff;
 }
 /* Grouped continuation – fully rounded (no tail), exactly like WhatsApp */
-.mine.grouped .myBubble      { border-radius: 16px; }
-.theirs.grouped .theirBubble { border-radius: 16px; }
+.mine.grouped .myBubble {
+  border-radius: 16px;
+}
+.theirs.grouped .theirBubble {
+  border-radius: 16px;
+}
 
 /* ─── WhatsApp tail (pointer notch) — only on the first of a block ─── */
 .groupStart .myBubble::before,
 .groupStart .theirBubble::before,
 .groupStart .myBubble::after,
 .groupStart .theirBubble::after {
-    content: '';
-    position: absolute;
-    width: 10px;
-    height: 10px;
-    clip-path: polygon(0 0, 100% 0, 0 100%);
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  clip-path: polygon(0 0, 100% 0, 0 100%);
 }
 
 /* Border layer */
 .groupStart .myBubble::before {
-    top: -1px;
-    right: -9px;
-    background: transparent;
+  top: -1px;
+  right: -9px;
+  background: transparent;
 }
 .groupStart .theirBubble::before {
-    top: -1px;
-    left: -9px;
-    transform: scaleX(-1);
-    background: transparent;
+  top: -1px;
+  left: -9px;
+  transform: scaleX(-1);
+  background: transparent;
 }
 
 /* Fill layer */
 .groupStart .myBubble::after {
-    top: 0;
-    right: -7px;
-    /* Match the tinted own-bubble fill so the tail doesn't read as a
+  top: 0;
+  right: -7px;
+  /* Match the tinted own-bubble fill so the tail doesn't read as a
        different color. */
-    background: color-mix(in srgb, var(--primary) 14%, var(--surface-hover));
+  background: color-mix(in srgb, var(--primary) 14%, var(--surface-hover));
 }
 .groupStart .theirBubble::after {
-    top: 0;
-    left: -7px;
-    transform: scaleX(-1);
-    background: var(--surface);
+  top: 0;
+  left: -7px;
+  transform: scaleX(-1);
+  background: var(--surface);
 }
 /* Media-only bubbles have no tail notch */
 .groupStart .mediaOnly::before,
 .groupStart .mediaOnly::after {
-    display: none;
+  display: none;
 }
 
-.pinned { border-left: 2px solid #f59e0b; padding-left: 8px; }
-.pendingBubble { opacity: 0.6; }
+.pinned {
+  border-left: 2px solid #f59e0b;
+  padding-left: 8px;
+}
+.pendingBubble {
+  opacity: 0.6;
+}
 .failedBubble {
-    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.45);
 }
 .deleted {
-    background: transparent;
-    color: var(--text-muted);
-    font-style: italic;
-    padding: 4px 0;
-    border-radius: 4px;
-    font-size: 0.82rem;
+  background: transparent;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 4px 0;
+  border-radius: 4px;
+  font-size: 0.82rem;
 }
 
 .pinnedBadge {
-    font-size: 0.67rem;
-    color: #f59e0b;
-    margin-bottom: 2px;
-    font-weight: 500;
+  font-size: 0.67rem;
+  color: #f59e0b;
+  margin-bottom: 2px;
+  font-weight: 500;
 }
 .forwarded {
-    font-size: 0.67rem;
-    color: var(--text-muted);
-    margin-bottom: 2px;
-    font-style: italic;
+  font-size: 0.67rem;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+  font-style: italic;
 }
 
 /* ─── Swipe-to-reply indicator ─── */
 .swipeReply {
-    position: absolute;
-    left: 10px;
-    top: 50%;
-    transform: translateY(-50%) scale(0.5);
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    background: var(--primary);
-    color: #fff;
-    opacity: 0;
-    pointer-events: none;
-    z-index: 5;
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%) scale(0.5);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* ─── Text ─── */
-.text { margin: 1px 0; }
-.link {
-    color: var(--primary-light);
-    text-decoration: none;
+.text {
+  margin: 1px 0;
 }
-.link:hover { text-decoration: underline; }
+.link {
+  color: var(--primary-light);
+  text-decoration: none;
+}
+.link:hover {
+  text-decoration: underline;
+}
 
 /* ─── Meta: time + edited (WhatsApp footer, bottom-right) ─── */
 .meta {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    margin-top: 1px;
-    justify-content: flex-end;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 1px;
+  justify-content: flex-end;
 }
 .time {
-    font-size: 0.68rem;
-    color: var(--text-muted);
-    opacity: 0.8;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  opacity: 0.8;
 }
 .edited {
-    font-size: 0.58rem;
-    color: var(--text-muted);
-    font-style: italic;
+  font-size: 0.58rem;
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* ─── Hover toolbar ─── */
 .hoverActions {
-    position: absolute;
-    top: -18px;
-    right: 16px;
-    left: auto;
-    display: none;
-    align-items: center;
-    gap: 0;
-    padding: 2px 3px;
-    background: var(--bg-elevated);
-    border-radius: 8px;
-    box-shadow: 0 2px 12px rgba(0,0,0,.15), 0 0 0 1px var(--separator);
-    z-index: 10;
-    animation: toolbarFade 0.12s ease-out;
+  position: absolute;
+  top: -18px;
+  right: 16px;
+  left: auto;
+  display: none;
+  align-items: center;
+  gap: 0;
+  padding: 2px 3px;
+  background: var(--bg-elevated);
+  border-radius: 8px;
+  box-shadow:
+    0 2px 12px rgba(0, 0, 0, 0.15),
+    0 0 0 1px var(--separator);
+  z-index: 10;
+  animation: toolbarFade 0.12s ease-out;
 }
 /* Extend hover hit area so toolbar doesn't vanish when moving mouse to it */
 .hoverActions::before {
-    content: '';
-    position: absolute;
-    bottom: -6px;
-    left: 0;
-    right: 0;
-    height: 24px;
-    pointer-events: auto;
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 0;
+  right: 0;
+  height: 24px;
+  pointer-events: auto;
 }
 @keyframes toolbarFade {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 /* Hover-capable devices: show toolbar on actual bubble hover (not the full row) */
 @media (hover: hover) {
-    .bubble:hover .hoverActions { display: flex; }
+  .bubble:hover .hoverActions {
+    display: flex;
+  }
 }
 /* Touch/tap: show when user taps the bubble (works at all screen sizes) */
-.toolbarActive .hoverActions { display: flex; }
+.toolbarActive .hoverActions {
+  display: flex;
+}
 /* Mine (right-side): toolbar anchors to the right edge of the bubble */
-.mine .hoverActions { right: 0; left: auto; }
+.mine .hoverActions {
+  right: 0;
+  left: auto;
+}
 /* Theirs (left-side): toolbar anchors to left edge of the bubble, not the right */
-.theirs .hoverActions { left: 0; right: auto; }
+.theirs .hoverActions {
+  left: 0;
+  right: auto;
+}
 
 .quickReactions {
-    display: flex;
-    align-items: center;
-    gap: 1px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
 }
 .quickEmoji {
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    background: none;
-    font-size: 0.95rem;
-    cursor: pointer;
-    border-radius: 6px;
-    transition: background var(--transition-fast), transform 0.1s;
-    padding: 0;
-    touch-action: manipulation;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  font-size: 0.95rem;
+  cursor: pointer;
+  border-radius: 6px;
+  transition:
+    background var(--transition-fast),
+    transform 0.1s;
+  padding: 0;
+  touch-action: manipulation;
 }
 .quickEmoji:hover {
-    background: var(--surface-hover);
-    transform: scale(1.25);
+  background: var(--surface-hover);
+  transform: scale(1.25);
 }
 .quickEmoji:active {
-    transform: scale(0.9);
+  transform: scale(0.9);
 }
 .moreEmoji {
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    background: none;
-    cursor: pointer;
-    border-radius: 6px;
-    color: var(--text-muted);
-    transition: background var(--transition-fast), color 0.15s;
-    padding: 0;
-    touch-action: manipulation;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 6px;
+  color: var(--text-muted);
+  transition:
+    background var(--transition-fast),
+    color 0.15s;
+  padding: 0;
+  touch-action: manipulation;
 }
 .moreEmoji:hover {
-    background: var(--surface-hover);
-    color: var(--text);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .toolbarDivider {
-    width: 1px;
-    height: 18px;
-    background: var(--glass-border);
-    margin: 0 3px;
-    flex-shrink: 0;
+  width: 1px;
+  height: 18px;
+  background: var(--glass-border);
+  margin: 0 3px;
+  flex-shrink: 0;
 }
 
 .toolbarBtn {
-    width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    background: none;
-    cursor: pointer;
-    border-radius: 6px;
-    color: var(--text-muted);
-    transition: background var(--transition-fast), color 0.15s;
-    padding: 0;
-    touch-action: manipulation;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 6px;
+  color: var(--text-muted);
+  transition:
+    background var(--transition-fast),
+    color 0.15s;
+  padding: 0;
+  touch-action: manipulation;
 }
 .toolbarBtn:hover {
-    background: var(--surface-hover);
-    color: var(--text);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 /* ─── Reactions ─── */
 .reactions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-top: 4px;
-    padding-left: 0;
-    align-items: center;
-    width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  padding-left: 0;
+  align-items: center;
+  width: 100%;
 }
 .reactionChip {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 3px 7px;
-    font-size: 0.72rem;
-    background: var(--surface-hover);
-    border: none;
-    border-radius: 999px;
-    cursor: pointer;
-    transition: background 0.15s, transform 0.12s, box-shadow 0.15s;
-    animation: chipPop 0.2s ease-out;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px;
+  font-size: 0.72rem;
+  background: var(--surface-hover);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    transform 0.12s,
+    box-shadow 0.15s;
+  animation: chipPop 0.2s ease-out;
 }
 @keyframes chipPop {
-    0% { transform: scale(0); opacity: 0; }
-    60% { transform: scale(1.15); }
-    100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 .reactionChip:hover {
-    background: var(--glass-border);
-    transform: scale(1.08);
-    box-shadow: 0 2px 8px rgba(0,0,0,.1);
+  background: var(--glass-border);
+  transform: scale(1.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 .reactionChip:active {
-    transform: scale(0.95);
+  transform: scale(0.95);
 }
 .reactionChip:focus,
 .reactionChip:focus-visible {
-    outline: none;
-    box-shadow: none;
+  outline: none;
+  box-shadow: none;
 }
 .reactionEmoji {
-    font-size: 1.05rem;
-    line-height: 1;
+  font-size: 1.05rem;
+  line-height: 1;
 }
 .reactionCount {
-    font-size: 0.68rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    min-width: 8px;
-    text-align: center;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 8px;
+  text-align: center;
 }
 .myReaction {
-    background: var(--chat-bubble-mine);
+  background: var(--chat-bubble-mine);
 }
 .myReaction .reactionCount {
-    color: var(--text);
+  color: var(--text);
 }
 .myReaction:hover {
-    background: var(--chat-bubble-mine);
+  background: var(--chat-bubble-mine);
 }
 
 .addReactionBtn {
-    width: 26px;
-    height: 26px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1.5px dashed var(--glass-border);
-    background: none;
-    border-radius: 12px;
-    cursor: pointer;
-    color: var(--text-muted);
-    transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
-    opacity: 0;
-    animation: none;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px dashed var(--glass-border);
+  background: none;
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s,
+    transform 0.1s;
+  opacity: 0;
+  animation: none;
 }
 .reactions:hover .addReactionBtn,
 .addReactionBtn:focus {
-    opacity: 1;
+  opacity: 1;
 }
 .addReactionBtn:hover {
-    background: var(--surface-hover);
-    color: var(--text);
-    border-color: var(--text-muted);
-    transform: scale(1.1);
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--text-muted);
+  transform: scale(1.1);
 }
 @media (hover: none), (max-width: 768px) {
-    .addReactionBtn {
-        opacity: 1;
-    }
+  .addReactionBtn {
+    opacity: 1;
+  }
 }
 
 .pickerWrap {
-    position: relative;
-    z-index: 100;
+  position: relative;
+  z-index: 100;
 }
 /* For sent (mine) messages: picker opens to the left so it doesn't overflow right */
 .mine .pickerWrap {
-    display: flex;
-    justify-content: flex-end;
+  display: flex;
+  justify-content: flex-end;
 }
 /* For received (theirs) messages: picker opens to the right so it doesn't overflow left */
 .theirs .pickerWrap {
-    display: flex;
-    justify-content: flex-start;
+  display: flex;
+  justify-content: flex-start;
 }
 
 /* ─── Tablet ─── */
 @media (max-width: 1024px) {
-    .bubbleWrap { max-width: 80%; }
-    .row { padding: 2px 12px; }
+  .bubbleWrap {
+    max-width: 80%;
+  }
+  .row {
+    padding: 2px 12px;
+  }
 }
 
 @media (max-width: 768px) {
-    .bubbleWrap { max-width: 90%; }
-    .row { padding: 2px 8px; }
-    /* Larger touch targets on mobile */
-    .quickEmoji {
-        width: 32px;
-        height: 32px;
-    }
-    .toolbarBtn {
-        width: 32px;
-        height: 32px;
-    }
-    .moreEmoji {
-        width: 32px;
-        height: 32px;
-    }
-    .avatarCol {
-        width: 30px;
-    }
+  .bubbleWrap {
+    max-width: 90%;
+  }
+  .row {
+    padding: 2px 8px;
+  }
+  /* Larger touch targets on mobile */
+  .quickEmoji {
+    width: 32px;
+    height: 32px;
+  }
+  .toolbarBtn {
+    width: 32px;
+    height: 32px;
+  }
+  .moreEmoji {
+    width: 32px;
+    height: 32px;
+  }
+  .avatarCol {
+    width: 30px;
+  }
 }
 
 /* ─── Small mobile ─── */
 @media (max-width: 480px) {
-    .bubbleWrap { max-width: 92%; }
-    .row { padding: 2px 6px; }
-    .bubble {
-        font-size: 0.9rem;
-        padding: 8px 12px 6px;
-    }
+  .bubbleWrap {
+    max-width: 92%;
+  }
+  .row {
+    padding: 2px 6px;
+  }
+  .bubble {
+    font-size: 0.9rem;
+    padding: 8px 12px 6px;
+  }
 }
 
 /* ─── myBubble inner element overrides ─── */
-.myBubble .link { color: var(--primary-light); text-decoration: none; }
-.myBubble .mention { color: var(--primary-light); font-weight: 600; }
-.myBubble .inlineCode { background: var(--surface-hover); border-color: var(--glass-border); color: var(--text); }
-.myBubble .time { color: var(--text-muted); opacity: 0.8; }
-.myBubble .edited { color: var(--text-muted); }
-.myBubble .forwarded { color: var(--text-muted); }
-.myBubble .pinnedBadge { color: #f59e0b; }
+.myBubble .link {
+  color: var(--primary-light);
+  text-decoration: none;
+}
+.myBubble .mention {
+  color: var(--primary-light);
+  font-weight: 600;
+}
+.myBubble .inlineCode {
+  background: var(--surface-hover);
+  border-color: var(--glass-border);
+  color: var(--text);
+}
+.myBubble .time {
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+.myBubble .edited {
+  color: var(--text-muted);
+}
+.myBubble .forwarded {
+  color: var(--text-muted);
+}
+.myBubble .pinnedBadge {
+  color: #f59e0b;
+}
 
 /* ─── Delivery receipts (legacy text glyph fallbacks) ─── */
-.deliverySent, .deliveryPartial, .deliveryRead, .deliveryPending {
-    font-size: 0.6rem;
-    margin-left: 2px;
-    letter-spacing: -1px;
+.deliverySent,
+.deliveryPartial,
+.deliveryRead,
+.deliveryPending {
+  font-size: 0.6rem;
+  margin-left: 2px;
+  letter-spacing: -1px;
 }
-.deliveryPending { color: var(--text-muted); opacity: 0.6; animation: pendingPulse 1.5s ease-in-out infinite; }
-.deliveryFailed { color: #ef4444; font-weight: 700; margin-left: 2px; }
-.deliverySent { color: var(--text-muted); }
-.deliveryPartial { color: var(--text-secondary); }
-.deliveryRead { color: var(--primary); }
+.deliveryPending {
+  color: var(--text-muted);
+  opacity: 0.6;
+  animation: pendingPulse 1.5s ease-in-out infinite;
+}
+.deliveryFailed {
+  color: #ef4444;
+  font-weight: 700;
+  margin-left: 2px;
+}
+.deliverySent {
+  color: var(--text-muted);
+}
+.deliveryPartial {
+  color: var(--text-secondary);
+}
+.deliveryRead {
+  color: var(--primary);
+}
 
 /* ─── Signal-style SVG delivery ticks ─── */
 .tick {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin-left: 3px;
-    line-height: 0;
-    vertical-align: middle;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 3px;
+  line-height: 0;
+  vertical-align: middle;
 }
-.tick svg { display: block; }
+.tick svg {
+  display: block;
+}
 /* sending — muted, gently spinning ring */
 .tickSending {
-    color: var(--text-muted);
-    opacity: 0.7;
-    animation: tickSpin 0.9s linear infinite;
+  color: var(--text-muted);
+  opacity: 0.7;
+  animation: tickSpin 0.9s linear infinite;
 }
 /* sent — single check, muted */
-.tickSent { color: var(--text-muted); }
+.tickSent {
+  color: var(--text-muted);
+}
 /* delivered — circled check, slightly stronger */
 .tickDelivered {
-    color: var(--text-secondary);
-    animation: tickPop 0.18s ease-out;
+  color: var(--text-secondary);
+  animation: tickPop 0.18s ease-out;
 }
 /* read — accent-filled double circle */
 .tickRead {
-    color: var(--primary);
-    animation: tickPop 0.22s ease-out;
+  color: var(--primary);
+  animation: tickPop 0.22s ease-out;
 }
 @keyframes tickSpin {
-    to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 @keyframes tickPop {
-    0% { transform: scale(0.5); opacity: 0; }
-    60% { transform: scale(1.18); }
-    100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .retryBtn {
-    border: none;
-    background: none;
-    color: #ef4444;
-    font-size: 0.66rem;
-    font-weight: 600;
-    cursor: pointer;
-    padding: 0;
-    margin-right: 2px;
+  border: none;
+  background: none;
+  color: #ef4444;
+  font-size: 0.66rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  margin-right: 2px;
 }
 .retryBtn:hover {
-    text-decoration: underline;
+  text-decoration: underline;
 }
 
 .uploadProgressWrap {
-    margin-top: 6px;
-    margin-bottom: 2px;
+  margin-top: 6px;
+  margin-bottom: 2px;
 }
 .uploadProgressBar {
-    width: 100%;
-    height: 4px;
-    background: var(--surface-hover);
-    border-radius: 999px;
-    overflow: hidden;
+  width: 100%;
+  height: 4px;
+  background: var(--surface-hover);
+  border-radius: 999px;
+  overflow: hidden;
 }
 .uploadProgressFill {
-    height: 100%;
-    background: var(--primary);
-    transition: width 0.12s ease-out;
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.12s ease-out;
 }
 .uploadProgressMeta {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-top: 4px;
-    font-size: 0.67rem;
-    color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 0.67rem;
+  color: var(--text-muted);
 }
 .uploadFailText {
-    color: #ef4444;
+  color: #ef4444;
 }
 .uploadActionBtn {
-    border: none;
-    background: none;
-    padding: 0;
-    font-size: 0.67rem;
-    color: var(--primary-light);
-    cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 0.67rem;
+  color: var(--primary-light);
+  cursor: pointer;
 }
 .uploadActionBtn:hover {
-    text-decoration: underline;
+  text-decoration: underline;
 }
 
 @keyframes pendingPulse {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* ─── Starred badge ─── */
 .starBadge {
-    position: absolute;
-    top: -6px;
-    right: -6px;
-    font-size: 0.6rem;
-    z-index: 2;
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  font-size: 0.6rem;
+  z-index: 2;
 }
 .starredBubble {
-    box-shadow: inset 0 0 0 1px rgba(234,179,8,.25);
+  box-shadow: inset 0 0 0 1px rgba(234, 179, 8, 0.25);
 }
 
 /* ─── @mention highlight ─── */
 .mention {
-    color: var(--primary-light);
-    font-weight: 600;
-    cursor: pointer;
+  color: var(--primary-light);
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* ─── Inline code ─── */
 .inlineCode {
-    background: var(--surface-hover);
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-family: 'Cascadia Code', 'Fira Code', monospace;
-    font-size: 0.82em;
-    border: 1px solid var(--glass-border);
+  background: var(--surface-hover);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: "Cascadia Code", "Fira Code", monospace;
+  font-size: 0.82em;
+  border: 1px solid var(--glass-border);
 }
 .theirBubble .inlineCode {
-    background: var(--surface-hover);
+  background: var(--surface-hover);
 }

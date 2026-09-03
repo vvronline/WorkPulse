@@ -1,7 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useCallback, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
-import { Pin, Star, Pencil, Trash2, Reply, Copy } from "lucide-react";
+import {
+  Pin,
+  Star,
+  Pencil,
+  Trash2,
+  Reply,
+  Copy,
+  CheckSquare2,
+} from "lucide-react";
 import s from "./MessageBubble.module.css";
 import ChatAvatar from "./ChatAvatar";
 import FilePreview from "./FilePreview";
@@ -32,6 +40,10 @@ interface MessageBubbleProps {
   onJumpTo?: (id: number | string) => void;
   participantCount?: number;
   readReceipts?: any;
+  selectionActive?: boolean;
+  selected?: boolean;
+  onSelect?: (msg: any) => void;
+  onEnterSelection?: (msg: any) => void;
 }
 
 function MessageBubble({
@@ -52,6 +64,10 @@ function MessageBubble({
   onJumpTo,
   participantCount,
   readReceipts,
+  selectionActive = false,
+  selected = false,
+  onSelect,
+  onEnterSelection,
 }: MessageBubbleProps) {
   const [showReactions, setShowReactions] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
@@ -258,6 +274,11 @@ function MessageBubble({
     ? []
     : ([
         {
+          icon: <CheckSquare2 size={14} />,
+          label: "Select",
+          onClick: () => onEnterSelection?.(msg),
+        },
+        {
           icon: <Reply size={14} />,
           label: "Reply",
           onClick: () => onReply?.(msg),
@@ -316,7 +337,10 @@ function MessageBubble({
   return (
     <div
       ref={rowRef}
-      className={`${s.row} ${isMine ? s.mine : s.theirs} ${!showAvatar ? s.grouped : s.groupStart}`}
+      className={`${s.row} ${isMine ? s.mine : s.theirs} ${!showAvatar ? s.grouped : s.groupStart} ${
+        selected ? s.selectedRow : ""
+      } ${selectionActive ? s.selectionRow : ""}`}
+      onClick={selectionActive ? () => onSelect?.(msg) : undefined}
     >
       {/* Swipe-to-reply indicator */}
       <div className={s.swipeReply} data-swipe-reply>
@@ -667,7 +691,9 @@ function areEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
       prev.showAvatar === next.showAvatar &&
       prev.showName === next.showName &&
       prev.participantCount === next.participantCount &&
-      prev.readReceipts === next.readReceipts) ||
+      prev.readReceipts === next.readReceipts &&
+      prev.selectionActive === next.selectionActive &&
+      prev.selected === next.selected) ||
     (a.id === b.id &&
       a.content === b.content &&
       a.created_at === b.created_at &&
@@ -690,7 +716,9 @@ function areEqual(prev: MessageBubbleProps, next: MessageBubbleProps): boolean {
       prev.showAvatar === next.showAvatar &&
       prev.showName === next.showName &&
       prev.participantCount === next.participantCount &&
-      prev.readReceipts === next.readReceipts)
+      prev.readReceipts === next.readReceipts &&
+      prev.selectionActive === next.selectionActive &&
+      prev.selected === next.selected)
   );
 }
 

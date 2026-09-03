@@ -10,7 +10,7 @@ import {
 import SystemMessage from "../../components/chat/SystemMessage";
 import MeetingCard from "../../components/chat/MeetingCard";
 import { buildTimelineRows } from "./timelineRows";
-import { isBeforeClearedAt } from "./chatLocalDeletes";
+import { isBeforeClearedAt, isMessageHiddenForMe } from "./chatLocalDeletes";
 import { NEAR_BOTTOM_PX } from "./chatUtils";
 import s from "./ChatMessages.module.css";
 
@@ -22,6 +22,8 @@ interface ChatMessagesProps {
   readReceipts: any;
   typingUsers: Record<string, any>;
   loadingMsgs: boolean;
+  loadingMore?: boolean;
+  loadMoreError?: string;
   hasMore: boolean;
   dragOver: boolean;
   messagesContainerRef: any;
@@ -48,6 +50,9 @@ interface ChatMessagesProps {
   showStarred: boolean;
   onCloseStarred: () => void;
   onJumpToStarred: (...args: any[]) => void;
+  selectedMessageIds?: Set<number | string>;
+  onToggleMessageSelection?: (msg: any) => void;
+  onEnterMessageSelection?: (msg: any) => void;
 }
 
 export default function ChatMessages({
@@ -58,6 +63,8 @@ export default function ChatMessages({
   readReceipts,
   typingUsers,
   loadingMsgs,
+  loadingMore = false,
+  loadMoreError = "",
   hasMore,
   dragOver,
   messagesContainerRef,
@@ -84,6 +91,9 @@ export default function ChatMessages({
   showStarred,
   onCloseStarred,
   onJumpToStarred,
+  selectedMessageIds = new Set(),
+  onToggleMessageSelection,
+  onEnterMessageSelection,
 }: ChatMessagesProps) {
   // Signal-style local "clear chat": hide every message created at/before the
   // per-conversation cutoff stored on THIS device. The raw `messages` array is
@@ -92,7 +102,9 @@ export default function ChatMessages({
   const visibleMessages = useMemo(
     () =>
       messages.filter(
-        (m) => !isBeforeClearedAt(activeConv?.id, m.created_at),
+        (m) =>
+          !isBeforeClearedAt(activeConv?.id, m.created_at) &&
+          !isMessageHiddenForMe(activeConv?.id, m.id),
       ),
     [messages, activeConv?.id],
   );
@@ -114,7 +126,10 @@ export default function ChatMessages({
   // buildTimelineRows walks the full message array (grouping + date dividers);
   // memoize it so it only recomputes when the messages actually change, not on
   // every typing/scroll-button state update.
-  const rows = useMemo(() => buildTimelineRows(visibleMessages), [visibleMessages]);
+  const rows = useMemo(
+    () => buildTimelineRows(visibleMessages),
+    [visibleMessages],
+  );
 
   // Signal-style "scroll to bottom" affordance. Tracks how far the user has
   // scrolled up from the bottom of the messages container; once they're off
@@ -133,11 +148,21 @@ export default function ChatMessages({
       const distanceFromBottom =
         el.scrollHeight - el.scrollTop - el.clientHeight;
       setShowScrollBtn(distanceFromBottom > NEAR_BOTTOM_PX);
+      if (el.scrollTop < 140 && hasMore && !loadingMore && !loadMoreError) {
+        void onLoadMore();
+      }
     };
     onScroll();
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
-  }, [messagesContainerRef, activeConv?.id]);
+  }, [
+    messagesContainerRef,
+    activeConv?.id,
+    hasMore,
+    loadingMore,
+    loadMoreError,
+    onLoadMore,
+  ]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -184,8 +209,14 @@ export default function ChatMessages({
         )}
         {dragOver && <div className={s.dropOverlay}>Drop file to send</div>}
         {hasMore && (
-          <button className={s.loadMore} onClick={onLoadMore}>
-            Load older messages
+          <button
+            className={`${s.loadMore} ${loadMoreError ? s.loadMoreError : ""}`}
+            onClick={onLoadMore}
+            disabled={loadingMore}
+          >
+            {loadingMore
+              ? "Loading earlier messages…"
+              : loadMoreError || "Load older messages"}
           </button>
         )}
         {loadingMsgs && (
@@ -258,6 +289,10 @@ export default function ChatMessages({
                 onJumpTo={onJumpTo}
                 participantCount={convMembers.length || 2}
                 readReceipts={readReceipts}
+                selectionActive={selectedMessageIds.size > 0}
+                selected={selectedMessageIds.has(m.id)}
+                onSelect={onToggleMessageSelection}
+                onEnterSelection={onEnterMessageSelection}
               />
             </div>
           );

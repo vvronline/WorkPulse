@@ -13,6 +13,7 @@ import {
 import type useChatState from "./useChatState";
 import type { AnyRecord } from "../../types";
 import { createPendingMessageId } from "./messageDelivery";
+import { hideMessagesForMe } from "./chatLocalDeletes";
 
 type ChatState = ReturnType<typeof useChatState>;
 type Msg = AnyRecord & { id: number | string };
@@ -68,6 +69,8 @@ export default function useMessageActions(state: ChatState) {
     setShowPollCreator,
     mentionInputRef,
     pendingCounter,
+    selectedMessageIds,
+    setSelectedMessageIds,
   } = state;
   const uploadControllersRef = useRef<Map<string, AbortController>>(new Map());
   const pendingMediaRef = useRef<Map<string, PendingMedia>>(new Map());
@@ -634,6 +637,66 @@ export default function useMessageActions(state: ChatState) {
     }
   };
 
+  const clearMessageSelection = () => setSelectedMessageIds(new Set());
+
+  const toggleMessageSelection = (msg: Msg) => {
+    if (String(msg.id).startsWith("pending_") || msg.deleted_at) return;
+    setSelectedMessageIds((current) => {
+      const next = new Set(current);
+      if (next.has(msg.id)) next.delete(msg.id);
+      else next.add(msg.id);
+      return next;
+    });
+  };
+
+  const enterMessageSelection = (msg: Msg) => {
+    if (String(msg.id).startsWith("pending_") || msg.deleted_at) return;
+    setSelectedMessageIds(new Set([msg.id]));
+  };
+
+  const deleteSelectedForMe = () => {
+    if (!activeConv || selectedMessageIds.size === 0) return;
+    const ids = [...selectedMessageIds];
+    hideMessagesForMe(activeConv.id, ids);
+    setMessages((current) =>
+      current.filter((message) => !selectedMessageIds.has(message.id)),
+    );
+    clearMessageSelection();
+  };
+
+  const deleteSelectedForEveryone = async () => {
+    const targets = [...selectedMessageIds].filter(
+      (id) => !String(id).startsWith("pending_"),
+    );
+    await Promise.allSettled(targets.map((id) => deleteMessage(id)));
+    setMessages((current) =>
+      current.map((message) =>
+        selectedMessageIds.has(message.id)
+          ? {
+              ...message,
+              deleted_at: new Date().toISOString(),
+              content: "",
+              file_url: null,
+              file_name: null,
+              file_type: null,
+              file_size: null,
+              reactions: [],
+            }
+          : message,
+      ),
+    );
+    clearMessageSelection();
+  };
+
+  const copySelectedMessages = async () => {
+    const text = state.messages
+      .filter((message) => selectedMessageIds.has(message.id))
+      .map((message) => String(message.content || "").trim())
+      .filter(Boolean)
+      .join("\n");
+    if (text) await navigator.clipboard?.writeText(text);
+  };
+
   const handleCreatePoll = async (pollData: AnyRecord) => {
     if (!activeConv) return;
     try {
@@ -691,5 +754,11 @@ export default function useMessageActions(state: ChatState) {
     handleUnpin,
     handleRetryMessage,
     handleCancelMediaUpload,
+    clearMessageSelection,
+    toggleMessageSelection,
+    enterMessageSelection,
+    deleteSelectedForMe,
+    deleteSelectedForEveryone,
+    copySelectedMessages,
   };
 }

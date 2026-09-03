@@ -1,620 +1,694 @@
 /* ─── Sidebar ─── */
 .sidebar {
-    width: 360px;
-    min-width: 320px;
-    display: flex;
-    flex-direction: column;
-    background: var(--bg-secondary);
-    box-shadow: 1px 0 0 var(--separator);
+  width: 360px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  box-shadow: 1px 0 0 var(--separator);
 }
 
 /* ─── Tabs ─── */
 .sidebarTabs {
-    display: flex;
-    padding: 0.5rem 0.75rem 0.25rem;
-    gap: 4px;
-    flex-shrink: 0;
+  display: flex;
+  padding: 0.5rem 0.75rem 0.25rem;
+  gap: 4px;
+  flex-shrink: 0;
 }
 .tabBtn {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.25rem;
-    padding: 0.4rem 0.4rem;
-    border: none;
-    background: none;
-    color: var(--text-muted);
-    font-size: 0.75rem;
-    font-weight: 500;
-    font-family: inherit;
-    cursor: pointer;
-    transition: color 0.15s, background 0.15s;
-    white-space: nowrap;
-    overflow: hidden;
-    border-radius: 6px;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.4rem 0.4rem;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  border-radius: 6px;
 }
 .tabBtn svg {
-    flex-shrink: 0;
+  flex-shrink: 0;
 }
 .tabBtn:hover {
-    color: var(--text);
-    background: var(--surface-hover);
+  color: var(--text);
+  background: var(--surface-hover);
 }
 .tabActive {
-    color: var(--primary);
-    background: rgba(35, 131, 226, 0.08);
+  color: var(--primary);
+  background: rgba(35, 131, 226, 0.08);
 }
 
 /* ─── Calls list ─── */
 .callsPanel {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .callsList {
-    flex: 1;
-    overflow-y: auto;
-    padding: 4px 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
 }
 
 .callSelectionBar {
-    min-height: 44px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--glass-border);
-    background: color-mix(in srgb, var(--surface) 92%, var(--primary) 8%);
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--surface) 92%, var(--primary) 8%);
 }
 
 .callHistoryCount,
 .callSelectionCount {
-    flex: 1;
-    min-width: 0;
-    color: var(--text-muted);
-    font-size: 0.72rem;
-    font-weight: 650;
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
 }
 
 .callSelectionCount {
-    color: var(--text);
+  color: var(--text);
 }
 
 .callActionButton,
 .callDeleteButton,
 .callIconButton {
-    border: 1px solid var(--glass-border);
-    border-radius: 8px;
-    background: var(--surface);
-    color: var(--text-muted);
-    cursor: pointer;
-    min-height: 30px;
-    padding: 0 9px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    font: inherit;
-    font-size: 0.68rem;
-    font-weight: 650;
-    transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  min-height: 30px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 650;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
 }
 
 .callIconButton {
-    width: 30px;
-    padding: 0;
+  width: 30px;
+  padding: 0;
 }
 
 .callActionButton:hover,
 .callIconButton:hover,
 .callActionButtonActive {
-    color: var(--primary);
-    border-color: color-mix(in srgb, var(--primary) 55%, var(--glass-border));
-    background: color-mix(in srgb, var(--surface) 88%, var(--primary) 12%);
+  color: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--glass-border));
+  background: color-mix(in srgb, var(--surface) 88%, var(--primary) 12%);
 }
 
 .callDeleteButton {
-    color: #ef4444;
+  color: #ef4444;
 }
 
 .callDeleteButton:hover:not(:disabled) {
-    color: #fff;
-    border-color: #dc2626;
-    background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+  background: #dc2626;
 }
 
 .callDeleteButton:disabled {
-    cursor: not-allowed;
-    opacity: 0.45;
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .callError {
-    padding: 8px 12px;
-    border-bottom: 1px solid color-mix(in srgb, #ef4444 35%, transparent);
-    background: color-mix(in srgb, #ef4444 10%, transparent);
-    color: #ef4444;
-    font-size: 0.72rem;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, #ef4444 35%, transparent);
+  background: color-mix(in srgb, #ef4444 10%, transparent);
+  color: #ef4444;
+  font-size: 0.72rem;
 }
 .callsEmpty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    color: var(--text-muted);
-    font-size: 0.82rem;
-    padding: 3rem 1rem;
-    text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  padding: 3rem 1rem;
+  text-align: center;
 }
-.callsEmpty p { margin: 0; }
+.callsEmpty p {
+  margin: 0;
+}
 .callsSpinner {
-    width: 20px;
-    height: 20px;
-    border: 2px solid var(--glass-border);
-    border-top-color: var(--primary);
-    border-radius: 50%;
-    animation: callSpin 0.6s linear infinite;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--glass-border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: callSpin 0.6s linear infinite;
 }
-@keyframes callSpin { to { transform: rotate(360deg); } }
+@keyframes callSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 .callItem {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 14px;
-    border-left: 3px solid transparent;
-    transition: background 0.12s;
-    cursor: default;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-left: 3px solid transparent;
+  transition: background 0.12s;
+  cursor: default;
 }
-.callItem:hover { background: var(--surface-hover); }
-.callItemMissed { border-left-color: #ef4444; }
-.callItemSelectable { cursor: pointer; user-select: none; }
+.callItem:hover {
+  background: var(--surface-hover);
+}
+.callItemMissed {
+  border-left-color: #ef4444;
+}
+.callItemSelectable {
+  cursor: pointer;
+  user-select: none;
+}
 .callItemSelected {
-    background: color-mix(in srgb, var(--surface) 84%, var(--primary) 16%);
+  background: color-mix(in srgb, var(--surface) 84%, var(--primary) 16%);
 }
 .callItemSelected:hover {
-    background: color-mix(in srgb, var(--surface-hover) 78%, var(--primary) 22%);
+  background: color-mix(in srgb, var(--surface-hover) 78%, var(--primary) 22%);
 }
 .callCheckbox {
-    width: 20px;
-    flex: 0 0 20px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--primary);
+  width: 20px;
+  flex: 0 0 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
 }
 
-.callAvatar { flex-shrink: 0; }
-.callInfo { flex: 1; min-width: 0; }
+.callAvatar {
+  flex-shrink: 0;
+}
+.callInfo {
+  flex: 1;
+  min-width: 0;
+}
 .callName {
-    font-size: 0.84rem;
-    font-weight: 500;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .callMeta {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
 }
-.callMetaText { font-size: 0.72rem; color: var(--text-muted); }
-.callMetaMissed { font-size: 0.72rem; color: #ef4444; }
-.callDuration { font-size: 0.72rem; color: var(--text-muted); }
-.iconOutgoing { color: var(--primary); }
-.iconIncoming { color: #10b981; }
-.iconMissed { color: #ef4444; }
+.callMetaText {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.callMetaMissed {
+  font-size: 0.72rem;
+  color: #ef4444;
+}
+.callDuration {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.iconOutgoing {
+  color: var(--primary);
+}
+.iconIncoming {
+  color: #10b981;
+}
+.iconMissed {
+  color: #ef4444;
+}
 
 .callRight {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 4px;
-    flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
 }
-.callTime { font-size: 0.68rem; color: var(--text-muted); white-space: nowrap; }
-.callTypeIcon { color: var(--text-muted); opacity: 0.5; display: flex; }
+.callTime {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.callTypeIcon {
+  color: var(--text-muted);
+  opacity: 0.5;
+  display: flex;
+}
 
 .sidebarHeader {
-    padding: 1rem 1rem 0.75rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  padding: 1rem 1rem 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 .sidebarHeader h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    letter-spacing: -0.01em;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  letter-spacing: -0.01em;
 }
 .totalBadge {
-    background: var(--primary);
-    color: #fff;
-    font-size: 0.65rem;
-    font-weight: 700;
-    line-height: 1.2;
-    padding: 0.05rem 0.35rem;
-    border-radius: var(--radius-full);
-    flex-shrink: 0;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
 }
 .newGroupBtn {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-size: 1rem;
-    padding: 0.3rem;
-    border-radius: 4px;
-    transition: background var(--transition-fast), color var(--transition-fast);
-    line-height: 1;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.3rem;
+  border-radius: 4px;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+  line-height: 1;
 }
 .newGroupBtn:hover {
-    background: var(--surface-hover);
-    color: var(--text);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 .headerBtns {
-    display: flex;
-    align-items: center;
-    gap: 2px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 /* ─── Search header (replaces sidebar header when searching) ─── */
 .searchHeader {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0.6rem 0.75rem;
-    border-bottom: 1px solid var(--glass-border);
-    position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--glass-border);
+  position: relative;
 }
 .searchIcon {
-    position: absolute;
-    left: 1.35rem;
-    color: var(--text-muted);
-    pointer-events: none;
-    flex-shrink: 0;
+  position: absolute;
+  left: 1.35rem;
+  color: var(--text-muted);
+  pointer-events: none;
+  flex-shrink: 0;
 }
 .searchInput {
-    flex: 1;
-    padding: 0.5rem 0.75rem 0.5rem 2rem;
-    border-radius: 20px;
-    border: 1px solid var(--glass-border);
-    background: var(--input-bg);
-    color: var(--text);
-    font-size: 0.84rem;
-    outline: none;
-    transition: border var(--transition-fast);
-    box-sizing: border-box;
+  flex: 1;
+  padding: 0.5rem 0.75rem 0.5rem 2rem;
+  border-radius: 20px;
+  border: 1px solid var(--glass-border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 0.84rem;
+  outline: none;
+  transition: border var(--transition-fast);
+  box-sizing: border-box;
 }
 .searchInput:focus {
-    border-color: var(--primary);
-    background: var(--surface-hover);
+  border-color: var(--primary);
+  background: var(--surface-hover);
 }
 .searchCloseBtn {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 0.25rem;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background var(--transition-fast), color var(--transition-fast);
-    flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+  flex-shrink: 0;
 }
 .searchCloseBtn:hover {
-    background: var(--surface-hover);
-    color: var(--text);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 .searchResults {
-    flex: 1;
-    overflow-y: auto;
+  flex: 1;
+  overflow-y: auto;
 }
 .searchItem {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.65rem 1rem;
-    cursor: pointer;
-    transition: background var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 1rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
 }
 .searchItem:hover {
-    background: var(--surface-hover);
+  background: var(--surface-hover);
 }
 .hint {
-    padding: 1rem;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    text-align: center;
+  padding: 1rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-align: center;
 }
 
 /* ─── User info (search results) ─── */
 .userInfo {
-    min-width: 0;
+  min-width: 0;
 }
 .userName {
-    font-weight: 600;
-    font-size: 0.9rem;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .userMeta {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ─── Conversation list ─── */
 .convList {
-    flex: 1;
-    overflow-y: auto;
+  flex: 1;
+  overflow-y: auto;
 }
 .empty {
-    padding: 2rem 1.2rem;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    text-align: center;
-    line-height: 1.5;
+  padding: 2rem 1.2rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+  line-height: 1.5;
 }
 .convItem {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.7rem 1rem;
-    cursor: pointer;
-    transition: background var(--transition-fast);
-    border-radius: 8px;
-    margin: 2px 8px;
-    position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  border-radius: 8px;
+  margin: 2px 8px;
+  position: relative;
 }
 .convItem:hover {
-    background: var(--surface-hover);
+  background: var(--surface-hover);
 }
 .convItem.active {
-    background: var(--chat-active-bg);
+  background: var(--chat-active-bg);
+}
+.convItemSelectable {
+  user-select: none;
+}
+.convItemSelected {
+  background: color-mix(in srgb, var(--surface) 82%, var(--primary) 18%);
+}
+.convItemSelected:hover {
+  background: color-mix(in srgb, var(--surface-hover) 76%, var(--primary) 24%);
+}
+.convCheckbox {
+  width: 20px;
+  flex: 0 0 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
 }
 
 /* Section headers */
 .convSection {
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    padding: 0.85rem 1rem 0.35rem;
-    user-select: none;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 0.85rem 1rem 0.35rem;
+  user-select: none;
 }
 
 /* 3-dot menu */
 .convMenuWrap {
-    position: relative;
-    flex-shrink: 0;
+  position: relative;
+  flex-shrink: 0;
 }
 .convMenuBtn {
-    width: 26px;
-    height: 26px;
-    border: none;
-    background: transparent;
-    border-radius: 6px;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: var(--text-secondary);
-    transition: background 0.15s, color 0.15s;
-    padding: 0;
-    line-height: 1;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  transition:
+    background 0.15s,
+    color 0.15s;
+  padding: 0;
+  line-height: 1;
 }
 .convMenuBtn:hover {
-    background: var(--bg);
-    color: var(--text);
+  background: var(--bg);
+  color: var(--text);
 }
 .convItem:hover .convMenuBtn,
 .convMenuBtn[class] + .convMenuDropdown ~ .convMenuBtn {
-    display: flex;
+  display: flex;
 }
 /* Keep button visible when dropdown is open */
 .convMenuWrap:has(.convMenuDropdown) .convMenuBtn {
-    display: flex;
-    background: var(--bg);
-    color: var(--text);
+  display: flex;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .convMenuDropdown {
-    position: absolute;
-    right: 0;
-    top: 100%;
-    z-index: 100;
-    min-width: 150px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 100;
+  min-width: 150px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
 }
 .convMenuDropdown button {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    width: 100%;
-    padding: 0.45rem 0.65rem;
-    border: none;
-    background: none;
-    color: var(--text);
-    font-size: 0.8rem;
-    font-family: inherit;
-    cursor: pointer;
-    border-radius: 5px;
-    transition: background 0.12s;
-    text-align: left;
-    white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: background 0.12s;
+  text-align: left;
+  white-space: nowrap;
 }
 .convMenuDropdown button:hover {
-    background: var(--surface-hover);
+  background: var(--surface-hover);
 }
 .menuDanger {
-    color: var(--danger) !important;
+  color: var(--danger) !important;
 }
 .menuDanger:hover {
-    background: rgba(239, 68, 68, 0.1) !important;
+  background: rgba(239, 68, 68, 0.1) !important;
 }
 .convInfo {
-    flex: 1;
-    min-width: 0;
+  flex: 1;
+  min-width: 0;
 }
 .convTop {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 0.1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.1rem;
 }
 .convName {
-    font-weight: 600;
-    font-size: 0.875rem;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .convTime {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    white-space: nowrap;
-    margin-left: 0.5rem;
-    flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-left: 0.5rem;
+  flex-shrink: 0;
 }
 .convPreview {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .convPreview .unread {
-    color: var(--text);
-    font-weight: 600;
+  color: var(--text);
+  font-weight: 600;
 }
 .typing {
-    color: var(--primary);
-    font-style: italic;
+  color: var(--primary);
+  font-style: italic;
 }
 .badge {
-    background: var(--primary);
-    color: #fff;
-    font-size: 0.62rem;
-    font-weight: 700;
-    min-width: 17px;
-    height: 17px;
-    border-radius: var(--radius-full);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 4px;
-    flex-shrink: 0;
-    margin-left: 0.4rem;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 700;
+  min-width: 17px;
+  height: 17px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  flex-shrink: 0;
+  margin-left: 0.4rem;
 }
 
 /* ─── Tablet ─── */
 @media (max-width: 1024px) {
-    .sidebar {
-        width: 280px;
-        min-width: 240px;
-    }
-    .convName {
-        font-size: 0.82rem;
-    }
-    .convPreview {
-        font-size: 0.72rem;
-    }
+  .sidebar {
+    width: 280px;
+    min-width: 240px;
+  }
+  .convName {
+    font-size: 0.82rem;
+  }
+  .convPreview {
+    font-size: 0.72rem;
+  }
 }
 
 /* ─── Mobile ─── */
 @media (max-width: 768px) {
-    .sidebar {
-        width: 100%;
-        min-width: 0;
-    }
-    .hideMobile {
-        display: none;
-    }
-    .sidebarHeader {
-        padding: 0.75rem 0.75rem 0.5rem;
-    }
-    .searchBox {
-        padding: 0.5rem 0.6rem;
-    }
-    .convItem {
-        padding: 0.6rem 0.6rem;
-        gap: 0.5rem;
-    }
-    /* Always show 3-dot menu on mobile (no hover on touch) */
-    .convMenuBtn {
-        display: flex;
-    }
-    .convMenuDropdown {
-        min-width: 170px;
-        padding: 6px;
-    }
-    .convMenuDropdown button {
-        padding: 0.55rem 0.75rem;
-        gap: 0.5rem;
-        font-size: 0.82rem;
-    }
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+  }
+  .hideMobile {
+    display: none;
+  }
+  .sidebarHeader {
+    padding: 0.75rem 0.75rem 0.5rem;
+  }
+  .searchBox {
+    padding: 0.5rem 0.6rem;
+  }
+  .convItem {
+    padding: 0.6rem 0.6rem;
+    gap: 0.5rem;
+  }
+  /* Always show 3-dot menu on mobile (no hover on touch) */
+  .convMenuBtn {
+    display: flex;
+  }
+  .convMenuDropdown {
+    min-width: 170px;
+    padding: 6px;
+  }
+  .convMenuDropdown button {
+    padding: 0.55rem 0.75rem;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+  }
 }
 
 /* ─── Conversation list loading skeleton ─── */
 .skeletonList {
-    display: flex;
-    flex-direction: column;
-    padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
 }
 .skeletonItem {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
 }
 .skeletonAvatar {
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    background: var(--glass-border, rgba(255,255,255,0.08));
-    flex-shrink: 0;
-    animation: shimmer 1.4s ease-in-out infinite;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--glass-border, rgba(255, 255, 255, 0.08));
+  flex-shrink: 0;
+  animation: shimmer 1.4s ease-in-out infinite;
 }
 .skeletonText {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .skeletonLine {
-    height: 12px;
-    border-radius: 6px;
-    background: var(--glass-border, rgba(255,255,255,0.08));
-    animation: shimmer 1.4s ease-in-out infinite;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--glass-border, rgba(255, 255, 255, 0.08));
+  animation: shimmer 1.4s ease-in-out infinite;
 }
 @keyframes shimmer {
-    0%, 100% { opacity: 0.35; }
-    50% { opacity: 0.7; }
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 0.7;
+  }
 }
