@@ -6,7 +6,7 @@ import Animated, {
   useSharedValue,
   withSpring,
 } from "react-native-reanimated";
-import { RTCView } from "react-native-webrtc";
+import { RTCView } from "@livekit/react-native-webrtc";
 import { RoundedSelfView } from "./RTCTextureView";
 import type { CallStyle } from "../../calls/shared/callUiTypes";
 

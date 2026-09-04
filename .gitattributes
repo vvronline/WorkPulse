@@ -1,0 +1,7 @@
+# Shell scripts and Dockerfiles run inside Linux containers. A CRLF checkout
+# committed from Windows makes the kernel read `#!/usr/bin/env bash\r` and fail
+# with "bad interpreter: no such file or directory". Force LF regardless of
+# core.autocrlf on the committer's machine.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yaml.template text eol=lf

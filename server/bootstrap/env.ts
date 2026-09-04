@@ -28,6 +28,14 @@ function validateEnvironment(): void {
         logger.fatal("REDIS_URL is required in production. Server cannot start.");
         throw new Error("REDIS_URL is required in production");
     }
+    try {
+        const { validateCallMediaEnvironment } = require("../services/callMedia");
+        validateCallMediaEnvironment();
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.fatal({ err: message }, "Call media configuration is invalid. Server cannot start.");
+        throw err;
+    }
 
     // Local disk cannot be shared between replicas. Surface this at boot rather
     // than after one instance writes a file another cannot see.

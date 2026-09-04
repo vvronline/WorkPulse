@@ -35,7 +35,7 @@ import {
   RTCIceCandidate,
   MediaStream,
   type MediaStreamTrack,
-} from "react-native-webrtc";
+} from "@livekit/react-native-webrtc";
 import { useTheme } from "../../src/theme/ThemeProvider";
 import { socket } from "../../src/realtime/socket";
 import { endCallNavigation } from "../../src/realtime/callRouting";
@@ -115,6 +115,15 @@ import {
   type SessionDescriptionLike,
 } from "../../src/calls/shared/callUiTypes";
 import type { IceServer } from "../../src/calls/shared/callIceConfig";
+import {
+  getCallMediaSession,
+  isMediaSessionSelectionCancelled,
+  MediaSessionSelection,
+  MediaSessionSelectionCancelledError,
+  type CallMediaSession,
+  type LiveKitMediaSession,
+} from "../../src/calls/media/mediaSession";
+import { useLiveKitCall } from "../../src/calls/livekit/useLiveKitCall";
 
 /**
  * `getUserMedia` constraint profile. react-native-webrtc's own `Constraints`
@@ -392,9 +401,51 @@ export default function CallScreen() {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
+  const mediaAcquirePromiseRef = useRef<Promise<MediaStream | null> | null>(
+    null,
+  );
   const callIdRef = useRef<number | null>(
     params.callId ? Number(params.callId) : null,
   );
+  const [mediaSession, setMediaSession] = useState<CallMediaSession | null>(
+    null,
+  );
+  const mediaSessionSelectionRef = useRef(new MediaSessionSelection());
+  const mediaBackendRef = useRef<CallMediaSession["backend"] | null>(null);
+  const terminalCallRef = useRef(false);
+  const liveKitStopRef = useRef<(terminal?: boolean) => Promise<void> | void>(
+    () => {},
+  );
+  const ensureMediaSession = useCallback(async (): Promise<CallMediaSession> => {
+    const callId = callIdRef.current;
+    if (!callId || !Number.isFinite(conversationId)) {
+      throw new Error("Call id is unavailable for media selection");
+    }
+    const callIsTerminal = () =>
+      terminalCallRef.current ||
+      statusRef.current === "ended" ||
+      statusRef.current === "rejected";
+    if (callIsTerminal()) throw new MediaSessionSelectionCancelledError();
+    let selected: CallMediaSession;
+    try {
+      selected = await mediaSessionSelectionRef.current.resolve(() =>
+        getCallMediaSession(callId, conversationId),
+      );
+    } catch (error) {
+      if (callIsTerminal()) throw new MediaSessionSelectionCancelledError();
+      throw error;
+    }
+    if (callIsTerminal()) throw new MediaSessionSelectionCancelledError();
+    if (
+      mediaBackendRef.current &&
+      mediaBackendRef.current !== selected.backend
+    ) {
+      throw new Error("Call media backend cannot change mid-call");
+    }
+    mediaBackendRef.current = selected.backend;
+    setMediaSession((current) => current ?? selected);
+    return selected;
+  }, [conversationId]);
   const initiateClientMsgIdRef = useRef(
     `call-initiate:${conversationId}:${Date.now()}`,
   );
@@ -537,6 +588,7 @@ export default function CallScreen() {
     signalChainRef.current = signalChainRef.current
       .then(task)
       .catch((err: unknown) => {
+        if (isMediaSessionSelectionCancelled(err)) return;
         console.warn("[call] signaling task failed:", errorMessage(err));
       });
     return signalChainRef.current;
@@ -544,6 +596,9 @@ export default function CallScreen() {
 
   const endAndLeave = useCallback(
     (sendEnd: boolean) => {
+      if (terminalCallRef.current) return;
+      terminalCallRef.current = true;
+      void liveKitStopRef.current(true);
       // Always clear the no-answer ring timer so a late fire can't re-enter.
       if (ringTimeoutRef.current) {
         clearTimeout(ringTimeoutRef.current);
@@ -686,8 +741,9 @@ export default function CallScreen() {
     }
   }, [callType]);
 
-  const getMedia = useCallback(
+  const acquireMedia = useCallback(
     async (silent = false): Promise<MediaStream | null> => {
+      if (mediaBackendRef.current !== "p2p") return null;
       // Reuse an existing stream (e.g. from the ringing pre-warm) so two
       // concurrent acquisitions never race for the camera.
       if (localStreamRef.current) return localStreamRef.current;
@@ -780,6 +836,10 @@ export default function CallScreen() {
               /* not supported on this platform build — ignore */
             }
           }
+          if (terminalCallRef.current) {
+            stream.getTracks().forEach((track) => track.stop());
+            return null;
+          }
           localStreamRef.current = stream;
           setLocalStream(stream);
           return stream;
@@ -799,6 +859,77 @@ export default function CallScreen() {
     },
     [callType, ensurePermissions],
   );
+
+  const getMedia = useCallback(
+    (silent = false): Promise<MediaStream | null> => {
+      if (localStreamRef.current) {
+        return Promise.resolve(localStreamRef.current);
+      }
+      if (mediaAcquirePromiseRef.current) return mediaAcquirePromiseRef.current;
+      const pending = acquireMedia(silent);
+      mediaAcquirePromiseRef.current = pending;
+      void pending.finally(() => {
+        if (mediaAcquirePromiseRef.current === pending) {
+          mediaAcquirePromiseRef.current = null;
+        }
+      });
+      return pending;
+    },
+    [acquireMedia],
+  );
+
+  const liveKitSession: LiveKitMediaSession | null =
+    mediaSession?.backend === "livekit" ? mediaSession : null;
+  const liveKit = useLiveKitCall({
+    session: liveKitSession,
+    active:
+      !!liveKitSession &&
+      (status === "connecting" ||
+        status === "connected" ||
+        status === "reconnecting"),
+    callType,
+    muted,
+    videoOff,
+    speaker: speakerOn,
+    requestPermissions: ensurePermissions,
+    onConnected: () => {
+      startedAt.current = Date.now();
+      dispatchCall({ type: "PC_CONNECTED" });
+    },
+    onReconnecting: () => dispatchCall({ type: "MEDIA_RECONNECTING" }),
+    onLocalStream: (stream) => {
+      const media = stream as MediaStream | null;
+      localStreamRef.current = media;
+      setLocalStream(media);
+    },
+    onRemoteStream: (stream) => {
+      const media = stream as MediaStream | null;
+      remoteStreamRef.current = media;
+      setRemoteStream(media);
+    },
+    onRemoteMuted: setPeerMuted,
+    onRemoteVideoOff: setRemoteVideoOff,
+    onConnectionQuality: setConnectionQuality,
+    onPeerQuality: setPeerQuality,
+    onPermissionDenied: () => {
+      Alert.alert(
+        "Permission required",
+        callType === "video"
+          ? "Camera and microphone access are required for this video call."
+          : "Microphone access is required for this call.",
+      );
+      endAndLeave(true);
+    },
+    onError: (error) => {
+      console.warn("[call] LiveKit media failed:", errorMessage(error));
+      Alert.alert(
+        "Call connection failed",
+        "The secure media session could not be connected.",
+      );
+      endAndLeave(true);
+    },
+  });
+  liveKitStopRef.current = liveKit.stop;
 
   useEffect(() => {
     let active = true;
@@ -843,6 +974,7 @@ export default function CallScreen() {
 
   useEffect(() => {
     const applyAudioMode = async () => {
+      if (mediaSession?.backend === "livekit" && status !== "ringing") return;
       try {
         await setAudioModeAsync({
           playsInSilentMode: true,
@@ -856,7 +988,7 @@ export default function CallScreen() {
       }
     };
     applyAudioMode();
-  }, [callType, speakerOn, status]);
+  }, [callType, mediaSession?.backend, speakerOn, status]);
 
   useEffect(() => {
     return () => {
@@ -1771,7 +1903,8 @@ export default function CallScreen() {
       });
   }, []);
 
-  // Outgoing: acquire media + send call_initiate.
+  // Outgoing: preflight permissions + send call_initiate. Media is acquired
+  // only after call_started selects this call's immutable backend.
   // IMPORTANT: socket.send() silently returns false when the WS isn't open
   // (e.g. right after the app returns to the foreground and the socket is
   // still reconnecting). Previously the initiate frame was dropped and the
@@ -1794,9 +1927,15 @@ export default function CallScreen() {
     }
     let cancelled = false;
     (async () => {
-      const stream = await getMedia();
+      const permitted = await ensurePermissions();
       if (cancelled) return;
-      if (!stream) {
+      if (!permitted) {
+        Alert.alert(
+          "Permission required",
+          callType === "video"
+            ? "Camera and microphone access are required for video calls."
+            : "Microphone access is required for calls.",
+        );
         endAndLeave(false);
         return;
       }
@@ -1833,7 +1972,7 @@ export default function CallScreen() {
       cancelled = true;
     };
     // eslint-disable-line react-hooks/exhaustive-deps
-  }, [mode, conversationId, callType, getMedia, endAndLeave]);
+  }, [mode, conversationId, callType, ensurePermissions, endAndLeave]);
 
   // Outgoing ring timeout: if the callee never answers within ~35s, stop
   // ringing and end the call as "No answer" (mirrors Slack/Teams/Meet). The
@@ -1872,20 +2011,34 @@ export default function CallScreen() {
     if (!isReconnect) return;
     let cancelled = false;
     (async () => {
-      const stream = await getMedia();
-      if (cancelled) return;
-      if (!stream) {
-        endAndLeave(false);
-        return;
-      }
-      await waitForIceConfig();
-      if (cancelled) return;
       const callId = callIdRef.current;
       if (!callId) {
         // Without a callId the server can't locate the active call to relay the
         // reconnect — bail back to the dashboard.
         endAndLeave(false);
         return;
+      }
+      let selected: CallMediaSession;
+      try {
+        selected = await ensureMediaSession();
+      } catch (error) {
+        if (isMediaSessionSelectionCancelled(error)) return;
+        if (!cancelled) {
+          console.warn("[call] media selection failed:", errorMessage(error));
+          endAndLeave(false);
+        }
+        return;
+      }
+      if (cancelled) return;
+      if (selected.backend === "p2p") {
+        const stream = await getMedia();
+        if (cancelled) return;
+        if (!stream) {
+          endAndLeave(false);
+          return;
+        }
+        await waitForIceConfig();
+        if (cancelled) return;
       }
       // Ask the server to tell the other participant(s) to re-offer to us. The
       // peer's `call_reconnect` handler (below) creates a fresh offer; our
@@ -1901,6 +2054,7 @@ export default function CallScreen() {
           ensureConnected: true,
         },
       );
+      if (selected.backend === "livekit") return;
       // BOUNDED RECONNECT (Signal-Android parity). After announcing
       // `call_reconnect` we wait for the peer to send a FRESH offer; the
       // call_signal(offer) handler then builds the PC + answers, and
@@ -1934,7 +2088,7 @@ export default function CallScreen() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isReconnect]);
+  }, [isReconnect, ensureMediaSession]);
 
   // Incoming: PRE-WARM camera/mic while the phone is still ringing (mirrors
   // the web client's pre-warm path). Acquiring media only after the user taps
@@ -1945,6 +2099,17 @@ export default function CallScreen() {
     let cancelled = false;
     (async () => {
       if (localStreamRef.current) return;
+      let selected: CallMediaSession;
+      try {
+        selected = await ensureMediaSession();
+      } catch (error) {
+        if (isMediaSessionSelectionCancelled(error)) return;
+        if (!cancelled) {
+          console.warn("[call] media selection failed:", errorMessage(error));
+        }
+        return;
+      }
+      if (cancelled || selected.backend === "livekit") return;
       // silent: don't pop permission/availability alerts while still ringing
       // — the user may simply reject the call. acceptIncoming() retries
       // loudly if this pre-warm failed.
@@ -1963,7 +2128,7 @@ export default function CallScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [mode, ensureMediaSession]);
 
   // Re-acquire a DEAD/MISSING video track and republish it. On a background or
   // over-the-lock-screen answer the camera can come up as an ended/disabled
@@ -2095,6 +2260,7 @@ export default function CallScreen() {
     const sub = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
       if (status === "ended" || status === "rejected") return;
+      if (mediaBackendRef.current !== "p2p") return;
       // If we already have a stream BUT its video track is dead (camera came up
       // behind the keyguard), recover that track instead of bailing — otherwise
       // the self-view + peer stay black. recoverDeadVideoTrack no-ops for voice
@@ -2287,9 +2453,29 @@ export default function CallScreen() {
     const off = socket.subscribe((msg) => {
       const d = msg.data || {};
       switch (msg.type) {
-        case "call_started":
-          callIdRef.current = d.callId;
+        case "call_started": {
+          callIdRef.current = Number(d.callId);
+          void ensureMediaSession()
+            .then(async (selected) => {
+              if (
+                selected.backend === "p2p" &&
+                !localStreamRef.current
+              ) {
+                const stream = await getMedia();
+                if (!stream) endAndLeave(true);
+              }
+            })
+            .catch((error: unknown) => {
+              if (isMediaSessionSelectionCancelled(error)) return;
+              console.warn("[call] media selection failed:", errorMessage(error));
+              Alert.alert(
+                "Call connection failed",
+                "The media backend could not be selected for this call.",
+              );
+              endAndLeave(true);
+            });
           break;
+        }
         case "call_accepted": {
           // Caller side: peer accepted → create offer to them. Runs on the
           // serialized signal queue so an early-arriving answer/ICE candidate
@@ -2301,6 +2487,8 @@ export default function CallScreen() {
           dispatchCall({ type: "PEER_ACCEPTED" });
           runSerialized(async () => {
             try {
+              const selected = await ensureMediaSession();
+              if (selected.backend === "livekit") return;
               const stream = localStreamRef.current || (await getMedia());
               if (!stream) return endAndLeave(false);
               await waitForIceConfig();
@@ -2363,6 +2551,7 @@ export default function CallScreen() {
                 },
               );
             } catch (err: unknown) {
+              if (isMediaSessionSelectionCancelled(err)) return;
               // Fatal negotiation error — end cleanly instead of hanging.
               console.warn("[call] offer creation failed:", errorMessage(err));
               endAndLeave(false);
@@ -2379,6 +2568,8 @@ export default function CallScreen() {
           // ICE candidate / answer can never race a half-finished offer
           // handler (which awaits getUserMedia + ICE config for seconds).
           runSerialized(async () => {
+            const selected = await ensureMediaSession();
+            if (selected.backend === "livekit") return;
             if (!rememberInboundSignal(signal, seenSignalIdsRef.current)) {
               // A replayed signal is expected (the server re-delivers buffered
               // frames whenever we re-subscribe); log at `warn` so it stays
@@ -2606,6 +2797,8 @@ export default function CallScreen() {
           peerIdRef.current = targetUserId;
           runSerialized(async () => {
             try {
+              const selected = await ensureMediaSession();
+              if (selected.backend === "livekit") return;
               const stream = localStreamRef.current || (await getMedia());
               if (!stream) return;
               await waitForIceConfig();
@@ -2658,6 +2851,7 @@ export default function CallScreen() {
                 signal: { type: "video-state", videoOff },
               });
             } catch (err: unknown) {
+              if (isMediaSessionSelectionCancelled(err)) return;
               console.warn(
                 "[call] reconnect re-offer failed:",
                 errorMessage(err),
@@ -2686,6 +2880,7 @@ export default function CallScreen() {
           }
           // Only the CALLER re-offers. The callee waits for the offer.
           if (mode !== "outgoing") break;
+          if (mediaBackendRef.current === "livekit") break;
           const pc = pcRef.current;
           const target = peerIdRef.current;
           if (pc && target && pc.localDescription?.type === "offer") {
@@ -2817,6 +3012,7 @@ export default function CallScreen() {
     waitForIceConfig,
     videoOff,
     runSerialized,
+    ensureMediaSession,
     showChat,
     // Route-derived constants for this screen's lifetime; listed so the
     // handlers that read them (`createOffer`'s offerToReceiveVideo, the
@@ -2834,7 +3030,11 @@ export default function CallScreen() {
   // lag and freezes. Stopped on teardown (endAndLeave) and on unmount below.
   // No-op on iOS / Expo Go / non-prebuilt builds.
   useEffect(() => {
-    if (status === "connecting" || status === "connected") {
+    if (
+      status === "connecting" ||
+      status === "connected" ||
+      status === "reconnecting"
+    ) {
       startActiveCall({
         callType,
         title: peerName,
@@ -2886,7 +3086,10 @@ export default function CallScreen() {
   // so leaving the app afterwards behaves normally — no stray PiP.
   useEffect(() => {
     if (!isPipSupported()) return;
-    const live = status === "connecting" || status === "connected";
+    const live =
+      status === "connecting" ||
+      status === "connected" ||
+      status === "reconnecting";
     const aspectW = callType === "video" ? 9 : 1;
     const aspectH = callType === "video" ? 16 : 1;
     setPipCallActive(live);
@@ -2911,6 +3114,7 @@ export default function CallScreen() {
   // target on every tick and thrashed `setParameters` between three fixed
   // bitrate/resolution pairs, which is what produced the periodic freeze pulses.
   useEffect(() => {
+    if (mediaSession?.backend === "livekit") return;
     if (status !== "connected") {
       setConnectionQuality("unknown");
       return;
@@ -2961,13 +3165,31 @@ export default function CallScreen() {
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [status, conversationId, callType, getQualityController]);
+  }, [
+    status,
+    conversationId,
+    callType,
+    getQualityController,
+    mediaSession?.backend,
+  ]);
 
   // Incoming: accept handler. Send call_accept IMMEDIATELY (don't serialize
   // behind getUserMedia) — the caller starts building its offer right away
   // while we finish acquiring media in parallel. Combined with the ringing
   // pre-warm above this shaves seconds off the connect time.
   const acceptIncoming = useCallback(async () => {
+    let selected: CallMediaSession;
+    try {
+      selected = await ensureMediaSession();
+    } catch (error) {
+      if (isMediaSessionSelectionCancelled(error)) return;
+      console.warn("[call] media selection failed:", errorMessage(error));
+      Alert.alert(
+        "Call connection failed",
+        "The media backend could not be selected for this call.",
+      );
+      return endAndLeave(false);
+    }
     // Mark THIS session as the accepter so the `call_handled_elsewhere` echo
     // the server sends back to our own user (to dismiss our OTHER devices'
     // ring UI) does not tear down the call we are about to join.
@@ -3007,6 +3229,7 @@ export default function CallScreen() {
         return endAndLeave(false);
       }
     }
+    if (selected.backend === "livekit") return;
     if (!localStreamRef.current) {
       const stream = await getMedia();
       if (!stream) return endAndLeave(false);
@@ -3060,7 +3283,7 @@ export default function CallScreen() {
         },
       );
     }, 4000);
-  }, [conversationId, endAndLeave, getMedia]);
+  }, [conversationId, endAndLeave, ensureMediaSession, getMedia]);
 
   const rejectIncoming = useCallback(async () => {
     const sent = await socket.sendCallActionWithRetry(
@@ -3185,24 +3408,7 @@ export default function CallScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, status, autoAnswer, autoDecline, conversationId]);
 
-  const {
-    toggleMute,
-    toggleVideo,
-    switchCamera,
-    toggleHold,
-    toggleNoiseSuppression,
-    toggleRecording,
-    toggleSpeaker,
-    sendReaction,
-    sendChat,
-    toggleChatPanel,
-    openChatPanel,
-    closeChatPanel,
-    openMorePanel,
-    closeMorePanel,
-    openReactionPickerFromMore,
-    closeReactionPicker,
-  } = useMobileCallControls({
+  const p2pControls = useMobileCallControls({
     conversationId,
     callType,
     chatText,
@@ -3239,6 +3445,76 @@ export default function CallScreen() {
     setShowChat,
     setChatUnread,
   });
+
+  const isLiveKit = mediaSession?.backend === "livekit";
+  const toggleMute = isLiveKit
+    ? () => {
+        holdSnapshotRef.current = null;
+        setOnHold(false);
+        const next = !muted;
+        setMuted(next);
+        void liveKit.setMuted(next);
+      }
+    : p2pControls.toggleMute;
+  const toggleVideo = isLiveKit
+    ? () => {
+        holdSnapshotRef.current = null;
+        setOnHold(false);
+        const next = !videoOff;
+        setVideoOff(next);
+        void liveKit.setVideoOff(next);
+      }
+    : p2pControls.toggleVideo;
+  const switchCamera = isLiveKit
+    ? () => {
+        liveKit.switchCamera();
+        setUsingFrontCamera((front) => !front);
+      }
+    : p2pControls.switchCamera;
+  const toggleHold = isLiveKit
+    ? () => {
+        const next = !onHold;
+        if (next) {
+          holdSnapshotRef.current = { muted, videoOff };
+          setMuted(true);
+          setVideoOff(true);
+          void liveKit.setMuted(true);
+          void liveKit.setVideoOff(true);
+        } else {
+          const snapshot = holdSnapshotRef.current ?? {
+            muted: false,
+            videoOff: true,
+          };
+          setMuted(snapshot.muted);
+          setVideoOff(snapshot.videoOff);
+          void liveKit.setMuted(snapshot.muted);
+          void liveKit.setVideoOff(snapshot.videoOff);
+          holdSnapshotRef.current = null;
+        }
+        setOnHold(next);
+      }
+    : p2pControls.toggleHold;
+  const toggleSpeaker = isLiveKit
+    ? () =>
+        setSpeakerOn((current) => {
+          const next = !current;
+          void liveKit.setSpeaker(next);
+          return next;
+        })
+    : p2pControls.toggleSpeaker;
+  const {
+    toggleNoiseSuppression,
+    toggleRecording,
+    sendReaction,
+    sendChat,
+    toggleChatPanel,
+    openChatPanel,
+    closeChatPanel,
+    openMorePanel,
+    closeMorePanel,
+    openReactionPickerFromMore,
+    closeReactionPicker,
+  } = p2pControls;
 
   const statusLabel =
     status === "ringing"

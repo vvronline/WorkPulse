@@ -27,6 +27,7 @@ import { setupTray } from "./tray";
 import { setupUpdater } from "./updater";
 import { setupCallPipWindow } from "./callPipWindow";
 import { setupBiometric } from "./biometric";
+import { buildLiveKitCspSources } from "./cspSources";
 
 // App identity (appUserModelId + app.name) and the legacy userData migration
 // now live in ./appIdentity, imported at the very top so they run before any
@@ -141,6 +142,20 @@ const RAILWAY_URL = process.env.API_SERVER || "https://www.aino.org.in";
 // Wildcarded on the account subdomain rather than a bare `https:` so a
 // compromised renderer still can't pull media from arbitrary hosts.
 const R2_ORIGIN_PATTERN = "https://*.r2.cloudflarestorage.com";
+// ─── LiveKit SFU origin ───────────────────────────────────────────────────
+// Calls can be negotiated onto a LiveKit SFU (see the media-session route the
+// chat client calls before a call starts). The SDK opens a `wss://` signalling
+// socket to that SFU and fetches over `https://` on the same host, and Electron
+// applies the CSP below to the renderer — so without these entries the desktop
+// build connects to nothing and every SFU call fails while the browser build
+// works.
+//
+// A PACKAGED app has no build-time env, so this cannot be env-only: it defaults
+// to Railway's service domain (where the SFU is deployed, same reasoning as the
+// hard-coded API_SERVER default above) and merely ADDS any LIVEKIT_URL /
+// LIVEKIT_ORIGIN / VITE_LIVEKIT_URL override. See desktop/cspSources.ts.
+// Media itself is UDP/WebRTC and is not subject to CSP.
+const LIVEKIT_ORIGIN_PATTERN = buildLiveKitCspSources(process.env);
 // In packaged build, client/dist is in extraResources; in dev, it's adjacent
 const CLIENT_DIST = app.isPackaged
   ? path.join(process.resourcesPath, "client", "dist")
@@ -740,7 +755,7 @@ $w.Stop()
             // Attendance Settings to pick an office location. We also
             // allow unpkg.com so Leaflet's default marker icons load
             // (they're served from the npm package's CDN copy).
-            `connect-src 'self' workpulse://app ${RAILWAY_URL} ${R2_ORIGIN_PATTERN} wss://${new URL(RAILWAY_URL).host} https://embed.diagrams.net https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://unpkg.com https://*.giphy.com; ` +
+            `connect-src 'self' workpulse://app ${RAILWAY_URL} ${R2_ORIGIN_PATTERN} wss://${new URL(RAILWAY_URL).host} ${LIVEKIT_ORIGIN_PATTERN} https://embed.diagrams.net https://*.tile.openstreetmap.org https://nominatim.openstreetmap.org https://unpkg.com https://*.giphy.com; ` +
             // Uploads (avatars, org logos, chat images) normally arrive through
             // the same-origin `workpulse://app/uploads/...` proxy below, so
             // 'self' covers them. The API origin and the R2 origin are listed

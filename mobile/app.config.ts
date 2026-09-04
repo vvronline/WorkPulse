@@ -64,6 +64,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ios: {
     supportsTablet: true,
     bundleIdentifier: "app.aino.mobile",
+    infoPlist: {
+      UIBackgroundModes: ["audio", "voip", "remote-notification"],
+    },
   },
   android: {
     versionCode: ANDROID_VERSION_CODE,
@@ -271,6 +274,18 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       {
         microphonePermission:
           "Allow AINO to access your microphone to record voice messages and make calls.",
+      },
+    ],
+    [
+      "@livekit/react-native-expo-plugin",
+      {
+        android: {
+          audioType: "communication",
+          enableScreenShareService: false,
+        },
+        ios: {
+          enableMultitaskingCameraAccess: false,
+        },
       },
     ],
     [

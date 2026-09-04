@@ -88,6 +88,21 @@ describe("0002_migration_catchup.sql", () => {
     });
 });
 
+describe("0003_call_media_backend.sql", () => {
+    const sql = fs.readFileSync(
+        path.join(MIGRATIONS_DIR, "0003_call_media_backend.sql"),
+        "utf8",
+    ).toLowerCase();
+
+    it("defaults existing calls to immutable p2p selection", () => {
+        expect(sql).toMatch(
+            /add column if not exists media_backend varchar\(10\) not null default 'p2p'/,
+        );
+        expect(sql).toContain("check (media_backend in ('p2p', 'livekit'))");
+        expect(sql).not.toMatch(/update\s+call_logs\s+set\s+media_backend/);
+    });
+});
+
 describe("runTenantMigrations", () => {
     const { runTenantMigrations } = require("../utils/migrationRunner");
 

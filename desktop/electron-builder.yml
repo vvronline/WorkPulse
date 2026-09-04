@@ -29,6 +29,9 @@ files:
   - updater.js
   - callPipWindow.js
   - biometric.js
+  # CSP source builder for the renderer's Content-Security-Policy. main.js
+  # requires it, so it must be packaged for the same reason appIdentity.js is.
+  - cspSources.js
   - icons/**/*
   - package.json
   - google-api-key.txt

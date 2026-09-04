@@ -907,6 +907,26 @@ export const deleteCalls = (selection: number[] | { all: true }) =>
     API.post("/chat/calls/delete", Array.isArray(selection) ? { ids: selection } : selection);
 export const getActiveCall = () => API.get("/chat/calls/active");
 export const getIceConfig = () => API.get("/chat/ice-config");
+// Media backend negotiation. The server decides ONCE per call whether the media
+// plane is the legacy peer-to-peer WebRTC path or an SFU (LiveKit) room, and
+// hands back the room credentials for the latter. Mirrors the mobile contract.
+export const getCallMediaSession = (
+    callId: number | string,
+    conversationId: number | string,
+    config?: AxiosRequestConfig
+) =>
+    API.get(`/chat/calls/${callId}/media-session`, {
+        params: { conversationId },
+        ...(config || {}),
+    });
+// Idempotent HTTP confirmations for the two LOCAL terminal call actions. The
+// websocket emit is the fast path; these endpoints are the durable one (the
+// server treats an already-terminal call as success), matching the mobile
+// `rejectCallHttp` teardown fallback.
+export const rejectCallHttp = (callId: number | string, conversationId: number | string) =>
+    API.post(`/chat/calls/${callId}/reject`, { conversationId });
+export const endCallHttp = (callId: number | string, conversationId: number | string) =>
+    API.post(`/chat/calls/${callId}/end`, { conversationId });
 
 // Meetings
 export const createMeeting = (data: AnyData) => API.post("/meetings", data);

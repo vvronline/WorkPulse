@@ -170,8 +170,30 @@ router.delete(
         await service.query(req.db!, "q033", [convId, req.userId])
       ).rows;
 
-      // Delete the conversation (all children CASCADE automatically)
-      await service.query(req.db!, "q069", [convId]);
+      // Locking the parent also blocks a concurrent call INSERT's FK check, so
+      // an active call cannot appear between this check and the cascade.
+      const deletion = await (req.db as unknown as DbLike).transaction(
+        async (client) => {
+          const locked = (
+            await service.query(client, "q069", [convId])
+          ).rows[0];
+          if (!locked) return "missing";
+          const activeCall = (
+            await service.query(client, "q079", [convId])
+          ).rows[0];
+          if (activeCall) return "active";
+          await service.query(client, "q080", [convId]);
+          return "deleted";
+        },
+      );
+      if (deletion === "active") {
+        return res.status(409).json({
+          error: "End the active call before deleting this conversation",
+        });
+      }
+      if (deletion === "missing") {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
 
       for (const p of participants) {
         sendToUser(req.tenantId, p.user_id, "chat_conv_deleted", {

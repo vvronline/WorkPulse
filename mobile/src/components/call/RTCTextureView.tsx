@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { Platform, UIManager, requireNativeComponent } from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
-import { RTCView } from "react-native-webrtc";
+import { RTCView } from "@livekit/react-native-webrtc";
 
 /**
  * A self-view renderer that produces *true* rounded corners on Android.
@@ -12,7 +12,7 @@ import { RTCView } from "react-native-webrtc";
  * border inside a square video" artefact on the floating self-preview.
  *
  * On Android we instead use a native `TextureView`-backed view (registered by
- * the `react-native-webrtc` patch in `patches/`). A TextureView is an ordinary
+ * the `@livekit/react-native-webrtc` patch in `patches/`). A TextureView is an ordinary
  * view in the hierarchy, so the parent clip applies and the corners are genuinely
  * round. On iOS the stock RTCView already clips correctly, so we just use it.
  *

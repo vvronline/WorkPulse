@@ -7,7 +7,7 @@ import {
   RTCSessionDescription,
   RTCIceCandidate,
   MediaStream,
-} from "react-native-webrtc";
+} from "@livekit/react-native-webrtc";
 import NetInfo from "@react-native-community/netinfo";
 import { socket, type WSMessage } from "../realtime/socket";
 import { getIceConfig, warmIceConfig } from "../features";

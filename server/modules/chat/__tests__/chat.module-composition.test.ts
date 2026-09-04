@@ -50,6 +50,7 @@ const expectedRoutes = [
     "POST /calls/delete",
     "GET /calls/active",
     "GET /conversations/:id/calls",
+    "GET /calls/:callId/media-session",
     "POST /calls/:callId/reject",
     "POST /calls/:callId/accept",
     "POST /calls/:callId/end",

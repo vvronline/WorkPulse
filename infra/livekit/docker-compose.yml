@@ -1,0 +1,52 @@
+# infra/livekit/docker-compose.yml
+#
+# LOCAL VALIDATION ONLY — this is not the Railway deployment path. It builds
+# the same Dockerfile Railway will use and runs it with LIVEKIT_LOCAL_DEV=true
+# (so the Railway-TCP-proxy variable checks are skipped) plus a throwaway
+# Redis, so `docker compose up` / validate.ps1 can confirm the image builds,
+# the entrypoint renders a config, and the container reports healthy —
+# entirely on a developer machine, without touching Railway.
+#
+# Real deployment steps (Railway domain/PORT, TCP proxy, private Redis,
+# secrets) are documented in README.md.
+
+services:
+  livekit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: workpulse-livekit-dev
+    environment:
+      # No hardcoded/default credentials here on purpose: `:?` makes compose
+      # fail immediately if these aren't set in the environment (validate.ps1
+      # generates fresh random >=32-char local-only values per run; set your
+      # own in a local infra/livekit/.env for manual `docker compose up`).
+      - LIVEKIT_API_KEY=${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY (see validate.ps1 / README.md), no default is provided}
+      - LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET, >=32 chars (see validate.ps1 / README.md), no default is provided}
+      - REDIS_URL=redis://redis:6379
+      - LIVEKIT_LOCAL_DEV=true
+      - PORT=8080
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      # Loopback-only: this is a local validation harness, not something
+      # meant to be reachable from other machines on the network.
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:7881:7881"
+    healthcheck:
+      test: ["CMD", "/healthcheck.sh"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    # No host port mapping: only reachable from the `livekit` service over
+    # the compose-internal network, never exposed on the host.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

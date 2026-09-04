@@ -93,6 +93,7 @@
     "ioredis": "^5.10.1",
     "json2csv": "^5.0.7",
     "jsonwebtoken": "^9.0.3",
+    "livekit-server-sdk": "2.18.0",
     "multer": "^2.0.2",
     "nodemailer": "^8.0.1",
     "pdfkit": "^0.17.2",

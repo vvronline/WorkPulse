@@ -1,0 +1,45 @@
+# infra/livekit/livekit.yaml.template
+#
+# Rendered into a runtime-only copy (/tmp/livekit/livekit.yaml) by
+# entrypoint.sh. Every __PLACEHOLDER__ below is substituted from validated
+# environment variables at container start — this template is never used
+# directly and never contains real secrets. Do not hand-edit the rendered
+# copy; change environment variables (see .env.example) or this file instead.
+
+port: __PORT__
+bind_addresses:
+  - "0.0.0.0"
+log_level: __LOG_LEVEL__
+
+rtc:
+  # Railway's network does not offer a UDP path into this container, so the
+  # ICE agent is forced to TCP-only. Leaving force_tcp unset/false would let
+  # LiveKit *attempt* UDP candidates that can never be reached from outside,
+  # producing hard-to-diagnose intermittent connect failures instead of a
+  # clean, consistent TCP path.
+  force_tcp: true
+  tcp_port: __ICE_TCP_PORT__
+  port_range_start: 0
+  port_range_end: 0
+  # true  -> LiveKit STUNs its own public IP and advertises that (default;
+  #          correct for Railway's proxy-fronted, dynamically addressed nodes).
+  # false -> only used when LIVEKIT_NODE_IP pins an explicit address.
+  use_external_ip: __USE_EXTERNAL_IP__
+
+redis:
+  address: __REDIS_HOST_PORT__
+  password: __REDIS_PASSWORD__
+
+keys:
+  __LIVEKIT_API_KEY__: __LIVEKIT_API_SECRET__
+
+room:
+  # Deliberately stricter than upstream examples: rooms must be created
+  # through an authenticated API call (server-issued token), not implicitly
+  # by the first participant to connect.
+  auto_create: false
+
+turn:
+  # No embedded TURN relay — Railway TCP proxy IS the relay path here. Do not
+  # enable this without also opening/advertising a second TCP proxy port.
+  enabled: false

@@ -14,6 +14,11 @@ import { logger, logPushCallLifecycle } from "../logger";
 import { pushNotifications } from "../../services/pushNotifications";
 import { withIdempotency, withIdempotentCallAction } from "../wsIdempotency";
 import * as signalStore from "../../realtime/signalStore";
+import { applyCallAction, createRingingCall } from "../../services/callActions";
+import {
+  cleanupCallMediaRoom,
+  getCallMediaBackend,
+} from "../../services/callMedia";
 const statusService = require("../../services/status");
 import {
   DbLike,
@@ -204,9 +209,15 @@ export async function handleCallInitiate({
             // Optionally record a missed-call row for history.
             try {
               await db.query(
-                `INSERT INTO call_logs (conversation_id, caller_id, call_type, status, ended_at)
-                                   VALUES ($1, $2, $3, 'missed', NOW())`,
-                [conversationId, senderId, callType],
+                `INSERT INTO call_logs
+                   (conversation_id, caller_id, call_type, status, ended_at, media_backend)
+                 VALUES ($1, $2, $3, 'missed', NOW(), $4)`,
+                [
+                  conversationId,
+                  senderId,
+                  callType,
+                  getCallMediaBackend(),
+                ],
               );
             } catch (err: any) {
               logger.warn(
@@ -233,11 +244,11 @@ export async function handleCallInitiate({
       }
 
       const [callLogResult, callerResult, convResult] = await Promise.all([
-        db.query(
-          `INSERT INTO call_logs (conversation_id, caller_id, call_type, status)
-                       VALUES ($1, $2, $3, 'ringing') RETURNING id, created_at`,
-          [conversationId, senderId, callType],
-        ),
+        createRingingCall(db, {
+          conversationId: convIdNum,
+          callerId: senderId,
+          callType,
+        }),
         db.query("SELECT full_name, avatar FROM users WHERE id = $1", [
           senderId,
         ]),
@@ -246,7 +257,7 @@ export async function handleCallInitiate({
         ]),
       ]);
 
-      const callLog = callLogResult.rows[0];
+      const callLog = callLogResult;
       const caller = callerResult.rows[0];
       const conv = convResult.rows[0];
 
@@ -380,38 +391,30 @@ export async function handleCallAccept({
       clientMsgId: rawIdAccept,
     },
     async () => {
-      const [callLogResult, participantResult] = await Promise.all([
-        db.query(
-          `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
-          [callId, conversationId],
-        ),
-        db.query(
-          "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
-          [conversationId, senderId],
-        ),
-      ]);
-
-      const callLog = callLogResult.rows[0];
-      if (!callLog) {
-        logger.warn(
-          { senderId, callId, conversationId },
-          "call_accept: call log not found",
-        );
-        recordCallTransitionFailure({
-          event: "call_transition_failed",
-          action: "answer",
-          tenantId,
-          senderId,
-          callId,
-          conversationId,
-          reason: "call_not_found",
-        });
-        return;
-      }
-      if (callLog.status !== "ringing") {
+      const actionResult = await applyCallAction(db, {
+        callId: Number(callId),
+        conversationId: Number(conversationId),
+        userId: senderId,
+        action: "accept",
+      });
+      if (actionResult.outcome !== "applied") {
+        const reason =
+          actionResult.outcome === "forbidden"
+            ? "sender_not_participant"
+            : actionResult.outcome === "not_found"
+              ? "call_not_found"
+              : "invalid_transition";
         logger.info(
-          { senderId, callId, conversationId, status: callLog.status },
-          "call_accept: terminal/invalid state; ignoring",
+          {
+            senderId,
+            callId,
+            conversationId,
+            status:
+              actionResult.outcome === "unchanged"
+                ? actionResult.status
+                : undefined,
+          },
+          "call_accept: action not applied",
         );
         recordCallTransitionFailure({
           event: "call_transition_failed",
@@ -420,59 +423,21 @@ export async function handleCallAccept({
           senderId,
           callId,
           conversationId,
-          fromStatus: callLog.status,
-          reason: "invalid_transition",
-        });
-        return;
-      }
-      if (!participantResult.rows[0]) {
-        logger.warn(
-          { senderId, callId, conversationId },
-          "call_accept: sender not a participant",
-        );
-        recordCallTransitionFailure({
-          event: "call_transition_failed",
-          action: "answer",
-          tenantId,
-          senderId,
-          callId,
-          conversationId,
-          reason: "sender_not_participant",
+          fromStatus:
+            actionResult.outcome === "unchanged"
+              ? actionResult.status
+              : undefined,
+          reason,
         });
         return;
       }
 
-      const [updatedCall, accepterResult] = await Promise.all([
-        db.query(
-          `UPDATE call_logs
-                       SET status = 'answered', started_at = NOW()
-                       WHERE id = $1 AND status = 'ringing'
-                       RETURNING id`,
-          [callId],
-        ),
-        db.query("SELECT full_name, avatar FROM users WHERE id = $1", [
+      const callLog = actionResult.call;
+      const accepter = (
+        await db.query("SELECT full_name, avatar FROM users WHERE id = $1", [
           senderId,
-        ]),
-      ]);
-
-      if (!updatedCall.rows[0]) {
-        logger.info(
-          { senderId, callId, conversationId },
-          "call_accept: transition already applied by another action",
-        );
-        recordCallTransitionFailure({
-          event: "call_transition_failed",
-          action: "answer",
-          tenantId,
-          senderId,
-          callId,
-          conversationId,
-          reason: "transition_race",
-        });
-        return;
-      }
-
-      const accepter = accepterResult.rows[0];
+        ])
+      ).rows[0];
 
       logPushCallLifecycle(
         {
@@ -598,7 +563,7 @@ export async function handleCallCancel({
     async () => {
       const callLog = (
         await db.query(
-          `SELECT id, call_type FROM call_logs WHERE conversation_id = $1 AND caller_id = $2 AND status = 'ringing' ORDER BY created_at DESC LIMIT 1`,
+          `SELECT id, call_type, media_backend FROM call_logs WHERE conversation_id = $1 AND caller_id = $2 AND status = 'ringing' ORDER BY created_at DESC LIMIT 1`,
           [conversationId, senderId],
         )
       ).rows[0];
@@ -609,6 +574,11 @@ export async function handleCallCancel({
         [callLog.id],
       );
       if (!updated.rows[0]) return;
+      const roomCleanup = cleanupCallMediaRoom({
+        callId: callLog.id,
+        tenantId,
+        mediaBackend: callLog.media_backend,
+      });
 
       const participants = (
         await db.query(
@@ -673,6 +643,7 @@ export async function handleCallCancel({
       );
       // P0 — drop any buffered signals for this now-dead call.
       await signalStore.clearCallSignals(tenantId, callLog.id);
+      await roomCleanup;
     },
   );
 }
@@ -697,22 +668,13 @@ export async function handleCallReject({
       clientMsgId: rawIdReject,
     },
     async () => {
-      // Verify sender is a participant in this conversation
-      const isParticipant = (
-        await db.query(
-          "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
-          [conversationId, senderId],
-        )
-      ).rows[0];
-      if (!isParticipant) return;
-
-      const callLog = (
-        await db.query(
-          `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
-          [callId, conversationId],
-        )
-      ).rows[0];
-      if (!callLog) {
+      const actionResult = await applyCallAction(db, {
+        callId: Number(callId),
+        conversationId: Number(conversationId),
+        userId: senderId,
+        action: "reject",
+      });
+      if (actionResult.outcome !== "applied") {
         recordCallTransitionFailure({
           event: "call_transition_failed",
           action: "reject",
@@ -720,47 +682,25 @@ export async function handleCallReject({
           senderId,
           callId,
           conversationId,
-          reason: "call_not_found",
+          fromStatus:
+            actionResult.outcome === "unchanged"
+              ? actionResult.status
+              : undefined,
+          reason:
+            actionResult.outcome === "forbidden"
+              ? "sender_not_participant"
+              : actionResult.outcome === "not_found"
+                ? "call_not_found"
+                : "invalid_transition",
         });
         return;
       }
-      if (callLog.status !== "ringing") {
-        logger.info(
-          { senderId, callId, conversationId, status: callLog.status },
-          "call_reject: terminal/invalid state; ignoring",
-        );
-        recordCallTransitionFailure({
-          event: "call_transition_failed",
-          action: "reject",
-          tenantId,
-          senderId,
-          callId,
-          conversationId,
-          fromStatus: callLog.status,
-          reason: "invalid_transition",
-        });
-        return;
-      }
-
-      const updated = await db.query(
-        `UPDATE call_logs
-                   SET status = 'declined', ended_at = NOW()
-                   WHERE id = $1 AND status = 'ringing'
-                   RETURNING id`,
-        [callId],
-      );
-      if (!updated.rows[0]) {
-        recordCallTransitionFailure({
-          event: "call_transition_failed",
-          action: "reject",
-          tenantId,
-          senderId,
-          callId,
-          conversationId,
-          reason: "transition_race",
-        });
-        return;
-      }
+      const callLog = actionResult.call;
+      const roomCleanup = cleanupCallMediaRoom({
+        callId: Number(callId),
+        tenantId,
+        mediaBackend: callLog.media_backend,
+      });
 
       const rejecter = (
         await db.query("SELECT full_name FROM users WHERE id = $1", [
@@ -859,6 +799,7 @@ export async function handleCallReject({
         sendToUser,
       );
       await signalStore.clearCallSignals(tenantId, Number(callId));
+      await roomCleanup;
     },
   );
 }
@@ -878,14 +819,13 @@ export async function handleCallEnd({
   await withIdempotentCallAction(
     { tenantId, senderId, callId, action: "end", clientMsgId: rawIdEnd },
     async () => {
-      // Verify sender is a participant in this conversation
-      const isParticipant = (
-        await db.query(
-          "SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2",
-          [conversationId, senderId],
-        )
-      ).rows[0];
-      if (!isParticipant) {
+      const actionResult = await applyCallAction(db, {
+        callId: Number(callId),
+        conversationId: Number(conversationId),
+        userId: senderId,
+        action: "end",
+      });
+      if (actionResult.outcome !== "applied") {
         recordCallTransitionFailure({
           event: "call_transition_failed",
           action: "end",
@@ -893,76 +833,26 @@ export async function handleCallEnd({
           senderId,
           callId,
           conversationId,
-          reason: "sender_not_participant",
+          fromStatus:
+            actionResult.outcome === "unchanged"
+              ? actionResult.status
+              : undefined,
+          reason:
+            actionResult.outcome === "forbidden"
+              ? "sender_not_participant"
+              : actionResult.outcome === "not_found"
+                ? "call_not_found"
+                : "already_terminal",
         });
         return;
       }
-
-      const callLog = (
-        await db.query(
-          `SELECT * FROM call_logs WHERE id = $1 AND conversation_id = $2`,
-          [callId, conversationId],
-        )
-      ).rows[0];
-      if (!callLog) {
-        recordCallTransitionFailure({
-          event: "call_transition_failed",
-          action: "end",
-          tenantId,
-          senderId,
-          callId,
-          conversationId,
-          reason: "call_not_found",
-        });
-        return;
-      }
-      if (["ended", "missed", "declined"].includes(callLog.status)) {
-        logger.info(
-          { senderId, callId, conversationId, status: callLog.status },
-          "call_end: terminal state; ignoring duplicate",
-        );
-        recordCallTransitionFailure({
-          event: "call_transition_failed",
-          action: "end",
-          tenantId,
-          senderId,
-          callId,
-          conversationId,
-          fromStatus: callLog.status,
-          reason: "already_terminal",
-        });
-        return;
-      }
-
-      // Calculate duration if call was answered
-      let duration: number | null = null;
-      if (callLog.started_at) {
-        duration = Math.round(
-          (Date.now() - new Date(callLog.started_at).getTime()) / 1000,
-        );
-      }
-
-      const updated = await db.query(
-        `UPDATE call_logs
-                   SET status = CASE WHEN status = 'ringing' THEN 'missed' ELSE 'ended' END,
-                       ended_at = NOW(),
-                       duration = $2
-                   WHERE id = $1
-                   RETURNING id`,
-        [callId, duration],
-      );
-      if (!updated.rows[0]) {
-        recordCallTransitionFailure({
-          event: "call_transition_failed",
-          action: "end",
-          tenantId,
-          senderId,
-          callId,
-          conversationId,
-          reason: "transition_race",
-        });
-        return;
-      }
+      const callLog = actionResult.call;
+      const duration = actionResult.duration;
+      const roomCleanup = cleanupCallMediaRoom({
+        callId: Number(callId),
+        tenantId,
+        mediaBackend: callLog.media_backend,
+      });
 
       // Notify all participants about call end
       const allParticipants = (
@@ -1030,6 +920,7 @@ export async function handleCallEnd({
       );
       // P0 — drop any buffered signals for this now-ended call.
       await signalStore.clearCallSignals(tenantId, Number(callId));
+      await roomCleanup;
     },
   );
 }
@@ -1131,6 +1022,39 @@ export async function handleCallSignal({
     return;
   }
 
+  const callIdForBuffer = Number(msg.data?.callId) || 0;
+  if (["offer", "answer", "ice-candidate"].includes(signal.type)) {
+    const backendQuery = callIdForBuffer
+      ? `SELECT id, media_backend
+           FROM call_logs
+          WHERE conversation_id = $1 AND id = $2`
+      : `SELECT id, media_backend
+           FROM call_logs
+          WHERE conversation_id = $1 AND status IN ('ringing', 'answered')
+          ORDER BY created_at DESC
+          LIMIT 1`;
+    const activeCall = (
+      await db.query(backendQuery, [
+        conversationId,
+        ...(callIdForBuffer ? [callIdForBuffer] : []),
+      ])
+    ).rows[0];
+    if (activeCall?.media_backend === "livekit") {
+      logger.warn(
+        {
+          senderId,
+          targetUserId,
+          conversationId,
+          callId: activeCall.id,
+          signalType: signal.type,
+          tenantId,
+        },
+        "call_signal: rejected P2P media signal for LiveKit call",
+      );
+      return;
+    }
+  }
+
   logger.debug(
     {
       senderId,
@@ -1142,7 +1066,6 @@ export async function handleCallSignal({
     "call_signal: relaying",
   );
 
-  const callIdForBuffer = Number(msg.data?.callId) || 0;
   const identifiedSignal = identifyCallSignal(
     tenantId,
     callIdForBuffer,

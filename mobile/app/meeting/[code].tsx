@@ -18,7 +18,7 @@ import { ActivityIndicator,
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
-import { RTCView } from "react-native-webrtc";
+import { RTCView } from "@livekit/react-native-webrtc";
 import {
   Check,
   Copy,

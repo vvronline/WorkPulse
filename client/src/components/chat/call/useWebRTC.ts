@@ -187,6 +187,15 @@ interface UseWebRTCParams {
   wsSend: (type: string, payload: any) => void;
   onEnd: () => void;
   onStatusChange: (status: string) => void;
+  /**
+   * When true this hook is INERT: no ICE config fetch, no getUserMedia, no
+   * offer/answer, no ICE restart, no signal-handler registration. It is how
+   * the LiveKit media path bypasses the legacy SDP/ICE/bitrate machinery
+   * without deleting it — the p2p rollback path stays byte-for-byte intact,
+   * it simply isn't driven. The refs are still created and returned so the
+   * overlay's media elements keep exactly one owner.
+   */
+  disabled?: boolean;
 }
 
 export default function useWebRTC({
@@ -195,6 +204,7 @@ export default function useWebRTC({
   wsSend,
   onEnd,
   onStatusChange,
+  disabled = false,
 }: UseWebRTCParams) {
   const {
     callId,
@@ -420,6 +430,7 @@ export default function useWebRTC({
   );
 
   useEffect(() => {
+    if (disabled) return;
     refreshIceConfig();
     // Periodically check if creds are about to expire and refresh proactively.
     const checkInterval = setInterval(() => {
@@ -429,7 +440,7 @@ export default function useWebRTC({
       }
     }, 60_000);
     return () => clearInterval(checkInterval);
-  }, [refreshIceConfig]);
+  }, [refreshIceConfig, disabled]);
 
   const stopRingtone = useCallback(() => {
     if (ringtoneRef.current) {
@@ -1516,11 +1527,12 @@ export default function useWebRTC({
   // ─── Auto-accept when call was accepted from global PiP notification ───
   const preAcceptedRef = useRef(preAccepted);
   useEffect(() => {
+    if (disabled) return;
     if (preAcceptedRef.current && isIncoming && !pcRef.current) {
       preAcceptedRef.current = false;
       handleAccept();
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [disabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── P0.6: callee subscribes to the per-call signal buffer ───
   // Web parity of the mobile P0.4 `call_subscribe` emit. Once we (the callee)
@@ -1530,6 +1542,7 @@ export default function useWebRTC({
   // send once per call. Reconnect callees benefit too.
   const subscribedRef = useRef(false);
   useEffect(() => {
+    if (disabled) return;
     if (!isIncoming && !isReconnect) return;
     if (subscribedRef.current) return;
     const cid = callIdRef.current;
@@ -1540,7 +1553,7 @@ export default function useWebRTC({
     } catch (err: any) {
       console.warn("[call-webrtc] call_subscribe failed:", err?.message || err);
     }
-  }, [callId, isIncoming, isReconnect, conversationId, wsSend]);
+  }, [callId, isIncoming, isReconnect, conversationId, wsSend, disabled]);
 
   // ─── P0.6: caller re-offers on `call_peer_ready` ───
   // Web parity of the mobile P0.4 inbound `call_peer_ready` handler. The
@@ -1551,6 +1564,7 @@ export default function useWebRTC({
   // the same offer again is idempotent via Perfect Negotiation.
   const peerReadyHandledRef = useRef(0);
   useEffect(() => {
+    if (disabled) return;
     const nonce = Number(peerReadyNonce) || 0;
     if (!nonce || nonce === peerReadyHandledRef.current) return;
     peerReadyHandledRef.current = nonce;
@@ -1581,10 +1595,12 @@ export default function useWebRTC({
     reconnectTo,
     conversationId,
     wsSend,
+    disabled,
   ]);
 
   // ─── Pre-warm media during incoming ringing ───
   useEffect(() => {
+    if (disabled) return;
     if (!isIncoming || preAccepted || isReconnect) return;
     preWarmAbortRef.current = false;
     const warmup: any = { promise: null, stream: null, error: null };
@@ -1638,20 +1654,22 @@ export default function useWebRTC({
       }
       preWarmStreamRef.current = null;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [disabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Register signal handler ───
   useEffect(() => {
+    if (disabled) return;
     if (!onSignal) return;
     onSignal.current = handleSignal;
     const pendingSignals = onSignal.pendingSignalsRef?.current?.splice(0) || [];
     for (const { signal, fromUserId } of pendingSignals) {
       handleSignal(signal, fromUserId);
     }
-  }, [handleSignal, onSignal]);
+  }, [handleSignal, onSignal, disabled]);
 
   // ─── Outgoing call: use pre-acquired stream ───
   useEffect(() => {
+    if (disabled) return;
     if (!isIncoming && !isReconnect && localStream && !localStreamRef.current) {
       localStreamRef.current = localStream;
       if (localVideoRef.current && callType === "video") {
@@ -1675,10 +1693,11 @@ export default function useWebRTC({
         })();
       }
     }
-  }, [localStream]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [localStream, disabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Reconnect: acquire media and wait for peer to re-offer ───
   useEffect(() => {
+    if (disabled) return;
     if (!isReconnect) return;
     (async () => {
       const stream = await startMedia();
@@ -1688,10 +1707,11 @@ export default function useWebRTC({
       }
       onStatusChange("reconnecting");
     })();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [disabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Handle reconnectTo: other peer refreshed, we need to re-offer ───
   useEffect(() => {
+    if (disabled) return;
     if (!reconnectTo) return;
     const targetUserId = reconnectTo;
     (async () => {
@@ -1711,10 +1731,11 @@ export default function useWebRTC({
         signal: { type: "offer", sdp: offer.sdp },
       });
     })().catch(console.error);
-  }, [reconnectTo]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [reconnectTo, disabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Caller side: create offer once accepted ───
   useEffect(() => {
+    if (disabled) return;
     if (accepted && !isIncoming) {
       (async () => {
         console.log(
@@ -1747,20 +1768,25 @@ export default function useWebRTC({
         });
       })();
     }
-  }, [accepted, acceptedBy]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [accepted, acceptedBy, disabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── External end handler ───
+  // Skipped while disabled: on the LiveKit path the media engine owns the
+  // remote-terminal handler so it can absorb the event into the call state
+  // machine and tear the Room down.
   useEffect(() => {
+    if (disabled) return;
     if (onEndExternal)
       onEndExternal.current = () => {
         stopRingtone();
         cleanup();
         onEnd();
       };
-  }, [onEnd, stopRingtone, cleanup, onEndExternal]);
+  }, [onEnd, stopRingtone, cleanup, onEndExternal, disabled]);
 
   // ─── Network change handling ───
   useEffect(() => {
+    if (disabled) return;
     const triggerIceRestart = (reason: string) => {
       if (!pcRef.current) return;
       if (
@@ -1824,7 +1850,15 @@ export default function useWebRTC({
       document.removeEventListener("visibilitychange", onVisibility);
       conn?.removeEventListener?.("change", onConnChange);
     };
-  }, [conversationId, wsSend, callerId, acceptedBy, reconnectTo, isIncoming]);
+  }, [
+    conversationId,
+    wsSend,
+    callerId,
+    acceptedBy,
+    reconnectTo,
+    isIncoming,
+    disabled,
+  ]);
 
   // ─── Cleanup on unmount ───
   useEffect(() => cleanup, [cleanup]);

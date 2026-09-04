@@ -1,8 +1,8 @@
-diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureView.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureView.java
+diff --git a/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureView.java b/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureView.java
 new file mode 100644
 index 0000000..761f73a
 --- /dev/null
-+++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureView.java
++++ b/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureView.java
 @@ -0,0 +1,172 @@
 +package com.oney.WebRTCModule;
 +
@@ -176,11 +176,11 @@ index 0000000..761f73a
 +        super.onDetachedFromWindow();
 +    }
 +}
-diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureViewManager.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureViewManager.java
+diff --git a/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureViewManager.java b/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureViewManager.java
 new file mode 100644
 index 0000000..3f30a0f
 --- /dev/null
-+++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureViewManager.java
++++ b/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/RTCTextureViewManager.java
 @@ -0,0 +1,44 @@
 +package com.oney.WebRTCModule;
 +
@@ -226,11 +226,11 @@ index 0000000..3f30a0f
 +        view.setZOrder(zOrder);
 +    }
 +}
-diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/TextureViewRenderer.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/TextureViewRenderer.java
+diff --git a/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/TextureViewRenderer.java b/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/TextureViewRenderer.java
 new file mode 100644
 index 0000000..7f9f3c8
 --- /dev/null
-+++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/TextureViewRenderer.java
++++ b/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/TextureViewRenderer.java
 @@ -0,0 +1,124 @@
 +package com.oney.WebRTCModule;
 +
@@ -356,10 +356,10 @@ index 0000000..7f9f3c8
 +    @Override
 +    public void onSurfaceTextureUpdated(SurfaceTexture surface) {}
 +}
-diff --git a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java
+diff --git a/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java b/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java
 index d2b3752..862fc88 100644
---- a/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java
-+++ b/node_modules/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java
+--- a/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java
++++ b/node_modules/@livekit/react-native-webrtc/android/src/main/java/com/oney/WebRTCModule/WebRTCModulePackage.java
 @@ -16,6 +16,9 @@ public class WebRTCModulePackage implements ReactPackage {
  
      @Override

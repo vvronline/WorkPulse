@@ -48,6 +48,12 @@ describe("callStateMachine — P3.14 reducer", () => {
     );
   });
 
+  test("MEDIA_RECONNECTING moves connected → reconnecting", () => {
+    expect(callStateReducer("connected", { type: "MEDIA_RECONNECTING" })).toBe(
+      "reconnecting",
+    );
+  });
+
   test("PEER_RECONNECT moves reconnecting → connecting", () => {
     expect(callStateReducer("reconnecting", { type: "PEER_RECONNECT" })).toBe(
       "connecting",
@@ -81,6 +87,7 @@ describe("callStateMachine — P3.14 reducer", () => {
       { type: "PEER_RECONNECT" },
       { type: "PC_CONNECTED" },
       { type: "PC_RECONNECTING" },
+      { type: "MEDIA_RECONNECTING" },
       { type: "RING_TIMEOUT" },
       { type: "REMOTE_ENDED" },
       { type: "REMOTE_REJECTED" },

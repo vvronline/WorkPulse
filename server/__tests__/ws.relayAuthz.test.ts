@@ -46,7 +46,15 @@ const nextRoom = () => ++_roomSeq; // unique id per test → fresh membership ca
  * Build a db stub. `convMembers` / `meetMembers` are the sets of userIds that
  * are members of the conversation / meeting respectively.
  */
-function makeDb({ convMembers = new Set<number>(), meetMembers = new Set<number>() }: { convMembers?: Set<number>; meetMembers?: Set<number> } = {}) {
+function makeDb({
+    convMembers = new Set<number>(),
+    meetMembers = new Set<number>(),
+    mediaBackend = "p2p",
+}: {
+    convMembers?: Set<number>;
+    meetMembers?: Set<number>;
+    mediaBackend?: "p2p" | "livekit";
+} = {}) {
     return {
         query: jest.fn(async (sql: string, params: any[]) => {
             if (/conversation_participants/.test(sql)) {
@@ -54,6 +62,9 @@ function makeDb({ convMembers = new Set<number>(), meetMembers = new Set<number>
             }
             if (/meeting_participants/.test(sql)) {
                 return { rows: meetMembers.has(params[1]) ? [{ ok: 1 }] : [] };
+            }
+            if (/FROM call_logs/.test(sql)) {
+                return { rows: [{ id: 700, media_backend: mediaBackend }] };
             }
             return { rows: [] };
         }),
@@ -118,6 +129,53 @@ describe("call_signal relay", () => {
             data: { conversationId: cid, targetUserId: 2, signal: { type: "ice-candidate", candidate: { candidate: "x" } } },
         }, ws);
         expect(redis.publish).not.toHaveBeenCalled();
+    });
+
+    test.each(["offer", "answer", "ice-candidate"])(
+        "drops P2P %s media signaling for a persisted LiveKit call",
+        async (signalType) => {
+            const cid = nextRoom();
+            const db = makeDb({
+                convMembers: new Set([SENDER, 2]),
+                mediaBackend: "livekit",
+            });
+            const signal =
+                signalType === "ice-candidate"
+                    ? { type: signalType, candidate: { candidate: "x" } }
+                    : { type: signalType, sdp: "v=0" };
+
+            await handleChatMessage(db, SENDER, TENANT, {
+                type: "call_signal",
+                data: {
+                    callId: 700,
+                    conversationId: cid,
+                    targetUserId: 2,
+                    signal,
+                },
+            }, ws);
+
+            expect(redis.publish).not.toHaveBeenCalled();
+        },
+    );
+
+    test("still relays non-media state for a persisted LiveKit call", async () => {
+        const cid = nextRoom();
+        const db = makeDb({
+            convMembers: new Set([SENDER, 2]),
+            mediaBackend: "livekit",
+        });
+
+        await handleChatMessage(db, SENDER, TENANT, {
+            type: "call_signal",
+            data: {
+                callId: 700,
+                conversationId: cid,
+                targetUserId: 2,
+                signal: { type: "video-state", videoOff: true },
+            },
+        }, ws);
+
+        expect(redis.publish).toHaveBeenCalledTimes(1);
     });
 });
 

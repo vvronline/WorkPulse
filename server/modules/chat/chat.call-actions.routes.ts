@@ -14,8 +14,67 @@ const { canDo, loadGroupContext } = require("../../utils/groupPerms");
 import { ChatError } from "./chat.types";
 import { parseMessageId, parseConversationId, parseCreateGroupConversation, parseDirectConversationUserId, parseEmoji, parseUserId } from "./chat.schema";
 import { service, db, type DbLike, chatUpload, chatFilename, deleteChatObject, verifyParticipant, verifyReplyTarget, getUserOrg, emitSystemMessage } from "./chat.shared";
+import { applyCallAction } from "../../services/callActions";
+import {
+  cleanupCallMediaRoom,
+  getCallMediaSession,
+} from "../../services/callMedia";
 
 const router = express.Router();
+
+router.get(
+  "/calls/:callId/media-session",
+  auth,
+  async (req: Request, res: Response) => {
+    const callId = Number(req.params.callId);
+    const conversationId = Number(req.query.conversationId);
+    if (
+      !Number.isInteger(callId) ||
+      callId <= 0 ||
+      !Number.isInteger(conversationId) ||
+      conversationId <= 0
+    ) {
+      return res
+        .status(400)
+        .json({ error: "callId and conversationId are required" });
+    }
+
+    try {
+      const result = await getCallMediaSession(req.db!, {
+        callId,
+        conversationId,
+        userId: req.userId!,
+        tenantId: req.tenantId,
+      });
+      if (result.kind === "not_found") {
+        return res.status(404).json({ error: "Call not found" });
+      }
+      if (result.kind === "not_joinable") {
+        req.log.info(
+          {
+            callId,
+            conversationId,
+            status: result.status,
+            phase: result.phase,
+          },
+          "Call media-session rejected: call is not joinable",
+        );
+        return res.status(409).json({ error: "Call is not joinable" });
+      }
+      if (result.kind === "gone") {
+        req.log.info(
+          { callId, conversationId, phase: result.phase },
+          "Call media-session rejected: call is gone",
+        );
+        return res.status(410).json({ error: "Call is no longer available" });
+      }
+      return res.json(result.session);
+    } catch (err) {
+      req.log.error({ err, callId, conversationId }, "Call media-session error");
+      return res.status(503).json({ error: "Call media backend unavailable" });
+    }
+  },
+);
 
 router.post(
   "/calls/:callId/reject",
@@ -35,29 +94,27 @@ router.post(
           .json({ error: "callId and conversationId are required" });
       }
 
-      // Verify the rejecter is a participant in the conversation.
-      const isParticipant = (
-        await service.query(req.db!, "q001", [conversationId, senderId])
-      ).rows[0];
-      if (!isParticipant)
+      const actionResult = await applyCallAction(req.db!, {
+        callId,
+        conversationId,
+        userId: senderId,
+        action: "reject",
+      });
+      if (actionResult.outcome === "forbidden") {
         return res.status(403).json({ error: "Not a participant" });
-
-      const callLog = (
-        await service.query(req.db!, "q079", [callId, conversationId])
-      ).rows[0];
-      if (!callLog) return res.status(404).json({ error: "Call not found" });
-
-      // Already handled (answered/declined/ended). Treat as success so the
-      // client can stop ringing without erroring.
-      if (callLog.status !== "ringing") {
-        return res.json({ ok: true, status: callLog.status });
       }
-
-      const updated = await service.query(req.db!, "q080", [callId]);
-      if (!updated.rows[0]) {
-        // Lost the race to another path — still a success from the client's view.
-        return res.json({ ok: true, status: "declined" });
+      if (actionResult.outcome === "not_found") {
+        return res.status(404).json({ error: "Call not found" });
       }
+      if (actionResult.outcome === "unchanged") {
+        return res.json({ ok: true, status: actionResult.status });
+      }
+      const callLog = actionResult.call;
+      const roomCleanup = cleanupCallMediaRoom({
+        callId,
+        tenantId,
+        mediaBackend: callLog.media_backend,
+      });
 
       const rejecter = (
         await service.query(req.db!, "q011", [
@@ -130,6 +187,7 @@ router.post(
         /* status update is best-effort */
       }
 
+      await roomCleanup;
       res.json({ ok: true, status: "declined" });
     } catch (err) {
       req.log.error({ err }, "HTTP call reject error");
@@ -156,28 +214,25 @@ router.post(
           .json({ error: "callId and conversationId are required" });
       }
 
-      const [callLogResult, participantResult] = await Promise.all([
-        service.query(req.db!, "q079", [callId, conversationId]),
-        service.query(req.db!, "q001", [conversationId, senderId]),
-      ]);
-      const callLog = callLogResult.rows[0];
-      if (!callLog) return res.status(404).json({ error: "Call not found" });
-      if (!participantResult.rows[0])
+      const actionResult = await applyCallAction(req.db!, {
+        callId,
+        conversationId,
+        userId: senderId,
+        action: "accept",
+      });
+      if (actionResult.outcome === "forbidden") {
         return res.status(403).json({ error: "Not a participant" });
-      if (callLog.status !== "ringing") {
-        return res.json({ ok: true, status: callLog.status });
       }
-
-      const [updatedCall, accepterResult] = await Promise.all([
-        service.query(req.db!, "q081", [callId]),
-        service.query(req.db!, "q082", [
-          senderId,
-        ]),
-      ]);
-      if (!updatedCall.rows[0]) {
-        return res.json({ ok: true, status: "answered" });
+      if (actionResult.outcome === "not_found") {
+        return res.status(404).json({ error: "Call not found" });
       }
-      const accepter = accepterResult.rows[0];
+      if (actionResult.outcome === "unchanged") {
+        return res.json({ ok: true, status: actionResult.status });
+      }
+      const callLog = actionResult.call;
+      const accepter = (
+        await service.query(req.db!, "q082", [senderId])
+      ).rows[0];
 
       // Notify the caller that the call was accepted so they create the offer.
       sendToUser(tenantId, callLog.caller_id, "call_accepted", {
@@ -238,33 +293,28 @@ router.post("/calls/:callId/end", auth, async (req: Request, res: Response) => {
         .json({ error: "callId and conversationId are required" });
     }
 
-    const isParticipant = (
-      await service.query(req.db!, "q001", [conversationId, senderId])
-    ).rows[0];
-    if (!isParticipant)
+    const actionResult = await applyCallAction(req.db!, {
+      callId,
+      conversationId,
+      userId: senderId,
+      action: "end",
+    });
+    if (actionResult.outcome === "forbidden") {
       return res.status(403).json({ error: "Not a participant" });
-
-    const callLog = (
-      await service.query(req.db!, "q079", [callId, conversationId])
-    ).rows[0];
-    if (!callLog) return res.status(404).json({ error: "Call not found" });
-
-    // Already terminal — treat as success so the client can move on.
-    if (["ended", "missed", "declined"].includes(callLog.status)) {
-      return res.json({ ok: true, status: callLog.status });
     }
-
-    let duration: number | null = null;
-    if (callLog.started_at) {
-      duration = Math.round(
-        (Date.now() - new Date(callLog.started_at).getTime()) / 1000,
-      );
+    if (actionResult.outcome === "not_found") {
+      return res.status(404).json({ error: "Call not found" });
     }
-
-    const updated = await service.query(req.db!, "q083", [callId, duration]);
-    if (!updated.rows[0]) {
-      return res.json({ ok: true, status: "ended" });
+    if (actionResult.outcome === "unchanged") {
+      return res.json({ ok: true, status: actionResult.status });
     }
+    const callLog = actionResult.call;
+    const duration = actionResult.duration;
+    const roomCleanup = cleanupCallMediaRoom({
+      callId,
+      tenantId,
+      mediaBackend: callLog.media_backend,
+    });
 
     // Notify the other participants so their call UI / banner clears.
     const allParticipants = (
@@ -337,7 +387,8 @@ router.post("/calls/:callId/end", auth, async (req: Request, res: Response) => {
       /* best-effort */
     }
 
-    res.json({ ok: true, status: "ended" });
+    await roomCleanup;
+    res.json({ ok: true, status: actionResult.status });
   } catch (err) {
     req.log.error({ err }, "HTTP call end error");
     res.status(500).json({ error: "Failed to end call" });

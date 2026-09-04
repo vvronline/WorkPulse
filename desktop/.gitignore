@@ -13,4 +13,5 @@ updater.js
 callPipWindow.js
 generate-icons.js
 biometric.js
+cspSources.js
 *.js.map

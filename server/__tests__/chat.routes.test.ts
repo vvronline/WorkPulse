@@ -2,6 +2,12 @@ export {};
 
 // Tests for /api/chat — search, conversations, messages
 
+const mockRequestLog = {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+};
+
 jest.mock("../utils/logger", () => ({
     logger: {
         info: jest.fn(),
@@ -13,7 +19,7 @@ jest.mock("../utils/logger", () => ({
     },
     requestLogger: (req: any, _res: any, next: any) => {
         req.id = "test";
-        req.log = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+        req.log = mockRequestLog;
         next();
     },
 }));
@@ -814,7 +820,7 @@ describe("POST /api/chat/calls/delete", () => {
         expect(res.body.error).toMatch(/No call ids/i);
     });
 
-    test("deletes an explicit, normalized id subset within participant scope", async () => {
+    test("deletes only terminal rows from an explicit normalized id subset", async () => {
         setupAuth();
         mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 2 });
 
@@ -835,9 +841,12 @@ describe("POST /api/chat/calls/delete", () => {
         expect(deleteQuery).toBeTruthy();
         expect(deleteQuery[1]).toEqual([[10, 11], 1]);
         expect(deleteQuery[0]).toContain("cp.user_id = $2");
+        expect(deleteQuery[0]).toContain(
+            "cl.status IN ('ended', 'missed', 'declined')",
+        );
     });
 
-    test("server-side select-all deletes beyond the loaded 100 without an id payload", async () => {
+    test("server-side select-all deletes only terminal rows beyond the loaded 100", async () => {
         setupAuth();
         mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 237 });
 
@@ -858,6 +867,398 @@ describe("POST /api/chat/calls/delete", () => {
         expect(deleteQuery).toBeTruthy();
         expect(deleteQuery[0]).toContain("conversation_participants");
         expect(deleteQuery[0]).toContain("cp.user_id = $1");
+        expect(deleteQuery[0]).toContain(
+            "cl.status IN ('ended', 'missed', 'declined')",
+        );
         expect(deleteQuery[1]).toEqual([1]);
+    });
+});
+
+describe("DELETE /api/chat/conversations/:id", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+        mockTxClient.query.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+        mockTransaction.mockReset().mockImplementation(async (fn: any) => fn(mockTxClient));
+        require("../utils/ws").sendToUser.mockClear();
+    });
+
+    test("atomically rejects deletion while a call is ringing or answered", async () => {
+        setupAuth();
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ "?column?": 1 }], rowCount: 1 })
+            .mockResolvedValueOnce({
+                rows: [{ is_group: false, created_by: 1 }],
+                rowCount: 1,
+            })
+            .mockResolvedValueOnce({ rows: [{ user_id: 2 }], rowCount: 1 });
+        mockTxClient.query
+            .mockResolvedValueOnce({ rows: [{ id: 10 }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [{ "?column?": 1 }], rowCount: 1 });
+
+        const res = await request(app)
+            .delete("/api/chat/conversations/10")
+            .set("Cookie", authCookie(1))
+            .set(CSRF);
+
+        expect(res.status).toBe(409);
+        expect(res.body.error).toMatch(/End the active call/i);
+        expect(mockTransaction).toHaveBeenCalledTimes(1);
+        const lockQuery = mockTxClient.query.mock.calls.find(
+            ([sql]: any[]) =>
+                typeof sql === "string" &&
+                sql.includes("FROM conversations") &&
+                sql.includes("FOR UPDATE"),
+        );
+        const activeQuery = mockTxClient.query.mock.calls.find(
+            ([sql]: any[]) =>
+                typeof sql === "string" &&
+                sql.includes("FROM call_logs"),
+        );
+        expect(lockQuery).toBeTruthy();
+        expect(activeQuery?.[0]).toContain(
+            "cl.status IN ('ringing', 'answered')",
+        );
+        expect(
+            mockTxClient.query.mock.calls.some(
+                ([sql]: any[]) =>
+                    typeof sql === "string" &&
+                    sql.includes("DELETE FROM conversations"),
+            ),
+        ).toBe(false);
+        expect(require("../utils/ws").sendToUser).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.anything(),
+            "chat_conv_deleted",
+            expect.anything(),
+        );
+    });
+
+    test("deletes and notifies when the conversation has no active call", async () => {
+        setupAuth();
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ "?column?": 1 }], rowCount: 1 })
+            .mockResolvedValueOnce({
+                rows: [{ is_group: false, created_by: 1 }],
+                rowCount: 1,
+            })
+            .mockResolvedValueOnce({ rows: [{ user_id: 2 }], rowCount: 1 });
+        mockTxClient.query
+            .mockResolvedValueOnce({ rows: [{ id: 10 }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+            .mockResolvedValueOnce({ rows: [{ id: 10 }], rowCount: 1 });
+
+        const res = await request(app)
+            .delete("/api/chat/conversations/10")
+            .set("Cookie", authCookie(1))
+            .set(CSRF);
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true });
+        expect(
+            mockTxClient.query.mock.calls.some(
+                ([sql]: any[]) =>
+                    typeof sql === "string" &&
+                    sql.includes("DELETE FROM conversations"),
+            ),
+        ).toBe(true);
+        expect(
+            require("../utils/ws").sendToUser.mock.calls.some(
+                ([, , event]: any[]) => event === "chat_conv_deleted",
+            ),
+        ).toBe(true);
+    });
+});
+
+describe("GET /api/chat/calls/:callId/media-session", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test("returns the persisted p2p backend for an authorized joinable call", async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({
+            rows: [{
+                id: 500,
+                conversation_id: 10,
+                call_type: "voice",
+                status: "ringing",
+                media_backend: "p2p",
+            }],
+            rowCount: 1,
+        });
+
+        const res = await request(app)
+            .get("/api/chat/calls/500/media-session?conversationId=10")
+            .set("Cookie", authCookie(1));
+
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({
+            backend: "p2p",
+            callId: 500,
+            conversationId: 10,
+        });
+        const mediaQuery = mockQuery.mock.calls.find(
+            ([sql]: any[]) =>
+                typeof sql === "string" &&
+                sql.includes("JOIN conversation_participants") &&
+                sql.includes("cl.media_backend"),
+        );
+        expect(mediaQuery?.[1]).toEqual([500, 10, 1]);
+    });
+
+    test("idempotently ensures a LiveKit room before returning its join token", async () => {
+        const { RoomServiceClient } = require("livekit-server-sdk");
+        const createRoom = jest
+            .spyOn(RoomServiceClient.prototype, "createRoom")
+            .mockResolvedValue({ name: "existing-or-created" });
+        const secret = "test-secret-at-least-32-characters";
+        process.env.LIVEKIT_URL = "wss://calls.example.test";
+        process.env.LIVEKIT_API_KEY = "test-key";
+        process.env.LIVEKIT_API_SECRET = secret;
+        setupAuth();
+        const callRow = {
+            id: 501,
+            conversation_id: 10,
+            call_type: "video",
+            status: "answered",
+            media_backend: "livekit",
+        };
+        mockQuery.mockResolvedValueOnce({
+            rows: [callRow],
+            rowCount: 1,
+        });
+        mockQuery.mockResolvedValueOnce({
+            rows: [{
+                ...callRow,
+            }],
+            rowCount: 1,
+        });
+
+        try {
+            const res = await request(app)
+                .get("/api/chat/calls/501/media-session?conversationId=10")
+                .set("Cookie", authCookie(1));
+
+            expect(res.status).toBe(200);
+            expect(res.body).toMatchObject({
+                backend: "livekit",
+                callId: 501,
+                conversationId: 10,
+                livekit: {
+                    serverUrl: "wss://calls.example.test",
+                    token: expect.any(String),
+                    roomName: expect.stringMatching(/^call_/),
+                },
+            });
+            expect(createRoom).toHaveBeenCalledWith({
+                name: res.body.livekit.roomName,
+                maxParticipants: 2,
+            });
+            expect(JSON.stringify(res.body)).not.toContain(secret);
+        } finally {
+            createRoom.mockRestore();
+            delete process.env.LIVEKIT_URL;
+            delete process.env.LIVEKIT_API_KEY;
+            delete process.env.LIVEKIT_API_SECRET;
+        }
+    });
+
+    test("maps a terminal transition during room creation to a logged conflict", async () => {
+        const { RoomServiceClient } = require("livekit-server-sdk");
+        const createRoom = jest
+            .spyOn(RoomServiceClient.prototype, "createRoom")
+            .mockResolvedValue({ name: "created" });
+        const deleteRoom = jest
+            .spyOn(RoomServiceClient.prototype, "deleteRoom")
+            .mockResolvedValue(undefined);
+        process.env.LIVEKIT_URL = "wss://calls.example.test";
+        process.env.LIVEKIT_API_KEY = "test-key";
+        process.env.LIVEKIT_API_SECRET = "test-secret-at-least-32-characters";
+        mockRequestLog.info.mockClear();
+        mockRequestLog.error.mockClear();
+        setupAuth();
+        mockQuery
+            .mockResolvedValueOnce({
+                rows: [{
+                    id: 502,
+                    conversation_id: 10,
+                    call_type: "voice",
+                    status: "ringing",
+                    media_backend: "livekit",
+                }],
+                rowCount: 1,
+            })
+            .mockResolvedValueOnce({
+                rows: [{
+                    id: 502,
+                    conversation_id: 10,
+                    call_type: "voice",
+                    status: "ended",
+                    media_backend: "livekit",
+                }],
+                rowCount: 1,
+            });
+
+        try {
+            const res = await request(app)
+                .get("/api/chat/calls/502/media-session?conversationId=10")
+                .set("Cookie", authCookie(1));
+
+            expect(res.status).toBe(409);
+            expect(res.body).toEqual({ error: "Call is not joinable" });
+            expect(deleteRoom).toHaveBeenCalledWith(expect.stringMatching(/^call_/));
+            expect(mockRequestLog.info).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    callId: 502,
+                    status: "ended",
+                    phase: "after_create",
+                }),
+                "Call media-session rejected: call is not joinable",
+            );
+            expect(mockRequestLog.error).not.toHaveBeenCalled();
+        } finally {
+            createRoom.mockRestore();
+            deleteRoom.mockRestore();
+            delete process.env.LIVEKIT_URL;
+            delete process.env.LIVEKIT_API_KEY;
+            delete process.env.LIVEKIT_API_SECRET;
+        }
+    });
+
+    test("maps a call removed during room creation to gone", async () => {
+        const { RoomServiceClient } = require("livekit-server-sdk");
+        const createRoom = jest
+            .spyOn(RoomServiceClient.prototype, "createRoom")
+            .mockResolvedValue({ name: "created" });
+        const deleteRoom = jest
+            .spyOn(RoomServiceClient.prototype, "deleteRoom")
+            .mockResolvedValue(undefined);
+        process.env.LIVEKIT_URL = "wss://calls.example.test";
+        process.env.LIVEKIT_API_KEY = "test-key";
+        process.env.LIVEKIT_API_SECRET = "test-secret-at-least-32-characters";
+        mockRequestLog.info.mockClear();
+        setupAuth();
+        mockQuery
+            .mockResolvedValueOnce({
+                rows: [{
+                    id: 503,
+                    conversation_id: 10,
+                    call_type: "voice",
+                    status: "ringing",
+                    media_backend: "livekit",
+                }],
+                rowCount: 1,
+            })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        try {
+            const res = await request(app)
+                .get("/api/chat/calls/503/media-session?conversationId=10")
+                .set("Cookie", authCookie(1));
+
+            expect(res.status).toBe(410);
+            expect(res.body).toEqual({ error: "Call is no longer available" });
+            expect(deleteRoom).toHaveBeenCalledWith(expect.stringMatching(/^call_/));
+            expect(mockRequestLog.info).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    callId: 503,
+                    phase: "after_create",
+                }),
+                "Call media-session rejected: call is gone",
+            );
+        } finally {
+            createRoom.mockRestore();
+            deleteRoom.mockRestore();
+            delete process.env.LIVEKIT_URL;
+            delete process.env.LIVEKIT_API_KEY;
+            delete process.env.LIVEKIT_API_SECRET;
+        }
+    });
+
+    test("conceals calls outside the authenticated participant scope", async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        const res = await request(app)
+            .get("/api/chat/calls/500/media-session?conversationId=10")
+            .set("Cookie", authCookie(1));
+
+        expect(res.status).toBe(404);
+    });
+
+    test("rejects media sessions for terminal calls", async () => {
+        setupAuth();
+        mockQuery.mockResolvedValueOnce({
+            rows: [{
+                id: 500,
+                conversation_id: 10,
+                call_type: "voice",
+                status: "ended",
+                media_backend: "p2p",
+            }],
+            rowCount: 1,
+        });
+
+        const res = await request(app)
+            .get("/api/chat/calls/500/media-session?conversationId=10")
+            .set("Cookie", authCookie(1));
+
+        expect(res.status).toBe(409);
+    });
+});
+
+describe("POST /api/chat/calls/:callId/end LiveKit cleanup", () => {
+    beforeEach(() => {
+        mockQuery.mockReset().mockResolvedValue({ rows: [], rowCount: 0 });
+    });
+
+    test("keeps the DB transition authoritative when room deletion fails", async () => {
+        const { RoomServiceClient } = require("livekit-server-sdk");
+        const deleteRoom = jest
+            .spyOn(RoomServiceClient.prototype, "deleteRoom")
+            .mockRejectedValueOnce(new Error("LiveKit unavailable"));
+        process.env.LIVEKIT_URL = "wss://calls.example.test";
+        process.env.LIVEKIT_API_KEY = "test-key";
+        process.env.LIVEKIT_API_SECRET = "test-secret-at-least-32-characters";
+        setupAuth();
+        mockQuery
+            .mockResolvedValueOnce({ rows: [{ "?column?": 1 }], rowCount: 1 })
+            .mockResolvedValueOnce({
+                rows: [{
+                    id: 500,
+                    conversation_id: 10,
+                    caller_id: 2,
+                    call_type: "voice",
+                    status: "answered",
+                    media_backend: "livekit",
+                }],
+                rowCount: 1,
+            })
+            .mockResolvedValueOnce({ rows: [{ status: "ended" }], rowCount: 1 })
+            .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+        try {
+            const res = await request(app)
+                .post("/api/chat/calls/500/end")
+                .set("Cookie", authCookie(1))
+                .set(CSRF)
+                .send({ conversationId: 10 });
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({ ok: true, status: "ended" });
+            expect(deleteRoom).toHaveBeenCalledWith(expect.stringMatching(/^call_/));
+            expect(
+                mockQuery.mock.calls.some(
+                    ([sql]: any[]) =>
+                        typeof sql === "string" &&
+                        sql.includes("status NOT IN ('ended', 'missed', 'declined')"),
+                ),
+            ).toBe(true);
+        } finally {
+            deleteRoom.mockRestore();
+            delete process.env.LIVEKIT_URL;
+            delete process.env.LIVEKIT_API_KEY;
+            delete process.env.LIVEKIT_API_SECRET;
+        }
     });
 });

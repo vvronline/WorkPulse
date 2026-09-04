@@ -2,8 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { ChatAvatar } from "../";
-import useWebRTC from "./useWebRTC";
-import useCallControls from "./useCallControls";
+import useCallMediaEngine from "./media/useCallMediaEngine";
 import { QualityBadge, DeviceSelector } from "./CallWidgets";
 import CallDuration, { formatDuration } from "./CallDuration";
 import { AddParticipantPopup } from "./AddParticipantPopup";
@@ -176,26 +175,17 @@ export default function CallOverlay({
   const handleEndRef = useRef<(() => void) | null>(null);
   const stopRingtoneRef = useRef<(() => void) | null>(null);
 
-  const webrtc = useWebRTC({
+  // The media backend (legacy p2p vs LiveKit SFU) is negotiated with the
+  // server once per call and then driven behind this single boundary, which
+  // returns exactly the `webrtc` + `controls` surfaces this overlay has always
+  // consumed. Nothing below this line knows which transport is in use.
+  const { webrtc, controls } = useCallMediaEngine({
     callState,
     callType,
     wsSend,
     onEnd,
     onStatusChange: setStatus,
-  });
-
-  const controls = useCallControls({
-    localStreamRef: webrtc.localStreamRef,
-    pcRef: webrtc.pcRef,
-    screenStreamRef: webrtc.screenStreamRef,
-    screenSenderRef: webrtc.screenSenderRef,
-    localVideoRef: webrtc.localVideoRef,
-    remoteVideoRef: webrtc.remoteVideoRef,
     overlayRef: overlayRef as React.MutableRefObject<HTMLElement | null>,
-    // Share the ONE adaptive-quality controller created by useWebRTC with
-    // the stats loop, so the connect-time bitrate ramp and the adaptive
-    // controller can never disagree about where the encoder sits.
-    qualityControllerRef: webrtc.qualityControllerRef,
   });
 
   // ─── Connection / ring timeout ───

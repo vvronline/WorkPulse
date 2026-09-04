@@ -45,6 +45,8 @@ export type CallEvent =
   | { type: "PC_CONNECTED" }
   // ICE failed and we are rebuilding the PC relay-only (back to connecting).
   | { type: "PC_RECONNECTING" }
+  // Managed media transport temporarily lost connectivity and is retrying.
+  | { type: "MEDIA_RECONNECTING" }
   // Outgoing call rang with no answer (ring timeout) → ended.
   | { type: "RING_TIMEOUT" }
   // Peer/server ended the call (`call_ended`) → ended.
@@ -81,6 +83,8 @@ export function callStateReducer(
     case "PEER_RECONNECT":
     case "PC_RECONNECTING":
       return "connecting";
+    case "MEDIA_RECONNECTING":
+      return "reconnecting";
     case "PC_CONNECTED":
       return "connected";
     case "RING_TIMEOUT":

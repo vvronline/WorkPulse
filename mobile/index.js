@@ -23,6 +23,11 @@ import { markJsStart } from "./src/utils/appReady";
 import { backgroundPushService } from "./src/services/backgroundPushService";
 import { notificationDispatcher } from "./src/services/notificationDispatcher";
 
+// LiveKit's WebRTC/URL/stream globals must exist before expo-router imports the
+// call route. Native LiveKit code requires a development build (not Expo Go).
+const { registerGlobals } = require("@livekit/react-native");
+registerGlobals({ autoConfigureAudioSession: false });
+
 // COLD-START TIMING: stamp the JS-eval start time as early as possible so
 // markAppReady() can log the full "JS eval → first frame" duration. This is the
 // FIRST executable statement so it captures the earliest JS timestamp available.

@@ -1403,12 +1403,16 @@ async function initTenantSchema(q: SchemaQuery): Promise<void> {
             caller_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             call_type       VARCHAR(10) NOT NULL DEFAULT 'voice',
             status          VARCHAR(20) NOT NULL DEFAULT 'ringing',
+            media_backend   VARCHAR(10) NOT NULL DEFAULT 'p2p'
+                            CHECK (media_backend IN ('p2p', 'livekit')),
             started_at      TIMESTAMPTZ,
             ended_at        TIMESTAMPTZ,
             duration        INTEGER,
             created_at      TIMESTAMPTZ DEFAULT NOW()
         )
     `);
+    await q(`ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS media_backend VARCHAR(10) NOT NULL DEFAULT 'p2p'`);
+    await q(`DO $$ BEGIN ALTER TABLE call_logs ADD CONSTRAINT call_logs_media_backend_check CHECK (media_backend IN ('p2p', 'livekit')); EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
     await q(`CREATE INDEX IF NOT EXISTS idx_call_logs_conv ON call_logs(conversation_id, created_at DESC)`);
 
     // ---- Meetings ----

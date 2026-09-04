@@ -8,6 +8,7 @@ import { masterQuery } from "./db";
 import { sendToUser, emitCallHistoryMessage } from "./utils/ws";
 import { pushNotifications } from "./services/pushNotifications";
 import { processChatMediaJob } from "./services/chatMediaPipeline";
+import { cleanupCallMediaRoom } from "./services/callMedia";
 import { acquireLeaderLease } from "./platform/leaderLease";
 import { observeJob } from "./platform/metrics/jobMetrics";
 import type { LeaderLease } from "./platform/leaderLease";
@@ -257,7 +258,7 @@ async function expireStaleRingingCalls(): Promise<number> {
                     SET status = 'missed', ended_at = NOW()
                   WHERE status = 'ringing'
                     AND created_at < NOW() - ($1 || ' seconds')::interval
-                  RETURNING id, conversation_id, caller_id, call_type`,
+                  RETURNING id, conversation_id, caller_id, call_type, media_backend`,
           [String(STALE_RINGING_TTL_SECS)],
         )
       ).rows;
@@ -266,6 +267,11 @@ async function expireStaleRingingCalls(): Promise<number> {
         expired++;
         const callId = call.id;
         const conversationId = call.conversation_id;
+        const roomCleanup = cleanupCallMediaRoom({
+          callId,
+          tenantId,
+          mediaBackend: call.media_backend,
+        });
 
         let participants: { user_id: number }[] = [];
         try {
@@ -292,7 +298,6 @@ async function expireStaleRingingCalls(): Promise<number> {
           } catch {
             /* best-effort */
           }
-
           // Only the callee(s) had an incoming ring/push to dismiss.
           if (p.user_id !== call.caller_id) {
             pushNotifications
@@ -339,6 +344,7 @@ async function expireStaleRingingCalls(): Promise<number> {
         } catch {
           /* best-effort */
         }
+        await roomCleanup;
       }
 
       // Sweep 2 — abandoned ANSWERED calls. A normal call ends via the WS
@@ -353,7 +359,7 @@ async function expireStaleRingingCalls(): Promise<number> {
                         duration = COALESCE(duration, EXTRACT(EPOCH FROM (NOW() - started_at))::int)
                   WHERE status = 'answered'
                     AND created_at < NOW() - ($1 || ' seconds')::interval
-                  RETURNING id, conversation_id, caller_id, call_type, duration`,
+                  RETURNING id, conversation_id, caller_id, call_type, duration, media_backend`,
           [String(STALE_ANSWERED_TTL_SECS)],
         )
       ).rows;
@@ -362,6 +368,11 @@ async function expireStaleRingingCalls(): Promise<number> {
         expired++;
         const callId = call.id;
         const conversationId = call.conversation_id;
+        const roomCleanup = cleanupCallMediaRoom({
+          callId,
+          tenantId,
+          mediaBackend: call.media_backend,
+        });
 
         let participants: { user_id: number }[] = [];
         try {
@@ -388,7 +399,6 @@ async function expireStaleRingingCalls(): Promise<number> {
           } catch {
             /* best-effort */
           }
-
           if (p.user_id !== call.caller_id) {
             pushNotifications
               .sendCallCancellation(db.query as any, p.user_id, tenantId, {
@@ -433,6 +443,7 @@ async function expireStaleRingingCalls(): Promise<number> {
         } catch {
           /* best-effort */
         }
+        await roomCleanup;
       }
     },
     { label: "expireStaleRingingCalls" },
